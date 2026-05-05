@@ -198,6 +198,14 @@ async function saveData(d){
 
 function persistState(){ saveData({ clients: state.clients, teamMembers: state.teamMembers }); }
 
+// Role helpers
+function isAdmin(){ return currentUser && currentUser.role === 'admin'; }
+function getVisibleClients(){ 
+  if(isAdmin()) return state.clients;
+  if(!currentUser) return [];
+  return state.clients.filter(c => c.assignedTeam === currentUser.name);
+}
+
 async function loadCurrentUser(){
   try {
     const res = await fetch('/api/auth/me');
@@ -370,7 +378,7 @@ function getClient(id){return state.clients.find(c=>c.id===id);}
 // Auto-save: every change persists immediately
 function updateAndSave(){refreshMetrics();render();persistState();}
 function updateUI(){updateAndSave();}
-function markUpdated(c){c.lastUpdated=nowISO().slice(0,10);}
+function markUpdated(c){c.lastUpdated=nowISO().slice(0,10);c.lastUpdatedBy=currentUser?currentUser.name:'System';}
 
 // ═══════════════════════════════════════════════════════════════
 // RENDER
@@ -409,8 +417,10 @@ function render(){
 }
 
 function renderHeader(){
-  const tabs=[["dashboard","Dashboard"],["clients","Clients"],["deadlines","Deadlines"],["team","Team"]];
-  return`<div class="header"><div class="logo"><div class="logo-mark">CT</div><div><div class="logo-text">UAE Compliance Tracker</div><div class="logo-sub">Accounting &amp; Tax Ops</div></div></div><div class="nav">${tabs.map(([k,l])=>`<button class="nav-btn ${state.activeTab===k&&!state.selectedClientId?'active':''}" data-nav="${k}">${l}</button>`).join("")}</div><div class="header-actions"><button class="btn" data-action="openManageTeam">👥 Team (${state.teamMembers.length})</button><button class="btn btn-primary" data-action="openAddClient">+ Add Client</button>${currentUser?`<div style="display:flex;align-items:center;gap:8px;margin-left:8px;padding-left:12px;border-left:1px solid var(--border)"><span style="font-size:12px;color:var(--text-muted)">${esc(currentUser.name)}</span><span style="font-size:9px;padding:2px 6px;border-radius:4px;background:${currentUser.role==='admin'?'var(--accent-soft)':'var(--bg-elevated)'};color:${currentUser.role==='admin'?'var(--accent)':'var(--text-muted)'};font-weight:700;text-transform:uppercase">${currentUser.role}</span>${currentUser.role==='admin'?'<a href="/admin" style="font-size:11px;color:var(--accent);text-decoration:none">⚙</a>':''}<button class="btn btn-sm" data-action="logout" style="font-size:11px">Logout</button></div>`:''}</div></div>`;
+  const tabs=[["dashboard","Dashboard"],["clients","Clients"],["deadlines","Deadlines"]];
+  if(isAdmin()) tabs.push(["team","Team"]);
+  const adminBtns=isAdmin()?`<button class="btn" data-action="openManageTeam">👥 Team (${state.teamMembers.length})</button><button class="btn btn-primary" data-action="openAddClient">+ Add Client</button>`:'';
+  return`<div class="header"><div class="logo"><div class="logo-mark">CT</div><div><div class="logo-text">UAE Compliance Tracker</div><div class="logo-sub">Accounting &amp; Tax Ops</div></div></div><div class="nav">${tabs.map(([k,l])=>`<button class="nav-btn ${state.activeTab===k&&!state.selectedClientId?'active':''}" data-nav="${k}">${l}</button>`).join("")}</div><div class="header-actions">${adminBtns}${currentUser?`<div style="display:flex;align-items:center;gap:8px;margin-left:8px;padding-left:12px;border-left:1px solid var(--border)"><span style="font-size:12px;color:var(--text-muted)">${esc(currentUser.name)}</span><span style="font-size:9px;padding:2px 6px;border-radius:4px;background:${currentUser.role==='admin'?'var(--accent-soft)':'var(--bg-elevated)'};color:${currentUser.role==='admin'?'var(--accent)':'var(--text-muted)'};font-weight:700;text-transform:uppercase">${currentUser.role}</span>${currentUser.role==='admin'?'<a href="/admin" style="font-size:11px;color:var(--accent);text-decoration:none">⚙</a>':''}<button class="btn btn-sm" data-action="logout" style="font-size:11px">Logout</button></div>`:''}</div></div>`;
 }
 
 function renderMain(){
@@ -424,16 +434,18 @@ function renderMain(){
 // DASHBOARD
 // ═══════════════════════════════════════════════════════════════
 function renderDashboard(){
-  const total=state.clients.length;
-  if(!total&&!state.teamMembers.length)return`<div class="empty-state"><div class="empty-state-icon">📋</div><div class="empty-state-title">Welcome to UAE Compliance Tracker</div><div class="empty-state-text">Set up your team, then add clients.</div><div style="display:flex;gap:10px;justify-content:center"><button class="btn" data-action="openManageTeam">👥 Set Up Team</button><button class="btn btn-primary" data-action="openAddClient">+ Add Client</button></div></div>`;
-  if(!total)return`<div class="empty-state"><div class="empty-state-icon">📋</div><div class="empty-state-title">No Clients Yet</div><button class="btn btn-primary" data-action="openAddClient">+ Add First Client</button></div>`;
+  const vc=getVisibleClients();
+  const total=vc.length;
+  if(!total&&isAdmin()&&!state.teamMembers.length)return`<div class="empty-state"><div class="empty-state-icon">📋</div><div class="empty-state-title">Welcome to UAE Compliance Tracker</div><div class="empty-state-text">Set up your team, then add clients.</div><div style="display:flex;gap:10px;justify-content:center"><button class="btn" data-action="openManageTeam">👥 Set Up Team</button><button class="btn btn-primary" data-action="openAddClient">+ Add Client</button></div></div>`;
+  if(!total&&isAdmin())return`<div class="empty-state"><div class="empty-state-icon">📋</div><div class="empty-state-title">No Clients Yet</div><button class="btn btn-primary" data-action="openAddClient">+ Add First Client</button></div>`;
+  if(!total&&!isAdmin())return`<div class="empty-state"><div class="empty-state-icon">📋</div><div class="empty-state-title">No Clients Assigned</div><div class="empty-state-text">Your admin hasn't assigned any clients to you yet. Contact your admin for access.</div></div>`;
 
-  const completed=state.clients.filter(c=>metricsCache[c.id]?.overallStatus==="Completed").length;
-  const blocked=state.clients.filter(c=>metricsCache[c.id]?.overallStatus==="Blocked").length;
-  const allDL=state.clients.flatMap(c=>metricsCache[c.id]?.deadlines||[]);
+  const completed=vc.filter(c=>metricsCache[c.id]?.overallStatus==="Completed").length;
+  const blocked=vc.filter(c=>metricsCache[c.id]?.overallStatus==="Blocked").length;
+  const allDL=vc.flatMap(c=>metricsCache[c.id]?.deadlines||[]);
   const urgent=allDL.filter(d=>d.days!=null&&d.days>=0&&d.days<=7).length;
   const overdue=allDL.filter(d=>d.days!=null&&d.days<0).length;
-  const avgPct=Math.round(state.clients.reduce((s,c)=>s+(metricsCache[c.id]?.totalPct||0),0)/total);
+  const avgPct=Math.round(vc.reduce((s,c)=>s+(metricsCache[c.id]?.totalPct||0),0)/total);
 
   let h=`<div class="stat-grid cols-6">${[{l:"Total Clients",v:total,c:"var(--blue)"},{l:"Completed",v:completed,c:"var(--green)"},{l:"Blocked",v:blocked,c:"var(--red)"},{l:"Due ≤7 Days",v:urgent,c:"var(--amber)"},{l:"Overdue",v:overdue,c:"var(--red)"},{l:"Avg Completion",v:avgPct+"%",c:"var(--accent)"}].map(s=>`<div class="stat-card"><div class="stat-value" style="color:${s.c}">${s.v}</div><div class="stat-label">${s.l}</div></div>`).join("")}</div>`;
 
@@ -458,8 +470,9 @@ function renderClientsList(){
 }
 
 function renderDeadlines(){
-  if(!state.clients.length)return`<div class="empty-state"><div class="empty-state-icon">📅</div><div class="empty-state-title">No Deadlines</div></div>`;
-  const all=state.clients.flatMap(c=>(metricsCache[c.id]?.deadlines||[]).map(d=>({...d,cn:c.name,cid:c.id})));
+  const vc=getVisibleClients();
+  if(!vc.length)return`<div class="empty-state"><div class="empty-state-icon">📅</div><div class="empty-state-title">No Deadlines</div></div>`;
+  const all=vc.flatMap(c=>(metricsCache[c.id]?.deadlines||[]).map(d=>({...d,cn:c.name,cid:c.id})));
   all.sort((a,b)=>(a.days??999)-(b.days??999));
   const sec=(t,items,col)=>{if(!items.length)return"";return`<div style="margin-bottom:24px"><div class="form-label" style="color:${col};font-size:12px;margin-bottom:8px">${t} (${items.length})</div>${items.map(d=>`<div class="deadline-item" data-client="${d.cid}" data-detail="${d.type}"><span style="font-weight:700;color:var(--text-primary);min-width:180px">${esc(d.cn)}</span><span style="font-size:12px;color:var(--text-muted);min-width:130px">${esc(d.label)}</span><span style="font-size:12px;color:var(--text-muted)">${fmtDate(d.date)}</span><span style="font-size:12px;font-weight:700;margin-left:auto;color:${d.days<0?'var(--red)':d.days<=7?'var(--amber)':'var(--blue)'}">${d.days<0?Math.abs(d.days)+'d overdue':d.days+'d'}</span></div>`).join("")}</div>`;};
   let h=`<h2 style="font-size:18px;font-weight:800;margin-bottom:20px">Upcoming Deadlines</h2>`;
@@ -489,7 +502,7 @@ function renderTeamView(){
 // ═══════════════════════════════════════════════════════════════
 function renderSidebar(sc,scm){
   const nav=[["overview","Overview"],["accounting","Accounting"],["vat","VAT Returns"],["ct","Corporate Tax"],["documents","Documents / KYC"],["logins","Login Credentials"]];
-  return`<div class="sidebar"><div class="sidebar-header"><button class="btn" style="width:100%;margin-bottom:12px" data-action="backToList">← Back</button><div style="font-weight:700;font-size:15px;color:var(--text-primary);margin-bottom:3px">${esc(sc.name)}</div><div style="font-size:11px;color:var(--text-muted);margin-bottom:8px">${esc(sc.entityType)} · ${esc(sc.assignedTeam)}</div>${badgeHTML(scm.overallStatus)}<div style="margin-top:10px">${progressHTML(scm.totalPct,8)}</div></div><div class="detail-nav">${nav.map(([k,l])=>`<button class="detail-nav-btn ${state.detailTab===k?'active':''}" data-detail-nav="${k}">${l}</button>`).join("")}<div style="padding:8px 12px;margin-top:8px;font-size:10px;color:var(--text-muted);border-top:1px solid var(--border)">⌨ Use <kbd style="background:var(--bg-elevated);padding:1px 5px;border-radius:3px;font-size:10px;border:1px solid var(--border)">↑</kbd> <kbd style="background:var(--bg-elevated);padding:1px 5px;border-radius:3px;font-size:10px;border:1px solid var(--border)">↓</kbd> to switch tabs · <kbd style="background:var(--bg-elevated);padding:1px 5px;border-radius:3px;font-size:10px;border:1px solid var(--border)">Esc</kbd> to go back</div></div><div class="sidebar-footer"><button class="btn btn-danger" style="width:100%;font-size:11px" data-action="removeClient" data-id="${sc.id}">Remove Client</button></div></div>`;
+  return`<div class="sidebar"><div class="sidebar-header"><button class="btn" style="width:100%;margin-bottom:12px" data-action="backToList">← Back</button><div style="font-weight:700;font-size:15px;color:var(--text-primary);margin-bottom:3px">${esc(sc.name)}</div><div style="font-size:11px;color:var(--text-muted);margin-bottom:8px">${esc(sc.entityType)} · ${esc(sc.assignedTeam)}</div>${badgeHTML(scm.overallStatus)}<div style="margin-top:10px">${progressHTML(scm.totalPct,8)}</div></div><div class="detail-nav">${nav.map(([k,l])=>`<button class="detail-nav-btn ${state.detailTab===k?'active':''}" data-detail-nav="${k}">${l}</button>`).join("")}<div style="padding:8px 12px;margin-top:8px;font-size:10px;color:var(--text-muted);border-top:1px solid var(--border)">⌨ Use <kbd style="background:var(--bg-elevated);padding:1px 5px;border-radius:3px;font-size:10px;border:1px solid var(--border)">↑</kbd> <kbd style="background:var(--bg-elevated);padding:1px 5px;border-radius:3px;font-size:10px;border:1px solid var(--border)">↓</kbd> to switch tabs · <kbd style="background:var(--bg-elevated);padding:1px 5px;border-radius:3px;font-size:10px;border:1px solid var(--border)">Esc</kbd> to go back</div></div><div class="sidebar-footer">${isAdmin()?`<button class="btn btn-danger" style="width:100%;font-size:11px" data-action="removeClient" data-id="${sc.id}">Remove Client</button>`:''}</div></div>`;
 }
 
 function renderDetail(sc,scm){
@@ -507,7 +520,7 @@ function renderDetail(sc,scm){
 function renderOverview(sc,scm){
   let h=`<h2 style="font-size:18px;font-weight:800;margin-bottom:16px">${esc(sc.name)} — Overview</h2>`;
   h+=`<div class="stat-grid" style="grid-template-columns:repeat(5,1fr)">${[{l:"Accounting",p:scm.acctPct,s:scm.acctStatus},{l:"VAT",p:scm.vatPct,s:scm.vatStatus},{l:"Corp Tax",p:scm.ctPct,s:scm.ctStatus},{l:"Documents",p:scm.docsPct,s:scm.docsStatus},{l:"Logins",p:scm.loginsPct,s:scm.loginsStatus}].map(i=>`<div class="stat-card"><div class="form-label" style="margin-bottom:6px">${i.l}</div><div class="stat-value" style="font-size:22px">${i.p}%</div><div style="margin-top:6px">${badgeHTML(i.s,1)}</div></div>`).join("")}</div>`;
-  h+=`<div class="card"><div class="card-title">Client Details</div><div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px"><div><div class="form-label">Entity Type</div><div>${esc(sc.entityType)}</div></div><div><div class="form-label">Financial Year</div><div>FY ${esc(sc.accounting.financialYear)}</div></div><div><div class="form-label">Assigned To</div>${selectHTML("at",sc.assignedTeam,getTeamOptions(),`data-client-field="${sc.id}"`)}</div><div><div class="form-label">VAT Status</div>${selectHTML("vs",sc.vatApplicable,VAT_OPTIONS,`data-client-vatapp="${sc.id}"`)}</div><div><div class="form-label">CT Applicable</div><div style="color:${sc.ctApplicable?'var(--green)':'var(--red)'};font-weight:600">${sc.ctApplicable?"Yes":"No"}</div></div><div><div class="form-label">Last Updated</div><div style="font-size:12px;color:var(--text-muted)">${fmtDate(sc.lastUpdated)}</div></div></div></div>`;
+  h+=`<div class="card"><div class="card-title">Client Details</div><div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px"><div><div class="form-label">Entity Type</div><div>${esc(sc.entityType)}</div></div><div><div class="form-label">Financial Year</div><div>FY ${esc(sc.accounting.financialYear)}</div></div><div><div class="form-label">Assigned To</div>${isAdmin()?selectHTML("at",sc.assignedTeam,getTeamOptions(),`data-client-field="${sc.id}"`):`<div style="font-weight:600">${esc(sc.assignedTeam)}</div>`}</div><div><div class="form-label">VAT Status</div>${isAdmin()?selectHTML("vs",sc.vatApplicable,VAT_OPTIONS,`data-client-vatapp="${sc.id}"`):`<div>${esc(sc.vatApplicable)}</div>`}</div><div><div class="form-label">CT Applicable</div><div style="color:${sc.ctApplicable?'var(--green)':'var(--red)'};font-weight:600">${sc.ctApplicable?"Yes":"No"}</div></div><div><div class="form-label">Last Updated</div><div style="font-size:12px;color:var(--text-muted)">${fmtDate(sc.lastUpdated)} ${sc.lastUpdatedBy?'by '+esc(sc.lastUpdatedBy):''}</div></div></div></div>`;
   if(scm.warnings.length)h+=`<div class="card" style="border-color:var(--red-border)"><div class="card-title" style="color:var(--red)">⚠ Warnings</div>${scm.warnings.map(w=>`<div style="padding:5px 0;font-size:13px;color:var(--amber);border-bottom:1px solid var(--border)">• ${esc(w)}</div>`).join("")}</div>`;
   // Blocked reasons summary — specific per module
   const brs=sc.blockedReasons||{};
@@ -1177,7 +1190,7 @@ function renderAddCredentialModal(){
 }
 
 function getFilteredClients(){
-  return state.clients.filter(c=>{
+  return getVisibleClients().filter(c=>{
     if(state.search&&!c.name.toLowerCase().includes(state.search.toLowerCase()))return false;
     if(state.filterTeam!=="All"&&c.assignedTeam!==state.filterTeam)return false;
     if(state.filterStatus!=="All"&&metricsCache[c.id]?.overallStatus!==state.filterStatus)return false;

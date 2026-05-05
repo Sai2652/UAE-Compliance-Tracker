@@ -113,14 +113,45 @@ router.put('/users/:id/reset-password', requireAuth, requireAdmin, function(req,
 router.get('/tracker', requireAuth, function(req, res) { res.json(tracker.getData()); });
 router.put('/tracker', requireAuth, function(req, res) {
   var clients = req.body.clients; var teamMembers = req.body.teamMembers; var user = req.user;
+  var existing = tracker.getData();
   if (user.role === 'member') {
-    var existing = tracker.getData();
-    var merged = existing.clients.map(function(ec) { var updated = clients.find(function(c) { return c.id === ec.id; }); if (updated && ec.assignedTeam === user.name) return updated; return ec; });
+    var merged = existing.clients.map(function(ec) { 
+      var updated = clients.find(function(c) { return c.id === ec.id; }); 
+      if (updated && ec.assignedTeam === user.name) {
+        // Log specific changes
+        if (JSON.stringify(ec) !== JSON.stringify(updated)) {
+          activity.log(user.id, user.name, 'client_updated', 'Updated: ' + ec.name);
+        }
+        return updated; 
+      }
+      return ec; 
+    });
     tracker.saveData(merged, existing.teamMembers, user.name);
-  } else { tracker.saveData(clients || [], teamMembers || [], user.name); }
+    activity.log(user.id, user.name, 'data_save', 'Member saved assigned clients');
+  } else {
+    // Log new/removed clients
+    var newClients = (clients || []).filter(function(c) { return !existing.clients.find(function(ec) { return ec.id === c.id; }); });
+    var removedClients = existing.clients.filter(function(ec) { return !(clients || []).find(function(c) { return c.id === ec.id; }); });
+    newClients.forEach(function(c) { activity.log(user.id, user.name, 'client_added', c.name); });
+    removedClients.forEach(function(c) { activity.log(user.id, user.name, 'client_removed', c.name); });
+    // Log modified clients
+    (clients || []).forEach(function(c) {
+      var old = existing.clients.find(function(ec) { return ec.id === c.id; });
+      if (old && JSON.stringify(old) !== JSON.stringify(c)) {
+        activity.log(user.id, user.name, 'client_updated', c.name);
+      }
+    });
+    tracker.saveData(clients || [], teamMembers || [], user.name);
+  }
   res.json({ ok: true });
 });
 
-router.get('/activity', requireAuth, requireAdmin, function(req, res) { res.json({ activities: activity.getRecent(parseInt(req.query.limit) || 50) }); });
+router.get('/activity', requireAuth, function(req, res) { 
+  var all = activity.getRecent(parseInt(req.query.limit) || 50);
+  if (req.user.role !== 'admin') {
+    all = all.filter(function(a) { return a.user_id === req.user.id; });
+  }
+  res.json({ activities: all }); 
+});
 
 module.exports = router;

@@ -1,0 +1,1416 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>UAE Compliance Tracker</title>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+--bg-deep:#080b12;--bg-base:#0c1018;--bg-card:#111722;--bg-card-hover:#151c2a;
+--bg-elevated:#1a2234;--bg-input:#0e1420;
+--border:#1c2538;--border-light:#243048;--border-focus:#3d7aed;
+--text-primary:#e8ecf4;--text-secondary:#8a95aa;--text-muted:#5a6578;
+--accent:#3d7aed;--accent-soft:#3d7aed22;
+--green:#22c55e;--green-bg:#22c55e18;--green-border:#22c55e33;
+--amber:#f59e0b;--amber-bg:#f59e0b18;--amber-border:#f59e0b33;
+--red:#ef4444;--red-bg:#ef444418;--red-border:#ef444433;
+--blue:#3d7aed;--blue-bg:#3d7aed18;
+--slate:#64748b;--slate-bg:#64748b18;
+--radius:8px;--radius-lg:12px;--radius-xl:16px;
+--font:'Plus Jakarta Sans',system-ui,sans-serif;
+--mono:'IBM Plex Mono',monospace;
+--transition:0.2s cubic-bezier(0.4,0,0.2,1);
+}
+html{font-size:14px}
+body{font-family:var(--font);background:var(--bg-deep);color:var(--text-primary);min-height:100vh;overflow-x:hidden;line-height:1.5}
+input,select,textarea,button{font-family:inherit}
+::-webkit-scrollbar{width:6px;height:6px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:#243048;border-radius:3px}
+.app{display:flex;flex-direction:column;height:100vh}
+.header{background:var(--bg-card);border-bottom:1px solid var(--border);padding:0 24px;height:56px;display:flex;align-items:center;gap:16px;flex-shrink:0;z-index:100}
+.logo{display:flex;align-items:center;gap:10px;margin-right:4px}
+.logo-mark{width:32px;height:32px;border-radius:8px;background:linear-gradient(135deg,#3d7aed,#22c55e);display:flex;align-items:center;justify-content:center;font-weight:800;font-size:13px;color:#080b12}
+.logo-text{font-weight:800;font-size:15px;color:var(--text-primary)}
+.logo-sub{font-size:10px;color:var(--text-muted);font-weight:500;letter-spacing:0.5px;text-transform:uppercase}
+.nav{display:flex;gap:2px;background:var(--bg-deep);border-radius:8px;padding:3px;margin-left:8px}
+.nav-btn{padding:6px 14px;border-radius:6px;border:none;background:transparent;color:var(--text-muted);font-size:12px;font-weight:600;cursor:pointer;transition:var(--transition);white-space:nowrap}
+.nav-btn:hover{color:var(--text-secondary)}
+.nav-btn.active{background:var(--bg-elevated);color:var(--text-primary)}
+.header-actions{margin-left:auto;display:flex;gap:8px;align-items:center}
+.body-wrap{display:flex;flex:1;overflow:hidden}
+.sidebar{width:260px;background:var(--bg-base);border-right:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden;flex-shrink:0}
+.sidebar-header{padding:16px;border-bottom:1px solid var(--border)}
+.sidebar-footer{padding:12px;border-top:1px solid var(--border)}
+.main{flex:1;overflow-y:auto;padding:24px;background:var(--bg-deep)}
+.btn{padding:7px 14px;border-radius:var(--radius);border:1px solid var(--border);background:var(--bg-elevated);color:var(--text-secondary);font-size:12px;font-weight:600;cursor:pointer;transition:var(--transition);display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
+.btn:hover{border-color:var(--border-light);color:var(--text-primary);background:var(--bg-card-hover)}
+.btn-primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.btn-primary:hover{background:#2d6adc}
+.btn-danger{color:var(--red);border-color:var(--red-border)}
+.btn-danger:hover{background:var(--red-bg)}
+.btn-sm{padding:4px 10px;font-size:11px}
+.card{background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-lg);padding:20px;margin-bottom:16px}
+.card-title{font-size:14px;font-weight:700;color:var(--text-primary);display:flex;align-items:center;gap:8px;margin-bottom:14px}
+.stat-grid{display:grid;gap:12px;margin-bottom:20px}
+.stat-grid.cols-6{grid-template-columns:repeat(6,1fr)}
+.stat-card{background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-lg);padding:16px;text-align:center}
+.stat-value{font-size:26px;font-weight:800;font-family:var(--mono);letter-spacing:-1px;line-height:1}
+.stat-label{font-size:10px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.8px;margin-top:6px}
+.badge{display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:20px;font-size:11px;font-weight:600;white-space:nowrap;border:1px solid transparent}
+.badge-not-started{background:var(--slate-bg);color:var(--slate)}.badge-in-progress{background:var(--blue-bg);color:var(--blue)}.badge-completed{background:var(--green-bg);color:var(--green)}.badge-blocked{background:var(--red-bg);color:var(--red)}.badge-not-applicable{background:var(--bg-elevated);color:var(--text-muted)}
+.badge .dot{width:6px;height:6px;border-radius:50%;flex-shrink:0}
+.badge-not-started .dot{background:var(--slate)}.badge-in-progress .dot{background:var(--blue)}.badge-completed .dot{background:var(--green)}.badge-blocked .dot{background:var(--red)}.badge-not-applicable .dot{background:var(--text-muted)}
+.progress-bar{display:flex;align-items:center;gap:8px}
+.progress-track{flex:1;height:6px;background:var(--bg-deep);border-radius:3px;overflow:hidden}
+.progress-fill{height:100%;border-radius:3px;transition:width 0.5s ease}
+.progress-label{font-size:11px;font-weight:700;font-family:var(--mono);min-width:36px;text-align:right}
+.form-group{margin-bottom:14px}
+.form-label{display:block;font-size:10px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:5px}
+.form-input{width:100%;background:var(--bg-input);color:var(--text-primary);border:1px solid var(--border);border-radius:var(--radius);padding:8px 12px;font-size:13px;outline:none;transition:var(--transition)}
+.form-input:focus{border-color:var(--border-focus);box-shadow:0 0 0 3px var(--accent-soft)}
+.form-input::placeholder{color:var(--text-muted)}
+select.form-input{cursor:pointer;appearance:auto}
+textarea.form-input{resize:vertical;min-height:60px}
+.toggle{position:relative;width:36px;height:20px;cursor:pointer;display:inline-block}
+.toggle input{opacity:0;width:0;height:0}
+.toggle-track{position:absolute;inset:0;background:var(--bg-elevated);border:1px solid var(--border);border-radius:10px;transition:var(--transition)}
+.toggle input:checked+.toggle-track{background:var(--green);border-color:var(--green)}
+.toggle-thumb{position:absolute;top:3px;left:3px;width:14px;height:14px;background:#fff;border-radius:50%;transition:var(--transition)}
+.toggle input:checked~.toggle-thumb{left:19px}
+table{width:100%;border-collapse:collapse}
+th{padding:10px 14px;text-align:left;font-size:10px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.8px;background:var(--bg-base);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:5}
+td{padding:12px 14px;border-bottom:1px solid var(--border);font-size:13px;vertical-align:middle}
+tbody tr{transition:var(--transition)}
+tbody tr:hover{background:var(--bg-card-hover)}
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.65);z-index:1000;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(4px)}
+.modal{background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-xl);padding:28px;width:500px;max-width:92vw;max-height:85vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,0.5)}
+.modal-title{font-size:17px;font-weight:800;margin-bottom:20px;color:var(--text-primary)}
+.modal-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:20px}
+.alert{padding:12px 16px;border-radius:var(--radius);font-size:12px;margin-bottom:12px;display:flex;align-items:flex-start;gap:8px;line-height:1.5}
+.alert-warning{background:var(--amber-bg);border:1px solid var(--amber-border);color:var(--amber)}
+.alert-info{background:var(--blue-bg);border:1px solid transparent;color:var(--blue)}
+.filter-bar{display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap;align-items:center}
+.search-input{max-width:280px}
+.deadline-item{display:flex;align-items:center;gap:16px;padding:10px 16px;background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius);margin-bottom:6px;cursor:pointer}
+.deadline-item:hover{border-color:var(--border-light);background:var(--bg-card-hover)}
+.detail-nav{display:flex;flex-direction:column;gap:2px;padding:8px}
+.detail-nav-btn{padding:8px 12px;border-radius:var(--radius);border:none;background:transparent;color:var(--text-muted);font-size:12px;font-weight:600;cursor:pointer;transition:var(--transition);text-align:left}
+.detail-nav-btn:hover{color:var(--text-secondary);background:var(--bg-card)}
+.detail-nav-btn.active{color:var(--text-primary);background:var(--bg-elevated)}
+.doc-row{display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--border)}
+.doc-row:last-child{border-bottom:none}
+.doc-toggle-btn{padding:4px 12px;border-radius:6px;border:1px solid var(--border);background:transparent;color:var(--text-muted);font-size:11px;font-weight:600;cursor:pointer;transition:var(--transition)}
+.doc-toggle-btn.received{background:var(--green-bg);color:var(--green);border-color:var(--green-border)}
+.doc-toggle-btn.pending{background:var(--red-bg);color:var(--red);border-color:var(--red-border)}
+.doc-toggle-btn.na{background:var(--bg-elevated);color:var(--text-muted);border-color:var(--border)}
+.month-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+.month-cell{background:var(--bg-elevated);border:1px solid var(--border);border-radius:var(--radius);padding:10px;text-align:center}
+.month-cell:hover{border-color:var(--border-light)}
+.month-name{font-size:11px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px}
+.team-card{background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-lg);padding:20px}
+.tm-list{display:flex;flex-direction:column;gap:6px;margin:12px 0}
+.tm-item{display:flex;align-items:center;gap:10px;padding:8px 12px;background:var(--bg-elevated);border:1px solid var(--border);border-radius:var(--radius)}
+.tm-item-name{flex:1;font-size:13px;font-weight:600;color:var(--text-primary)}
+.tm-item-count{font-size:11px;color:var(--text-muted);font-family:var(--mono)}
+.tm-remove{width:24px;height:24px;border-radius:6px;border:1px solid transparent;background:transparent;color:var(--text-muted);font-size:14px;cursor:pointer;display:flex;align-items:center;justify-content:center}
+.tm-remove:hover{background:var(--red-bg);color:var(--red);border-color:var(--red-border)}
+.empty-state{text-align:center;padding:60px 20px;color:var(--text-muted)}
+.empty-state-icon{font-size:48px;margin-bottom:12px;opacity:0.3}
+.empty-state-title{font-size:16px;font-weight:700;color:var(--text-secondary);margin-bottom:6px}
+.empty-state-text{font-size:13px;max-width:400px;margin:0 auto 16px}
+.mandatory-tag{font-size:9px;padding:1px 6px;border-radius:4px;font-weight:700;margin-left:6px}
+.mandatory-tag.req{background:var(--red-bg);color:var(--red)}
+.mandatory-tag.opt{background:var(--bg-elevated);color:var(--text-muted)}
+.cred-card{background:var(--bg-elevated);border:1px solid var(--border);border-radius:var(--radius);padding:14px;margin-bottom:8px}
+.cred-card .cred-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+.cred-card .cred-title{font-weight:600;font-size:13px;color:var(--text-primary)}
+.cred-fields{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.cred-meta{font-size:10px;color:var(--text-muted);margin-top:6px;font-style:italic}
+.pwd-field{position:relative}
+.pwd-toggle{position:absolute;right:8px;top:50%;transform:translateY(-50%);background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:14px;padding:2px}
+@media(max-width:900px){.stat-grid.cols-6{grid-template-columns:repeat(3,1fr)}.sidebar{width:220px}.month-grid{grid-template-columns:repeat(3,1fr)}.header{padding:0 12px;gap:8px;overflow-x:auto}}
+@media(max-width:640px){.stat-grid.cols-6{grid-template-columns:repeat(2,1fr)}.main{padding:16px}}
+</style>
+</head>
+<body>
+<div class="app" id="app"></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script>
+// ═══════════════════════════════════════════════════════════════
+// CONSTANTS
+// ═══════════════════════════════════════════════════════════════
+const STATUSES=["Not Started","In Progress","Completed","Blocked","Not Applicable"];
+const MONTHS=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+const ENTITY_TYPES=["FZCO (Free Zone)","FZE (Free Zone)","FZ-LLC (Free Zone)","Mainland LLC"];
+const VAT_OPTIONS=["Yes","No","Pending - Documents Awaited","Pending - Registration in Progress"];
+const FY_OPTIONS=["2023","2024","2025","2026","2027"];
+const ACCT_STATUSES=["Not Started","In Progress","Completed","Blocked"];
+
+// 1) NEW Document list with mandatory flags
+const DOCS_LIST=[
+  {name:"COI",mandatory:true},
+  {name:"Trade License",mandatory:true},
+  {name:"BCL Mandate",mandatory:true},
+  {name:"MOA",mandatory:true},
+  {name:"AOA",mandatory:false},
+  {name:"Ejari",mandatory:true},
+  {name:"Establishment Card",mandatory:false},
+  {name:"Shareholders Passport",mandatory:true},
+  {name:"Shareholder Emirates ID",mandatory:true},
+  {name:"FTA Login",mandatory:true},
+  {name:"CT Registration",mandatory:true},
+  {name:"VAT Registration",mandatory:true}, // special: has N/A option
+  {name:"Signed KYC",mandatory:true},
+];
+
+// 3) Default login portals — only FTA & Zoho, rest are custom
+const DEFAULT_PORTALS=["FTA Portal","Zoho Books"];
+
+const STORAGE_KEY="uae_compliance_v4";
+
+// ═══════════════════════════════════════════════════════════════
+// STORAGE
+// ═══════════════════════════════════════════════════════════════
+// Cloud storage — all data goes to the server API
+let currentUser = null;
+
+async function loadData(){
+  try {
+    const res = await fetch('/api/tracker');
+    if(res.ok){ const data = await res.json(); return { clients: data.clients, teamMembers: data.teamMembers }; }
+    if(res.status === 401) window.location.href = '/login';
+  } catch(e) { console.warn('Load error:', e); }
+  return null;
+}
+
+async function saveData(d){
+  try {
+    await fetch('/api/tracker', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(d)
+    });
+  } catch(e) { console.warn('Save error:', e); }
+}
+
+function persistState(){ saveData({ clients: state.clients, teamMembers: state.teamMembers }); }
+
+async function loadCurrentUser(){
+  try {
+    const res = await fetch('/api/auth/me');
+    if(res.ok){ const data = await res.json(); currentUser = data.user; return data.user; }
+    window.location.href = '/login';
+  } catch(e) { window.location.href = '/login'; }
+  return null;
+}
+
+async function logout(){
+  await fetch('/api/auth/logout', { method: 'POST' });
+  window.location.href = '/login';
+}
+
+// ═══════════════════════════════════════════════════════════════
+// UTILITIES
+// ═══════════════════════════════════════════════════════════════
+const uid=()=>Math.random().toString(36).substr(2,9);
+const today=new Date();
+const fmtDate=d=>d?new Date(d).toLocaleDateString("en-GB",{day:"2-digit",month:"short",year:"numeric"}):"—";
+const fmtDateTime=d=>d?new Date(d).toLocaleDateString("en-GB",{day:"2-digit",month:"short",year:"numeric",hour:"2-digit",minute:"2-digit"}):"—";
+const daysUntil=d=>d?Math.ceil((new Date(d)-today)/864e5):null;
+const esc=s=>{if(s==null)return"";return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#39;");};
+const nowISO=()=>new Date().toISOString();
+function getTeamOptions(){return["Unassigned",...state.teamMembers];}
+function badgeHTML(s,sm){const c="badge-"+s.toLowerCase().replace(/\s+/g,"-");return`<span class="badge ${c}"${sm?' style="font-size:10px;padding:2px 8px"':''}><span class="dot"></span>${esc(s)}</span>`;}
+function progressHTML(p,h=6){const c=p>=80?'var(--green)':p>=50?'var(--amber)':p>=20?'var(--blue)':'var(--slate)';return`<div class="progress-bar"><div class="progress-track" style="height:${h}px"><div class="progress-fill" style="width:${p}%;background:${c};height:${h}px"></div></div><span class="progress-label" style="color:${c}">${p}%</span></div>`;}
+function selectHTML(n,v,opts,a=""){return`<select class="form-input" data-field="${n}" ${a} style="padding:5px 8px;font-size:12px;max-width:200px">${opts.map(o=>`<option${o===v?' selected':''}>${esc(o)}</option>`).join("")}</select>`;}
+function toggleHTML(n,ch){return`<label class="toggle"><input type="checkbox" data-toggle="${n}"${ch?' checked':''}><span class="toggle-track"></span><span class="toggle-thumb"></span></label>`;}
+
+// Check if accounting is complete for the specific months covered by a VAT period
+// Period label format: "Mar-May 2026", "Dec-Feb 2026/27", "Jun-Aug 2026"
+function getVatPeriodMonths(periodLabel){
+  const mnMap={jan:1,feb:2,mar:3,apr:4,may:5,jun:6,jul:7,aug:8,sep:9,oct:10,nov:11,dec:12};
+  const m=periodLabel.match(/(\w{3})-(\w{3})\s+(\d{4})/i);
+  if(!m)return[];
+  const startM=mnMap[m[1].toLowerCase()];
+  const endM=mnMap[m[2].toLowerCase()];
+  const yr=parseInt(m[3]);
+  if(!startM||!endM)return[];
+  const months=[];
+  if(startM<=endM){
+    for(let i=startM;i<=endM;i++)months.push(`${yr}-${String(i).padStart(2,'0')}`);
+  } else {
+    // Cross-year: e.g., Dec-Feb → Dec of yr, Jan-Feb of yr+1
+    for(let i=startM;i<=12;i++)months.push(`${yr}-${String(i).padStart(2,'0')}`);
+    // Check if label has "2026/27" format
+    const yrMatch=periodLabel.match(/(\d{4})\/(\d{2})/);
+    const nextYr=yrMatch?parseInt(yrMatch[1])+1:yr+1;
+    for(let i=1;i<=endM;i++)months.push(`${nextYr}-${String(i).padStart(2,'0')}`);
+  }
+  return months;
+}
+
+function checkPeriodAccounting(client, periodLabel){
+  const keys=getVatPeriodMonths(periodLabel);
+  if(!keys.length)return{complete:false,pending:[],total:0};
+  const pending=[];
+  keys.forEach(k=>{
+    const status=client.accounting.monthlyStatus[k];
+    if(status!=="Completed")pending.push(k);
+  });
+  return{complete:pending.length===0,pending,total:keys.length,done:keys.length-pending.length};
+}
+
+function formatMonthKey(k){
+  const p=k.split("-");
+  return MONTHS[parseInt(p[1])-1]+" "+p[0];
+}
+// 4) Generate months for a financial year
+function getFYMonths(fy){
+  const y=parseInt(fy);
+  return MONTHS.map((m,i)=>({month:m,year:y,key:`${y}-${String(i+1).padStart(2,'0')}`,label:`${m} ${y}`}));
+}
+
+// ═══════════════════════════════════════════════════════════════
+// CREATE BLANK CLIENT
+// ═══════════════════════════════════════════════════════════════
+function createBlankClient(ov={}){
+  const vatVal=ov.vatApplicable!==undefined?(ov.vatApplicable===true?"Yes":ov.vatApplicable===false?"No":ov.vatApplicable):"Yes";
+  const fy=ov.financialYear||"2025";
+  // CT: due date in year X means FY is X-1 (UAE: 9 months after FY end)
+  const ctDue=ov.ctDueDate||"2026-09-30";
+  const ctFY=ov.ctFinancialYear||String(parseInt(ctDue.substring(0,4))-1);
+  return{
+    id:uid(),name:ov.name||"",entityType:ov.entityType||"Mainland LLC",
+    assignedTeam:ov.assignedTeam||"Unassigned",
+    vatApplicable:vatVal,
+    ctApplicable:ov.ctApplicable!==undefined?ov.ctApplicable:true,
+    // 4) Accounting with FY
+    accounting:{financialYear:fy,monthlyStatus:MONTHS.reduce((a,m,i)=>{a[`${fy}-${String(i+1).padStart(2,'0')}`]="Not Started";return a},{})},
+    // 5) VAT with custom return dates
+    vat:{periods:vatVal==="Yes"?[]:[], returnDates:[]},
+    // CT
+    ct:{financialYear:ctFY,dueDate:ctDue,status:"Not Started",assignedPerson:ov.assignedTeam||"Unassigned",notes:""},
+    // 1) Documents with new list
+    documents:DOCS_LIST.reduce((a,d)=>{a[d.name]=d.name==="VAT Registration"&&vatVal==="No"?"N/A":"Pending";return a},{}),
+    // 3) Logins — FTA, Zoho + custom
+    logins:DEFAULT_PORTALS.map(p=>({id:uid(),name:p,enabled:false,username:"",password:"",createdAt:"",lastModified:""})),
+    blockedReasons:{},lastUpdated:nowISO().slice(0,10),lastUpdatedBy:ov.assignedTeam||"System"
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════
+// METRICS
+// ═══════════════════════════════════════════════════════════════
+function calcMetrics(c){
+  const ms=Object.values(c.accounting.monthlyStatus);
+  const acctDone=ms.filter(s=>s==="Completed").length;
+  const acctTotal=ms.filter(s=>s!=="Not Applicable").length||12;
+  const acctPct=Math.round(acctDone/acctTotal*100);
+  const acctPending=Object.entries(c.accounting.monthlyStatus).filter(([,v])=>v!=="Completed"&&v!=="Not Applicable").map(([k])=>{const p=k.split("-");return MONTHS[parseInt(p[1])-1]+" "+p[0];});
+  const acctBlocked=ms.some(s=>s==="Blocked");
+
+  const mandDocs=DOCS_LIST.filter(d=>d.mandatory).map(d=>d.name);
+  const docsRecv=mandDocs.filter(n=>c.documents[n]==="Received"||c.documents[n]==="N/A").length;
+  const docsPct=Math.round(docsRecv/mandDocs.length*100);
+  const docsMissing=mandDocs.filter(n=>c.documents[n]!=="Received"&&c.documents[n]!=="N/A");
+
+  const loginsOk=c.logins.filter(l=>l.enabled&&l.username).length;
+  const loginsTotal=c.logins.length||1;
+  const loginsPct=Math.round(loginsOk/loginsTotal*100);
+
+  const vatIsYes=c.vatApplicable==="Yes";
+  const vatIsPending=c.vatApplicable&&c.vatApplicable.startsWith("Pending");
+  let vatPct=0;
+  if(vatIsYes&&c.vat.returnDates.length>0)vatPct=Math.round(c.vat.returnDates.filter(r=>r.filingStatus==="Completed").length/c.vat.returnDates.length*100);
+  const ctPct=c.ct.status==="Completed"?100:c.ct.status==="In Progress"?50:0;
+  const totalPct=Math.round((acctPct*35+vatPct*25+ctPct*15+docsPct*15+loginsPct*10)/100);
+
+  const acctStatus=acctBlocked?"Blocked":acctPct===100?"Completed":acctPct>0?"In Progress":"Not Started";
+  const vatStatus=c.vatApplicable==="No"?"Not Applicable":vatIsPending?"Blocked":vatPct===100&&c.vat.returnDates.length>0?"Completed":vatPct>0?"In Progress":"Not Started";
+  const ctStatus=!c.ctApplicable?"Not Applicable":c.ct.status;
+  const docsStatus=docsPct===100?"Completed":docsPct>0?"In Progress":"Not Started";
+  const loginsStatus=loginsPct===100&&c.logins.length>0?"Completed":loginsPct>0?"In Progress":"Not Started";
+
+  const all=[acctStatus,vatStatus,ctStatus,docsStatus,loginsStatus];
+  let overallStatus;
+  if(all.some(s=>s==="Blocked"))overallStatus="Blocked";
+  else if(all.filter(s=>s!=="Not Applicable").every(s=>s==="Completed"))overallStatus="Completed";
+  else if(all.some(s=>s==="In Progress"||s==="Completed"))overallStatus="In Progress";
+  else overallStatus="Not Started";
+
+  const deadlines=[];
+  if(vatIsYes)c.vat.returnDates.forEach(r=>{if(r.filingStatus!=="Completed"){const d=daysUntil(r.dueDate);deadlines.push({label:`VAT: ${r.period}`,date:r.dueDate,days:d,type:"vat"});}});
+  if(c.ctApplicable&&c.ct.status!=="Completed"){const d=daysUntil(c.ct.dueDate);deadlines.push({label:`CT FY${c.ct.financialYear}`,date:c.ct.dueDate,days:d,type:"ct"});}
+  deadlines.sort((a,b)=>(a.days??999)-(b.days??999));
+
+  const warnings=[];
+  if(vatStatus==="Completed"&&acctStatus!=="Completed")warnings.push("VAT completed but Accounting incomplete");
+  if(ctStatus==="Completed"&&acctStatus!=="Completed")warnings.push("CT completed but Accounting incomplete");
+  const brs=c.blockedReasons||{};
+  if(acctBlocked){const blockedMonths=Object.entries(c.accounting.monthlyStatus).filter(([,v])=>v==="Blocked").map(([k])=>{const p=k.split("-");const reason=brs[`acct_${k}`];return MONTHS[parseInt(p[1])-1]+(reason?` (${reason})`:'');});warnings.push("Accounting blocked: "+blockedMonths.join(", "));}
+  if(docsMissing.length>0)warnings.push(`${docsMissing.length} mandatory doc(s) pending`);
+  if(vatIsPending)warnings.push("VAT: "+c.vatApplicable);
+  if(c.ct&&c.ct.status==="Blocked"){const r=brs.ct;warnings.push("CT blocked"+(r?": "+r:""));}
+
+  return{acctPct,acctPending,acctStatus,acctBlocked,vatPct,vatStatus,ctPct,ctStatus,docsPct,docsMissing,docsStatus,loginsPct,loginsStatus,totalPct,overallStatus,deadlines,warnings};
+}
+
+// ═══════════════════════════════════════════════════════════════
+// STATE
+// ═══════════════════════════════════════════════════════════════
+let state={clients:[],teamMembers:[],activeTab:"dashboard",selectedClientId:null,detailTab:"overview",search:"",filterStatus:"All",filterTeam:"All",showModal:null,bulkClients:[]};
+let metricsCache={};
+
+function refreshMetrics(){metricsCache={};state.clients.forEach(c=>{metricsCache[c.id]=calcMetrics(c);});}
+function getClient(id){return state.clients.find(c=>c.id===id);}
+
+// Auto-save: every change persists immediately
+function updateAndSave(){refreshMetrics();render();persistState();}
+function updateUI(){updateAndSave();}
+function markUpdated(c){c.lastUpdated=nowISO().slice(0,10);}
+
+// ═══════════════════════════════════════════════════════════════
+// RENDER
+// ═══════════════════════════════════════════════════════════════
+function render(){
+  try{
+    refreshMetrics();
+    const app=document.getElementById("app");if(!app)return;
+
+    // Save scroll position of main content area before re-render
+    const mainEl=app.querySelector(".main");
+    const scrollTop=mainEl?mainEl.scrollTop:0;
+
+    const sc=state.selectedClientId?getClient(state.selectedClientId):null;
+    const scm=sc?metricsCache[sc.id]:null;
+    if(state.selectedClientId&&!sc)state.selectedClientId=null;
+    let h=renderHeader();h+=`<div class="body-wrap">`;
+    if(sc&&scm){h+=renderSidebar(sc,scm);h+=`<div class="main">${renderDetail(sc,scm)}</div>`;}
+    else h+=`<div class="main">${renderMain()}</div>`;
+    h+=`</div>`;
+    if(state.showModal==="addClient")h+=renderAddModal();
+    if(state.showModal==="manageTeam")h+=renderTeamModal();
+    if(state.showModal==="addVatReturn")h+=renderAddVatReturnModal();
+    if(state.showModal==="addCredential")h+=renderAddCredentialModal();
+
+    app.innerHTML=h;bindEvents();
+
+    // Restore scroll position after re-render
+    const newMainEl=app.querySelector(".main");
+    if(newMainEl&&scrollTop>0)newMainEl.scrollTop=scrollTop;
+
+  }catch(err){
+    console.error(err);
+    document.getElementById("app").innerHTML=`<div style="padding:40px;color:var(--red);font-family:var(--mono)"><pre>${err.message}\n${err.stack}</pre></div>`;
+  }
+}
+
+function renderHeader(){
+  const tabs=[["dashboard","Dashboard"],["clients","Clients"],["deadlines","Deadlines"],["team","Team"]];
+  return`<div class="header"><div class="logo"><div class="logo-mark">CT</div><div><div class="logo-text">UAE Compliance Tracker</div><div class="logo-sub">Accounting &amp; Tax Ops</div></div></div><div class="nav">${tabs.map(([k,l])=>`<button class="nav-btn ${state.activeTab===k&&!state.selectedClientId?'active':''}" data-nav="${k}">${l}</button>`).join("")}</div><div class="header-actions"><button class="btn" data-action="openManageTeam">👥 Team (${state.teamMembers.length})</button><button class="btn btn-primary" data-action="openAddClient">+ Add Client</button>${currentUser?`<div style="display:flex;align-items:center;gap:8px;margin-left:8px;padding-left:12px;border-left:1px solid var(--border)"><span style="font-size:12px;color:var(--text-muted)">${esc(currentUser.name)}</span><span style="font-size:9px;padding:2px 6px;border-radius:4px;background:${currentUser.role==='admin'?'var(--accent-soft)':'var(--bg-elevated)'};color:${currentUser.role==='admin'?'var(--accent)':'var(--text-muted)'};font-weight:700;text-transform:uppercase">${currentUser.role}</span>${currentUser.role==='admin'?'<a href="/admin" style="font-size:11px;color:var(--accent);text-decoration:none">⚙</a>':''}<button class="btn btn-sm" data-action="logout" style="font-size:11px">Logout</button></div>`:''}</div></div>`;
+}
+
+function renderMain(){
+  switch(state.activeTab){
+    case"dashboard":return renderDashboard();case"clients":return renderClientsList();
+    case"deadlines":return renderDeadlines();case"team":return renderTeamView();default:return renderDashboard();
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// DASHBOARD
+// ═══════════════════════════════════════════════════════════════
+function renderDashboard(){
+  const total=state.clients.length;
+  if(!total&&!state.teamMembers.length)return`<div class="empty-state"><div class="empty-state-icon">📋</div><div class="empty-state-title">Welcome to UAE Compliance Tracker</div><div class="empty-state-text">Set up your team, then add clients.</div><div style="display:flex;gap:10px;justify-content:center"><button class="btn" data-action="openManageTeam">👥 Set Up Team</button><button class="btn btn-primary" data-action="openAddClient">+ Add Client</button></div></div>`;
+  if(!total)return`<div class="empty-state"><div class="empty-state-icon">📋</div><div class="empty-state-title">No Clients Yet</div><button class="btn btn-primary" data-action="openAddClient">+ Add First Client</button></div>`;
+
+  const completed=state.clients.filter(c=>metricsCache[c.id]?.overallStatus==="Completed").length;
+  const blocked=state.clients.filter(c=>metricsCache[c.id]?.overallStatus==="Blocked").length;
+  const allDL=state.clients.flatMap(c=>metricsCache[c.id]?.deadlines||[]);
+  const urgent=allDL.filter(d=>d.days!=null&&d.days>=0&&d.days<=7).length;
+  const overdue=allDL.filter(d=>d.days!=null&&d.days<0).length;
+  const avgPct=Math.round(state.clients.reduce((s,c)=>s+(metricsCache[c.id]?.totalPct||0),0)/total);
+
+  let h=`<div class="stat-grid cols-6">${[{l:"Total Clients",v:total,c:"var(--blue)"},{l:"Completed",v:completed,c:"var(--green)"},{l:"Blocked",v:blocked,c:"var(--red)"},{l:"Due ≤7 Days",v:urgent,c:"var(--amber)"},{l:"Overdue",v:overdue,c:"var(--red)"},{l:"Avg Completion",v:avgPct+"%",c:"var(--accent)"}].map(s=>`<div class="stat-card"><div class="stat-value" style="color:${s.c}">${s.v}</div><div class="stat-label">${s.l}</div></div>`).join("")}</div>`;
+
+  h+=`<div class="filter-bar"><input class="form-input search-input" placeholder="Search clients..." value="${esc(state.search)}" data-action="search">${selectHTML("fs",state.filterStatus,["All",...STATUSES],'data-action="filterStatus"')}${selectHTML("ft",state.filterTeam,["All",...getTeamOptions()],'data-action="filterTeam"')}</div>`;
+
+  const fl=getFilteredClients();
+  h+=`<div class="card" style="padding:0;overflow:auto"><table style="min-width:900px"><thead><tr><th>Client</th><th>Overall</th><th style="min-width:120px">Completion</th><th>Accounting</th><th>VAT</th><th>Corp Tax</th><th>Documents</th><th>Logins</th><th>Next Deadline</th><th>Owner</th></tr></thead><tbody>`;
+  fl.forEach(c=>{const m=metricsCache[c.id];const dl=m.deadlines[0];h+=`<tr style="cursor:pointer" data-client="${c.id}"><td style="font-weight:700;color:var(--text-primary);min-width:160px">${esc(c.name)}</td><td>${badgeHTML(m.overallStatus,1)}</td><td>${progressHTML(m.totalPct)}</td><td>${badgeHTML(m.acctStatus,1)}</td><td>${badgeHTML(m.vatStatus,1)}</td><td>${badgeHTML(m.ctStatus,1)}</td><td>${badgeHTML(m.docsStatus,1)}</td><td>${badgeHTML(m.loginsStatus,1)}</td><td style="font-size:12px;white-space:nowrap">${dl?`<span style="color:${dl.days<0?'var(--red)':dl.days<=7?'var(--amber)':'var(--text-muted)'}">${esc(dl.label)} · ${dl.days<0?Math.abs(dl.days)+'d overdue':dl.days+'d'}</span>`:'—'}</td><td style="font-size:12px;color:var(--text-muted)">${esc(c.assignedTeam)}</td></tr>`;});
+  h+=`</tbody></table>`;if(!fl.length)h+=`<div style="padding:40px;text-align:center;color:var(--text-muted)">No clients match</div>`;h+=`</div>`;
+
+  const aw=state.clients.flatMap(c=>(metricsCache[c.id]?.warnings||[]).map(w=>({client:c.name,warning:w})));
+  if(aw.length)h+=`<div class="card" style="border-color:var(--red-border)"><div class="card-title">⚠ Warnings</div>${aw.slice(0,15).map(w=>`<div style="display:flex;gap:12px;padding:6px 12px;background:var(--red-bg);border-radius:var(--radius);margin-bottom:4px;font-size:12px"><span style="font-weight:700;color:var(--red);min-width:180px">${esc(w.client)}</span><span style="color:var(--amber)">${esc(w.warning)}</span></div>`).join("")}</div>`;
+  return h;
+}
+
+function renderClientsList(){
+  if(!state.clients.length)return`<div class="empty-state"><div class="empty-state-icon">📁</div><div class="empty-state-title">No Clients</div><button class="btn btn-primary" data-action="openAddClient">+ Add Client</button></div>`;
+  const fl=getFilteredClients();
+  let h=`<div class="filter-bar"><input class="form-input search-input" placeholder="Search..." value="${esc(state.search)}" data-action="search">${selectHTML("ft",state.filterTeam,["All",...getTeamOptions()],'data-action="filterTeam"')}</div><div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:16px">`;
+  fl.forEach(c=>{const m=metricsCache[c.id];h+=`<div class="card" data-client="${c.id}" style="cursor:pointer"><div style="display:flex;justify-content:space-between;margin-bottom:12px"><div><div style="font-weight:700;color:var(--text-primary)">${esc(c.name)}</div><div style="font-size:11px;color:var(--text-muted)">${esc(c.entityType)} · ${esc(c.assignedTeam)}</div></div>${badgeHTML(m.overallStatus,1)}</div>${progressHTML(m.totalPct)}</div>`;});
+  h+=`</div>`;return h;
+}
+
+function renderDeadlines(){
+  if(!state.clients.length)return`<div class="empty-state"><div class="empty-state-icon">📅</div><div class="empty-state-title">No Deadlines</div></div>`;
+  const all=state.clients.flatMap(c=>(metricsCache[c.id]?.deadlines||[]).map(d=>({...d,cn:c.name,cid:c.id})));
+  all.sort((a,b)=>(a.days??999)-(b.days??999));
+  const sec=(t,items,col)=>{if(!items.length)return"";return`<div style="margin-bottom:24px"><div class="form-label" style="color:${col};font-size:12px;margin-bottom:8px">${t} (${items.length})</div>${items.map(d=>`<div class="deadline-item" data-client="${d.cid}" data-detail="${d.type}"><span style="font-weight:700;color:var(--text-primary);min-width:180px">${esc(d.cn)}</span><span style="font-size:12px;color:var(--text-muted);min-width:130px">${esc(d.label)}</span><span style="font-size:12px;color:var(--text-muted)">${fmtDate(d.date)}</span><span style="font-size:12px;font-weight:700;margin-left:auto;color:${d.days<0?'var(--red)':d.days<=7?'var(--amber)':'var(--blue)'}">${d.days<0?Math.abs(d.days)+'d overdue':d.days+'d'}</span></div>`).join("")}</div>`;};
+  let h=`<h2 style="font-size:18px;font-weight:800;margin-bottom:20px">Upcoming Deadlines</h2>`;
+  h+=sec("OVERDUE",all.filter(d=>d.days!=null&&d.days<0),"var(--red)");
+  h+=sec("DUE WITHIN 30 DAYS",all.filter(d=>d.days!=null&&d.days>=0&&d.days<=30),"var(--amber)");
+  h+=sec("LATER",all.filter(d=>d.days==null||d.days>30),"var(--blue)");
+  if(!all.length)h+=`<div style="padding:40px;text-align:center;color:var(--text-muted)">No pending deadlines</div>`;
+  return h;
+}
+
+function renderTeamView(){
+  if(!state.teamMembers.length)return`<div class="empty-state"><div class="empty-state-icon">👥</div><div class="empty-state-title">No Team Members</div><button class="btn btn-primary" data-action="openManageTeam">👥 Set Up Team</button></div>`;
+  let h=`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px"><h2 style="font-size:18px;font-weight:800">Team Workload</h2><button class="btn" data-action="openManageTeam">Manage Team</button></div>`;
+  const ua=state.clients.filter(c=>c.assignedTeam==="Unassigned");
+  if(ua.length)h+=`<div class="alert alert-warning" style="margin-bottom:16px">⚠ ${ua.length} client${ua.length!==1?'s':''} unassigned</div>`;
+  h+=`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px">`;
+  state.teamMembers.forEach(member=>{
+    const mc=state.clients.filter(c=>c.assignedTeam===member);
+    const avg=mc.length?Math.round(mc.reduce((s,c)=>s+(metricsCache[c.id]?.totalPct||0),0)/mc.length):0;
+    h+=`<div class="team-card"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><div><div style="font-weight:700;font-size:15px;color:var(--text-primary)">${esc(member)}</div><div style="font-size:11px;color:var(--text-muted)">${mc.length} client${mc.length!==1?'s':''}</div></div></div>${progressHTML(avg)}<div style="margin-top:12px">${mc.length?mc.map(c=>`<div data-client="${c.id}" style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border);cursor:pointer"><span style="font-size:13px;color:var(--text-secondary)">${esc(c.name)}</span>${badgeHTML(metricsCache[c.id]?.overallStatus||"Not Started",1)}</div>`).join(""):'<div style="padding:12px 0;font-size:12px;color:var(--text-muted);text-align:center">No clients</div>'}</div></div>`;
+  });
+  h+=`</div>`;return h;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// DETAIL VIEWS
+// ═══════════════════════════════════════════════════════════════
+function renderSidebar(sc,scm){
+  const nav=[["overview","Overview"],["accounting","Accounting"],["vat","VAT Returns"],["ct","Corporate Tax"],["documents","Documents / KYC"],["logins","Login Credentials"]];
+  return`<div class="sidebar"><div class="sidebar-header"><button class="btn" style="width:100%;margin-bottom:12px" data-action="backToList">← Back</button><div style="font-weight:700;font-size:15px;color:var(--text-primary);margin-bottom:3px">${esc(sc.name)}</div><div style="font-size:11px;color:var(--text-muted);margin-bottom:8px">${esc(sc.entityType)} · ${esc(sc.assignedTeam)}</div>${badgeHTML(scm.overallStatus)}<div style="margin-top:10px">${progressHTML(scm.totalPct,8)}</div></div><div class="detail-nav">${nav.map(([k,l])=>`<button class="detail-nav-btn ${state.detailTab===k?'active':''}" data-detail-nav="${k}">${l}</button>`).join("")}<div style="padding:8px 12px;margin-top:8px;font-size:10px;color:var(--text-muted);border-top:1px solid var(--border)">⌨ Use <kbd style="background:var(--bg-elevated);padding:1px 5px;border-radius:3px;font-size:10px;border:1px solid var(--border)">↑</kbd> <kbd style="background:var(--bg-elevated);padding:1px 5px;border-radius:3px;font-size:10px;border:1px solid var(--border)">↓</kbd> to switch tabs · <kbd style="background:var(--bg-elevated);padding:1px 5px;border-radius:3px;font-size:10px;border:1px solid var(--border)">Esc</kbd> to go back</div></div><div class="sidebar-footer"><button class="btn btn-danger" style="width:100%;font-size:11px" data-action="removeClient" data-id="${sc.id}">Remove Client</button></div></div>`;
+}
+
+function renderDetail(sc,scm){
+  switch(state.detailTab){
+    case"overview":return renderOverview(sc,scm);
+    case"accounting":return renderAccounting(sc,scm);
+    case"vat":return renderVAT(sc,scm);
+    case"ct":return renderCT(sc,scm);
+    case"documents":return renderDocuments(sc,scm);
+    case"logins":return renderLogins(sc,scm);
+    default:return renderOverview(sc,scm);
+  }
+}
+
+function renderOverview(sc,scm){
+  let h=`<h2 style="font-size:18px;font-weight:800;margin-bottom:16px">${esc(sc.name)} — Overview</h2>`;
+  h+=`<div class="stat-grid" style="grid-template-columns:repeat(5,1fr)">${[{l:"Accounting",p:scm.acctPct,s:scm.acctStatus},{l:"VAT",p:scm.vatPct,s:scm.vatStatus},{l:"Corp Tax",p:scm.ctPct,s:scm.ctStatus},{l:"Documents",p:scm.docsPct,s:scm.docsStatus},{l:"Logins",p:scm.loginsPct,s:scm.loginsStatus}].map(i=>`<div class="stat-card"><div class="form-label" style="margin-bottom:6px">${i.l}</div><div class="stat-value" style="font-size:22px">${i.p}%</div><div style="margin-top:6px">${badgeHTML(i.s,1)}</div></div>`).join("")}</div>`;
+  h+=`<div class="card"><div class="card-title">Client Details</div><div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px"><div><div class="form-label">Entity Type</div><div>${esc(sc.entityType)}</div></div><div><div class="form-label">Financial Year</div><div>FY ${esc(sc.accounting.financialYear)}</div></div><div><div class="form-label">Assigned To</div>${selectHTML("at",sc.assignedTeam,getTeamOptions(),`data-client-field="${sc.id}"`)}</div><div><div class="form-label">VAT Status</div>${selectHTML("vs",sc.vatApplicable,VAT_OPTIONS,`data-client-vatapp="${sc.id}"`)}</div><div><div class="form-label">CT Applicable</div><div style="color:${sc.ctApplicable?'var(--green)':'var(--red)'};font-weight:600">${sc.ctApplicable?"Yes":"No"}</div></div><div><div class="form-label">Last Updated</div><div style="font-size:12px;color:var(--text-muted)">${fmtDate(sc.lastUpdated)}</div></div></div></div>`;
+  if(scm.warnings.length)h+=`<div class="card" style="border-color:var(--red-border)"><div class="card-title" style="color:var(--red)">⚠ Warnings</div>${scm.warnings.map(w=>`<div style="padding:5px 0;font-size:13px;color:var(--amber);border-bottom:1px solid var(--border)">• ${esc(w)}</div>`).join("")}</div>`;
+  // Blocked reasons summary — specific per module
+  const brs=sc.blockedReasons||{};
+  const allBlocked=[];
+
+  // Accounting blocked months
+  Object.entries(sc.accounting.monthlyStatus).forEach(([k,v])=>{if(v==="Blocked"){const p=k.split("-");const lbl=MONTHS[parseInt(p[1])-1]+" "+p[0];allBlocked.push({area:"Accounting",item:lbl,reason:brs[`acct_${k}`]||""});}});
+
+  // VAT blocked returns
+  (sc.vat.returnDates||[]).forEach((r,i)=>{if(r.filingStatus==="Blocked"||r.paymentStatus==="Blocked")allBlocked.push({area:"VAT",item:r.period,reason:brs[`vat_${i}`]||""});});
+
+  // CT blocked
+  if(sc.ct.status==="Blocked")allBlocked.push({area:"Corp Tax",item:`FY ${sc.ct.financialYear}`,reason:brs.ct||""});
+
+  // Missing mandatory documents
+  const mandDocs=DOCS_LIST.filter(d=>d.mandatory);
+  mandDocs.forEach(doc=>{
+    const val=sc.documents[doc.name];
+    if(val!=="Received"&&val!=="N/A"){
+      const reason=brs[`doc_${doc.name}`]||"";
+      allBlocked.push({area:"Document",item:doc.name,reason:reason||"Not received"});
+    }
+  });
+
+  // VAT Pending status
+  if(sc.vatApplicable&&sc.vatApplicable.startsWith("Pending")){
+    allBlocked.push({area:"VAT Status",item:sc.vatApplicable,reason:brs.vat_pending||""});
+  }
+
+  if(allBlocked.length){
+    h+=`<div class="card" style="border-color:var(--red-border)"><div class="card-title" style="color:var(--red)">🚫 Blocked Items &amp; Pending Reasons</div>`;
+    const grouped={};
+    allBlocked.forEach(b=>{if(!grouped[b.area])grouped[b.area]=[];grouped[b.area].push(b);});
+    Object.entries(grouped).forEach(([area,items])=>{
+      h+=`<div style="margin-bottom:12px"><div style="font-size:11px;font-weight:700;color:var(--red);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px;padding-top:8px;border-top:1px solid var(--border)">${esc(area)}</div>`;
+      items.forEach(b=>{
+        h+=`<div style="display:flex;gap:10px;padding:6px 0;font-size:13px;align-items:center"><span style="color:var(--text-primary);min-width:160px;font-weight:500">${esc(b.item)}</span><span style="color:${b.reason&&b.reason!=='Not received'?'var(--amber)':'var(--text-muted)'};flex:1;font-size:12px;font-style:${b.reason?'normal':'italic'}">${esc(b.reason)||'No reason specified'}</span></div>`;
+      });
+      h+=`</div>`;
+    });
+    h+=`</div>`;
+  }
+  if(scm.deadlines.length)h+=`<div class="card"><div class="card-title">Upcoming Deadlines</div>${scm.deadlines.map(d=>`<div style="display:flex;align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid var(--border);font-size:13px"><span style="font-weight:600;min-width:140px">${esc(d.label)}</span><span style="color:var(--text-muted)">${fmtDate(d.date)}</span><span style="margin-left:auto;font-weight:700;font-family:var(--mono);color:${d.days<0?'var(--red)':d.days<=7?'var(--amber)':'var(--blue)'}">${d.days<0?Math.abs(d.days)+'d overdue':d.days+'d'}</span></div>`).join("")}</div>`;
+  return h;
+}
+
+// 4) ACCOUNTING — Financial Year based
+function renderAccounting(sc,scm){
+  const fy=sc.accounting.financialYear;
+  let h=`<h2 style="font-size:18px;font-weight:800;margin-bottom:16px">Accounting — FY ${esc(fy)}</h2>`;
+  h+=`<div class="card"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><div><span style="color:var(--text-muted)">Financial Year: </span>${selectHTML("fy",fy,FY_OPTIONS,`data-action="changeFY" data-cid="${sc.id}"`)}</div><div><span style="color:var(--text-muted)">Completion: </span><span style="font-weight:700;font-family:var(--mono)">${scm.acctPct}%</span></div></div>${progressHTML(scm.acctPct,10)}</div>`;
+
+  const months=getFYMonths(fy);
+  h+=`<div class="month-grid">`;
+  months.forEach(m=>{
+    const s=sc.accounting.monthlyStatus[m.key]||"Not Started";
+    const br=(sc.blockedReasons||{})[`acct_${m.key}`]||"";
+    const bc=s==="Completed"?"var(--green-border)":s==="Blocked"?"var(--red-border)":s==="In Progress"?"var(--accent-soft)":"var(--border)";
+    h+=`<div class="month-cell" style="border-color:${bc}"><div class="month-name">${m.label}</div>${badgeHTML(s,1)}<div style="margin-top:8px">${selectHTML(`a_${m.key}`,s,ACCT_STATUSES,`data-acct-key="${m.key}" data-cid="${sc.id}"`)}</div>${s==="Blocked"?`<input class="form-input" style="margin-top:6px;font-size:11px;padding:4px 8px;border-color:var(--red-border)" value="${esc(br)}" placeholder="Reason..." data-blocked-reason="acct_${m.key}" data-cid="${sc.id}">`:''}</div>`;
+  });
+  h+=`</div>`;
+  if(scm.acctPending.length)h+=`<div class="card" style="margin-top:12px"><div class="form-label">Pending Months</div><div style="color:var(--amber);font-size:13px">${scm.acctPending.join(", ")}</div></div>`;
+  return h;
+}
+
+// 5) VAT — Grouped by Financial Year
+function renderVAT(sc,scm){
+  let h=`<h2 style="font-size:18px;font-weight:800;margin-bottom:16px">VAT Return Tracker</h2>`;
+  if(sc.vatApplicable==="No")return h+`<div class="card" style="text-align:center;color:var(--text-muted);padding:40px">VAT not applicable</div>`;
+  if(sc.vatApplicable.startsWith("Pending")){
+    const pendingReason=(sc.blockedReasons||{}).vat_pending||"";
+    return h+`<div class="card" style="border-color:var(--amber-border);padding:24px"><div style="text-align:center;margin-bottom:16px"><div style="font-size:16px;margin-bottom:8px">⏳</div><div style="font-size:14px;font-weight:700;color:var(--amber)">${esc(sc.vatApplicable)}</div><div style="font-size:12px;color:var(--text-muted);margin-top:6px">Change to "Yes" in Overview to enable VAT tracking</div></div><div><div class="form-label" style="color:var(--amber)">Reason / Notes</div><input class="form-input" style="border-color:var(--amber-border)" value="${esc(pendingReason)}" placeholder="e.g., Waiting for turnover certificate..." data-blocked-reason="vat_pending" data-cid="${sc.id}"></div></div>`;
+  }
+
+  // No generic warning — per-period accounting check is shown in the table below
+
+  // Certificate upload
+  h+=`<div class="card" style="padding:14px;margin-bottom:12px;border-color:var(--green-border);background:var(--bg-base)">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+      <div class="card-title" style="font-size:13px;margin-bottom:0">📄 Upload VAT Certificate</div>
+      <span style="font-size:11px;color:var(--text-muted)">Auto-extracts return due dates by FY</span>
+    </div>
+    <div id="vatCertDrop" style="border:2px dashed var(--border);border-radius:var(--radius);padding:14px;text-align:center;cursor:pointer;background:var(--bg-card)">
+      <input type="file" id="vatCertInput" accept=".pdf,.jpg,.jpeg,.png" style="display:none">
+      <div style="font-size:12px;color:var(--text-secondary)">Drop VAT registration certificate (PDF) or <span style="color:var(--accent);text-decoration:underline">browse</span></div>
+    </div>
+    <div id="vatCertStatus" style="display:none;margin-top:6px"></div>
+  </div>`;
+
+  h+=`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px"><div style="display:flex;align-items:center;gap:12px"><span style="font-size:13px;color:var(--text-muted)">Financial Year:</span>${selectHTML("vatFY",sc.accounting.financialYear,FY_OPTIONS,`data-action="changeVatFY" data-cid="${sc.id}"`)}</div><button class="btn btn-primary btn-sm" data-action="openAddVatReturn">+ Add Return Period</button></div>`;
+
+  // Filter returns for selected FY only
+  const selectedFY=sc.accounting.financialYear;
+  const fyReturns=[];
+  sc.vat.returnDates.forEach((r,i)=>{
+    const fy=r.fy||r.dueDate.substring(0,4)||"";
+    if(fy===selectedFY)fyReturns.push({...r,idx:i});
+  });
+
+  if(!fyReturns.length){
+    h+=`<div class="card" style="text-align:center;padding:30px;color:var(--text-muted)"><div style="margin-bottom:8px">No VAT return periods for FY ${esc(selectedFY)}</div><div style="font-size:12px">Upload a certificate or click "+ Add Return Period"</div></div>`;
+    return h;
+  }
+
+  const completed=fyReturns.filter(p=>p.filingStatus==="Completed").length;
+  const total=fyReturns.length;
+  const pct=Math.round(completed/total*100);
+  const allDone=completed===total;
+  const hasOverdue=fyReturns.some(p=>p.filingStatus!=="Completed"&&daysUntil(p.dueDate)<0);
+  const hasBlocked=fyReturns.some(p=>p.filingStatus==="Blocked"||p.paymentStatus==="Blocked");
+
+  // FY card
+  h+=`<div class="card" style="padding:0;margin-bottom:16px;border-color:${hasOverdue?'var(--red-border)':hasBlocked?'var(--amber-border)':allDone?'var(--green-border)':'var(--border)'}">`;
+
+  h+=`<div style="padding:14px 18px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--border);background:${allDone?'var(--green-bg)':hasOverdue?'var(--red-bg)':'var(--bg-base)'};border-radius:var(--radius-lg) var(--radius-lg) 0 0">
+    <div style="display:flex;align-items:center;gap:12px">
+      <span style="font-size:16px;font-weight:800;color:var(--text-primary);font-family:var(--mono)">FY ${esc(selectedFY)}</span>
+      ${badgeHTML(allDone?"Completed":hasBlocked?"Blocked":hasOverdue?"Blocked":"In Progress",true)}
+    </div>
+    <div style="display:flex;align-items:center;gap:16px">
+      <span style="font-size:12px;color:var(--text-muted)">${completed}/${total} filed</span>
+      <div style="width:80px">${progressHTML(pct,5)}</div>
+    </div>
+  </div>`;
+
+  h+=`<table><thead><tr><th>Period</th><th>Due Date</th><th>Days</th><th>Accounting</th><th>Filing</th><th>Payment</th><th></th></tr></thead><tbody>`;
+  fyReturns.forEach(r=>{
+    const i=r.idx;
+    const dl=daysUntil(r.dueDate);
+    const isBlocked=r.filingStatus==="Blocked"||r.paymentStatus==="Blocked";
+    const br=(sc.blockedReasons||{})[`vat_${i}`]||"";
+    const isDone=r.filingStatus==="Completed";
+    // Per-period accounting check
+    const acctCheck=checkPeriodAccounting(sc,r.period);
+    const acctOk=acctCheck.complete;
+    const acctLabel=acctOk?`✓ ${acctCheck.total}/${acctCheck.total}`:`${acctCheck.done}/${acctCheck.total}`;
+    const acctColor=acctOk?'var(--green)':'var(--amber)';
+    const acctTip=acctOk?'All months completed':('Pending: '+acctCheck.pending.map(formatMonthKey).join(', '));
+    h+=`<tr style="${isDone?'opacity:0.6':''}">
+      <td style="font-weight:600;${isDone?'text-decoration:line-through':''}">${esc(r.period)}</td>
+      <td style="font-size:12px">${fmtDate(r.dueDate)}</td>
+      <td style="font-size:12px;font-weight:700;font-family:var(--mono);color:${isDone?'var(--green)':dl<0?'var(--red)':dl<=7?'var(--amber)':'var(--blue)'}">${isDone?'✓':dl<0?Math.abs(dl)+'d overdue':dl+'d'}</td>
+      <td style="font-size:11px" title="${esc(acctTip)}"><span style="color:${acctColor};font-weight:700;font-family:var(--mono)">${acctLabel}</span></td>
+      <td>${selectHTML(`vf${i}`,r.filingStatus,STATUSES,`data-vat-idx="${i}" data-vat-field="filingStatus" data-cid="${sc.id}"`)}</td>
+      <td>${selectHTML(`vp${i}`,r.paymentStatus,STATUSES,`data-vat-idx="${i}" data-vat-field="paymentStatus" data-cid="${sc.id}"`)}</td>
+      <td><button class="tm-remove" data-action="removeVatReturn" data-idx="${i}" data-cid="${sc.id}" title="Remove">✕</button></td>
+    </tr>${!acctOk&&!isDone?`<tr><td colspan="7" style="padding:2px 14px 8px;font-size:11px;color:var(--amber);border-bottom:1px solid var(--amber-border)">⚠ Accounting pending for: ${acctCheck.pending.map(formatMonthKey).join(', ')} — complete these before filing</td></tr>`:''}${isBlocked?`<tr><td colspan="7" style="padding:4px 14px 10px;border-bottom:1px solid var(--red-border)"><input class="form-input" style="font-size:11px;padding:4px 8px;border-color:var(--red-border);max-width:100%" value="${esc(br)}" placeholder="Blocked reason..." data-blocked-reason="vat_${i}" data-cid="${sc.id}"></td></tr>`:''}`;
+  });
+  h+=`</tbody></table></div>`;
+
+  // Summary for this FY
+  const overdueCount=fyReturns.filter(r=>r.filingStatus!=="Completed"&&daysUntil(r.dueDate)<0).length;
+  h+=`<div class="card" style="padding:14px"><div style="display:flex;justify-content:space-around;text-align:center">
+    <div><div style="font-size:20px;font-weight:800;font-family:var(--mono);color:var(--text-primary)">${completed}/${total}</div><div style="font-size:10px;color:var(--text-muted);text-transform:uppercase;margin-top:2px">Filed</div></div>
+    <div><div style="font-size:20px;font-weight:800;font-family:var(--mono);color:var(--amber)">${total-completed-overdueCount}</div><div style="font-size:10px;color:var(--text-muted);text-transform:uppercase;margin-top:2px">Upcoming</div></div>
+    <div><div style="font-size:20px;font-weight:800;font-family:var(--mono);color:var(--red)">${overdueCount}</div><div style="font-size:10px;color:var(--text-muted);text-transform:uppercase;margin-top:2px">Overdue</div></div>
+    <div><div style="font-size:20px;font-weight:800;font-family:var(--mono);color:var(--green)">${pct}%</div><div style="font-size:10px;color:var(--text-muted);text-transform:uppercase;margin-top:2px">Complete</div></div>
+  </div></div>`;
+
+  return h;
+}
+
+function renderCT(sc,scm){
+  let h=`<h2 style="font-size:18px;font-weight:800;margin-bottom:16px">Corporate Tax</h2>`;
+  if(!sc.ctApplicable)return h+`<div class="card" style="text-align:center;color:var(--text-muted);padding:40px">CT not applicable</div>`;
+  if(scm.acctPct<100)h+=`<div class="alert alert-warning">⚠ Accounting ${scm.acctPct}% — CT depends on accounting completion.</div>`;
+
+  // Certificate upload
+  h+=`<div class="card" style="padding:14px;margin-bottom:12px;border-color:var(--green-border);background:var(--bg-base)">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+      <div class="card-title" style="font-size:13px;margin-bottom:0">📄 Upload CT Registration Certificate</div>
+      <span style="font-size:11px;color:var(--text-muted)">Auto-extracts due date &amp; FY</span>
+    </div>
+    <div id="ctCertDrop" style="border:2px dashed var(--border);border-radius:var(--radius);padding:14px;text-align:center;cursor:pointer;background:var(--bg-card)">
+      <input type="file" id="ctCertInput" accept=".pdf,.jpg,.jpeg,.png" style="display:none">
+      <div style="font-size:12px;color:var(--text-secondary)">Drop CT certificate (PDF/Image) or <span style="color:var(--accent);text-decoration:underline">browse</span></div>
+    </div>
+    <div id="ctCertStatus" style="display:none;margin-top:6px"></div>
+  </div>`;
+
+  const dl=daysUntil(sc.ct.dueDate);
+  h+=`<div class="card"><div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+    <div><div class="form-label">Financial Year (Assessment Year)</div><div style="font-weight:700;font-size:16px;font-family:var(--mono)">FY ${esc(sc.ct.financialYear)}</div><div style="font-size:11px;color:var(--text-muted);margin-top:2px">Filing due in ${parseInt(sc.ct.financialYear)+1}</div></div>
+    <div><div class="form-label">Filing Due Date</div><div style="display:flex;align-items:center;gap:8px"><input type="date" class="form-input" style="max-width:170px;padding:5px 8px;font-size:13px" value="${sc.ct.dueDate}" data-ct-field="dueDate" data-cid="${sc.id}"><span style="font-size:12px;font-weight:700;font-family:var(--mono);color:${dl<0?'var(--red)':dl<=30?'var(--amber)':'var(--blue)'}">${dl<0?Math.abs(dl)+'d overdue':dl+'d left'}</span></div></div>
+    <div><div class="form-label">Status</div>${selectHTML("cs",sc.ct.status,STATUSES,`data-ct-field="status" data-cid="${sc.id}"`)}</div>
+    <div><div class="form-label">Assigned</div>${selectHTML("cp",sc.ct.assignedPerson,getTeamOptions(),`data-ct-field="assignedPerson" data-cid="${sc.id}"`)}</div>
+    ${sc.ct.status==="Blocked"?`<div style="grid-column:1/-1"><div class="form-label" style="color:var(--red)">Blocked Reason</div><input class="form-input" style="border-color:var(--red-border)" value="${esc((sc.blockedReasons||{}).ct||'')}" placeholder="Why is CT blocked?" data-blocked-reason="ct" data-cid="${sc.id}"></div>`:''}
+    <div style="grid-column:1/-1"><div class="form-label">Notes</div><textarea class="form-input" data-ct-field="notes" data-cid="${sc.id}">${esc(sc.ct.notes)}</textarea></div>
+  </div></div>`;
+  h+=`<div class="alert alert-info" style="font-size:11px">ℹ UAE CT Rule: Filing deadline is 9 months after the end of the financial year. Due date in ${parseInt(sc.ct.financialYear)+1} = FY ${sc.ct.financialYear}. Change due date above and FY will auto-update.</div>`;
+  return h;
+}
+
+// 1) DOCUMENTS — New list with mandatory flags
+function renderDocuments(sc,scm){
+  let h=`<h2 style="font-size:18px;font-weight:800;margin-bottom:16px">Documents / KYC</h2>`;
+  h+=`<div class="card">${progressHTML(scm.docsPct,8)}${scm.docsMissing.length?`<div style="margin-top:8px;font-size:12px;color:var(--red)">Missing mandatory: ${esc(scm.docsMissing.join(", "))}</div>`:''}</div>`;
+  h+=`<div class="card">`;
+  DOCS_LIST.forEach(doc=>{
+    const val=sc.documents[doc.name]||"Pending";
+    const isVatReg=doc.name==="VAT Registration";
+    const showNA=isVatReg;
+    const isPendingMandatory=doc.mandatory&&val==="Pending";
+    const reason=(sc.blockedReasons||{})[`doc_${doc.name}`]||"";
+    h+=`<div class="doc-row" style="flex-wrap:wrap"><div style="display:flex;align-items:center;flex:1;min-width:200px"><span style="font-size:13px;color:var(--text-secondary)">${esc(doc.name)}</span><span class="mandatory-tag ${doc.mandatory?'req':'opt'}">${doc.mandatory?'Required':'Optional'}</span></div><div style="display:flex;gap:4px">
+      <button class="doc-toggle-btn ${val==='Received'?'received':''}" data-doc="${esc(doc.name)}" data-doc-val="Received" data-cid="${sc.id}">Received</button>
+      <button class="doc-toggle-btn ${val==='Pending'?'pending':''}" data-doc="${esc(doc.name)}" data-doc-val="Pending" data-cid="${sc.id}">Pending</button>
+      ${showNA?`<button class="doc-toggle-btn ${val==='N/A'?'na':''}" data-doc="${esc(doc.name)}" data-doc-val="N/A" data-cid="${sc.id}">N/A</button>`:''}
+    </div>${isPendingMandatory?`<div style="width:100%;margin-top:6px"><input class="form-input" style="font-size:11px;padding:4px 8px;border-color:var(--amber-border);background:var(--amber-bg)" value="${esc(reason)}" placeholder="Why is this pending? (e.g., Requested from client on 15 Mar...)" data-blocked-reason="doc_${esc(doc.name)}" data-cid="${sc.id}"></div>`:''}</div>`;
+  });
+  h+=`</div>`;
+  return h;
+}
+
+// 2) DATA & ACCESS — Zoho Access: Given/Not Given
+// 3) LOGINS — Username + Password + timestamps + custom portals
+function renderLogins(sc,scm){
+  let h=`<h2 style="font-size:18px;font-weight:800;margin-bottom:16px">Login Credentials</h2>`;
+  h+=`<div class="card">${progressHTML(scm.loginsPct,8)}</div>`;
+  h+=`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><span style="font-size:13px;color:var(--text-muted)">${sc.logins.length} credential${sc.logins.length!==1?'s':''}</span><button class="btn btn-sm btn-primary" data-action="openAddCredential">+ Add Portal</button></div>`;
+
+  sc.logins.forEach((lg,i)=>{
+    h+=`<div class="cred-card"><div class="cred-header"><div class="cred-title">${esc(lg.name)}</div><div style="display:flex;align-items:center;gap:8px">${toggleHTML(`login_${i}_${sc.id}`,lg.enabled)}<button class="tm-remove" data-action="removeCredential" data-idx="${i}" data-cid="${sc.id}" title="Remove" ${DEFAULT_PORTALS.includes(lg.name)?'style="opacity:0.3;pointer-events:none" title="Default portal"':''}>✕</button></div></div>`;
+    if(lg.enabled){
+      h+=`<div class="cred-fields"><div><div class="form-label" style="font-size:9px">Username / Email</div><input class="form-input" style="font-size:12px;padding:5px 8px" value="${esc(lg.username)}" data-login-field="username" data-login-idx="${i}" data-cid="${sc.id}"></div><div class="pwd-field"><div class="form-label" style="font-size:9px">Password</div><input type="password" class="form-input" style="font-size:12px;padding:5px 8px;padding-right:30px" value="${esc(lg.password)}" data-login-field="password" data-login-idx="${i}" data-cid="${sc.id}"><button class="pwd-toggle" data-action="togglePwd" data-idx="${i}">👁</button></div></div>`;
+      if(lg.createdAt)h+=`<div class="cred-meta">Created: ${fmtDateTime(lg.createdAt)}${lg.lastModified&&lg.lastModified!==lg.createdAt?` · Modified: ${fmtDateTime(lg.lastModified)}`:''}</div>`;
+    }
+    h+=`</div>`;
+  });
+  return h;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// MODALS
+// ═══════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════
+// CERTIFICATE UPLOAD — LOCAL PDF PARSING (no API needed)
+// ═══════════════════════════════════════════════════════════════
+let pdfjsLoaded=false;
+function loadPdfJs(){
+  return new Promise((res,rej)=>{
+    if(pdfjsLoaded){res();return;}
+    const s=document.createElement("script");
+    s.src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js";
+    s.onload=()=>{pdfjsLib.GlobalWorkerOptions.workerSrc="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";pdfjsLoaded=true;res();};
+    s.onerror=()=>rej(new Error("Failed to load PDF library"));
+    document.head.appendChild(s);
+  });
+}
+
+function parseDMY(s){if(!s)return null;const m=s.match(/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/);if(!m)return null;return`${m[3]}-${m[2].padStart(2,'0')}-${m[1].padStart(2,'0')}`;}
+
+function parseDateRange(s){if(!s)return null;const parts=s.split(/\s*[-–]\s*/);if(parts.length===2)return{from:parseDMY(parts[0].trim()),to:parseDMY(parts[1].trim())};return null;}
+
+function parseTaxPeriods(text){
+  const periods=[];
+  const mMap={jan:1,feb:2,mar:3,apr:4,may:5,jun:6,june:6,jul:7,aug:8,sep:9,oct:10,nov:11,dec:12};
+  const re=/(\d{1,2})(?:st|nd|rd|th)?\s+(jan|feb|mar|apr|may|jun|june|jul|aug|sep|oct|nov|dec)\w*\s+to\s+(\d{1,2})(?:st|nd|rd|th)?\s+(jan|feb|mar|apr|may|jun|june|jul|aug|sep|oct|nov|dec)\w*/gi;
+  let m;
+  while((m=re.exec(text))!==null){
+    const sm=mMap[m[2].toLowerCase().substring(0,3)];
+    const em=mMap[m[4].toLowerCase().substring(0,3)];
+    const ed=parseInt(m[3]);
+    if(sm&&em)periods.push({startMonth:sm,endMonth:em,endDay:ed});
+  }
+  return periods;
+}
+
+// UAE public holidays (fixed dates — approximate, some shift yearly)
+function getUAEPublicHolidays(year){
+  return [
+    `${year}-01-01`, // New Year
+    `${year}-12-02`, // National Day
+    `${year}-12-03`, // National Day
+    // Eid Al Fitr (approx — shifts ~11 days each year)
+    // Eid Al Adha (approx)
+    // Islamic New Year, Prophet's Birthday (approx)
+    // These are approximate — exact dates change with lunar calendar
+  ];
+}
+
+// Get next UAE business day (UAE weekend = Sat & Sun since 2022)
+function nextBusinessDay(dateStr){
+  let d=new Date(dateStr);
+  const holidays=new Set([...getUAEPublicHolidays(d.getFullYear()),...getUAEPublicHolidays(d.getFullYear()+1)]);
+  // Keep moving forward if weekend (Sat=6, Sun=0) or public holiday
+  while(d.getDay()===6||d.getDay()===0||holidays.has(d.toISOString().slice(0,10))){
+    d.setDate(d.getDate()+1);
+  }
+  return d.toISOString().slice(0,10);
+}
+
+// Determine Financial Year for a period
+// UAE default: FY = calendar year of the period START month
+// If period crosses year boundary (e.g., Dec-Feb), FY = year of the start month
+function getPeriodFY(startMonth, year){
+  return String(year);
+}
+
+function generateReturnDates(taxPeriods, regDate, yearsAhead=2){
+  const results=[];
+  const mn=["","Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  const regD=new Date(regDate);
+  const endDate=new Date(new Date().getFullYear()+yearsAhead,11,31);
+
+  taxPeriods.forEach(tp=>{
+    for(let yr=regD.getFullYear();yr<=endDate.getFullYear();yr++){
+      let ed=tp.endDay;
+      // Handle Feb end day
+      if(tp.endMonth===2&&ed>28)ed=new Date(yr,1,29).getDate()===29?29:28;
+
+      // For cross-year periods (Dec-Feb), end year is next year
+      let endYr=yr;
+      if(tp.endMonth<tp.startMonth) endYr=yr+1;
+
+      const pEnd=new Date(endYr,tp.endMonth-1,ed);
+      const pStart=new Date(yr,tp.startMonth-1,1);
+
+      if(pEnd<regD||pStart>endDate)continue;
+
+      // Due date = 28th of month after period end
+      let dueMonth=tp.endMonth+1;
+      let dueYear=endYr;
+      if(dueMonth>12){dueMonth=1;dueYear++;}
+
+      // Base due date: 28th
+      const baseDue=`${dueYear}-${String(dueMonth).padStart(2,'0')}-28`;
+      // Adjust to next business day
+      const actualDue=nextBusinessDay(baseDue);
+
+      // Financial year = year when period starts
+      const fy=getPeriodFY(tp.startMonth,yr);
+
+      // Period label
+      const label=`${mn[tp.startMonth]}-${mn[tp.endMonth]} ${tp.endMonth<tp.startMonth?yr+'/'+(endYr%100):yr}`;
+
+      results.push({
+        period:label,
+        dueDate:actualDue,
+        fy:fy,
+        filingStatus:"Not Started",
+        paymentStatus:"Not Started"
+      });
+    }
+  });
+
+  results.sort((a,b)=>a.dueDate.localeCompare(b.dueDate));
+  return results;
+}
+
+async function extractCertificateData(file,type,clientId){
+  const sid=type==="vat"?"vatCertStatus":"ctCertStatus";
+  const el=document.getElementById(sid);
+  if(el){el.style.display="block";el.innerHTML=`<div class="alert alert-info" style="margin:0">⏳ Reading ${esc(file.name)}...</div>`;}
+
+  try{
+    let text="";
+    if(file.type==="application/pdf"){
+      if(el)el.innerHTML=`<div class="alert alert-info" style="margin:0">⏳ Loading PDF parser...</div>`;
+      await loadPdfJs();
+      const ab=await file.arrayBuffer();
+      const pdf=await pdfjsLib.getDocument({data:ab}).promise;
+      if(el)el.innerHTML=`<div class="alert alert-info" style="margin:0">⏳ Extracting text from ${pdf.numPages} page(s)...</div>`;
+      for(let i=1;i<=pdf.numPages;i++){const pg=await pdf.getPage(i);const c=await pg.getTextContent();text+=c.items.map(it=>it.str).join(" ")+"\n";}
+    }else{
+      if(el)el.innerHTML=`<div class="alert alert-warning" style="margin:0">⚠ Please upload the PDF version of the certificate.</div>`;
+      return;
+    }
+
+    if(!text.trim()){if(el)el.innerHTML=`<div class="alert alert-warning" style="margin:0">⚠ No text found in PDF. It may be a scanned image — try a text-based PDF.</div>`;return;}
+
+    const sc=getClient(clientId);if(!sc)return;
+
+    if(type==="vat"){
+      // Normalize: collapse multiple whitespace/newlines
+      const t=text.replace(/\r\n/g,"\n");
+
+      let trn=null;
+      // TRN: handle "Tax Registration Number\n105332551800003" or inline
+      const trnM=t.match(/Tax\s*Registration\s*Number[\s\n]+(\d{15})/i)||t.match(/(\d{15})/);
+      if(trnM)trn=trnM[1];
+
+      let regDate=null;
+      // Handle "Effective Registration Date\n01/03/2026" with possible Arabic text after
+      const regM=t.match(/Effective\s*Registration\s*Date[\s\n]+(\d{1,2}\/\d{1,2}\/\d{4})/i);
+      if(regM)regDate=parseDMY(regM[1]);
+
+      let firstPeriod=null;
+      // Handle "First VAT Return Period\n01/03/2026 - 31/05/2026"
+      const fpM=t.match(/First\s*VAT\s*Return\s*Period[\s\n]+([\d\/]+\s*[-–]\s*[\d\/]+)/i);
+      if(fpM)firstPeriod=parseDateRange(fpM[1]);
+
+      let firstDue=null;
+      // Handle "VAT Return due date\n29/06/2026"
+      const ddM=t.match(/VAT\s*Return\s*due\s*date[\s\n]+(\d{1,2}\/\d{1,2}\/\d{4})/i);
+      if(ddM)firstDue=parseDMY(ddM[1]);
+
+      // Extract tax periods pattern — handle multi-line
+      let pText="";
+      const tpM=t.match(/Start\s*and\s*end\s*dates?\s*of\s*Tax\s*periods?[\s\n]+([\s\S]*?)(?:List\s*of|قامئة|قائمة|licenses|\n\s*\n|Legal\s*Name)/i);
+      if(tpM)pText=tpM[1];
+      if(!pText){const t2=t.match(/((?:\d{1,2}(?:st|nd|rd|th)?\s+\w+\s+to\s+\d{1,2}(?:st|nd|rd|th)?\s+\w+[\s,]*)+)/i);if(t2)pText=t2[1];}
+
+      const taxPeriods=parseTaxPeriods(pText);
+
+      if(taxPeriods.length>0&&regDate){
+        const rds=generateReturnDates(taxPeriods,regDate,2);
+        let added=0;
+        rds.forEach(rd=>{if(!sc.vat.returnDates.some(e=>e.period===rd.period)){sc.vat.returnDates.push({id:uid(),period:rd.period,dueDate:rd.dueDate,fy:rd.fy||"",filingStatus:"Not Started",paymentStatus:"Not Started"});added++;}});
+        sc.vat.returnDates.sort((a,b)=>a.dueDate.localeCompare(b.dueDate));
+        markUpdated(sc);
+        let msg=`✅ Extracted <b>${added}</b> VAT return period${added!==1?'s':''}`;
+        if(trn)msg+=` · TRN: <b>${esc(trn)}</b>`;
+        if(regDate)msg+=` · Registered: <b>${fmtDate(regDate)}</b>`;
+        msg+=` · <b>${taxPeriods.length===4?'Quarterly':taxPeriods.length===12?'Monthly':taxPeriods.length+' periods/yr'}</b>`;
+        if(el)el.innerHTML=`<div class="alert" style="margin:0;background:var(--green-bg);border:1px solid var(--green-border);color:var(--green)">${msg}</div>`;
+        updateUI();
+      }else if(firstDue&&firstPeriod){
+        const lbl=`First Return (${fmtDate(firstPeriod.from)} - ${fmtDate(firstPeriod.to)})`;
+        if(!sc.vat.returnDates.some(e=>e.dueDate===firstDue)){sc.vat.returnDates.push({id:uid(),period:lbl,dueDate:firstDue,filingStatus:"Not Started",paymentStatus:"Not Started"});sc.vat.returnDates.sort((a,b)=>a.dueDate.localeCompare(b.dueDate));markUpdated(sc);}
+        let msg=`✅ First VAT return extracted · Due: <b>${fmtDate(firstDue)}</b>`;
+        if(trn)msg+=` · TRN: <b>${esc(trn)}</b>`;
+        msg+=`<br><span style="font-size:11px;color:var(--amber)">⚠ Could not parse full period pattern — add remaining periods manually.</span>`;
+        if(el)el.innerHTML=`<div class="alert" style="margin:0;background:var(--green-bg);border:1px solid var(--green-border);color:var(--green)">${msg}</div>`;
+        updateUI();
+      }else{
+        let msg=`⚠ Could not extract return dates.`;if(trn)msg+=` TRN: ${trn}.`;msg+=` Add periods manually.`;
+        if(el)el.innerHTML=`<div class="alert alert-warning" style="margin:0">${msg}</div>`;
+      }
+    }
+    else if(type==="ct"){
+      const t=text.replace(/\r\n/g,"\n");
+
+      // TRN
+      let trn=null;
+      const ctTrn=t.match(/Tax\s*Registration\s*Number[\s\n]+(\d{15})/i)||t.match(/(\d{15})/);
+      if(ctTrn)trn=ctTrn[1];
+
+      let fpFrom=null,fpTo=null,ctDue=null;
+
+      // PRIMARY: Look for the CT period table row pattern
+      // Format: "January - December" followed by 3 dates (Start, End, Due)
+      // Works for both pdf.js (space-joined) and newline-separated text
+      const monthNames="January|February|March|April|May|June|July|August|September|October|November|December";
+      const rowPattern=new RegExp(`(?:${monthNames})\\s*[-–]\\s*(?:${monthNames})[\\s\\S]*?(\\d{1,2}\\/\\d{1,2}\\/\\d{4})[\\s\\S]*?(\\d{1,2}\\/\\d{1,2}\\/\\d{4})[\\s\\S]*?(\\d{1,2}\\/\\d{1,2}\\/\\d{4})`,"i");
+      const rowMatch=t.match(rowPattern);
+      if(rowMatch){
+        fpFrom=parseDMY(rowMatch[1]);
+        fpTo=parseDMY(rowMatch[2]);
+        ctDue=parseDMY(rowMatch[3]);
+      }
+
+      // FALLBACK 1: Look for "Filing Due Date" with a date
+      if(!ctDue){
+        const duePatterns=[
+          /(?:Filing\s*Due\s*Date|Return\s*Filing\s*Due\s*Date)[\s\S]*?(\d{1,2}\/\d{1,2}\/\d{4})/i,
+          /(?:CT|Corporate\s*Tax)\s*Return\s*due\s*date[\s\n]+(\d{1,2}\/\d{1,2}\/\d{4})/i,
+          /due\s*date[\s\S]*?(\d{1,2}\/\d{1,2}\/\d{4})/i,
+        ];
+        for(const pat of duePatterns){
+          const m=t.match(pat);
+          if(m){ctDue=parseDMY(m[1]);if(ctDue)break;}
+        }
+      }
+
+      // FALLBACK 2: Look for date range as period
+      if(!fpFrom||!fpTo){
+        const periodPatterns=[
+          /First\s*Corporate\s*Tax\s*Period[\s\S]*?(\d{1,2}\/\d{1,2}\/\d{4})[\s\S]*?(\d{1,2}\/\d{1,2}\/\d{4})/i,
+          /(?:Period\s*Start)[\s\S]*?(\d{1,2}\/\d{1,2}\/\d{4})[\s\S]*?(?:Period\s*End)[\s\S]*?(\d{1,2}\/\d{1,2}\/\d{4})/i,
+        ];
+        for(const pat of periodPatterns){
+          const m=t.match(pat);
+          if(m){fpFrom=fpFrom||parseDMY(m[1]);fpTo=fpTo||parseDMY(m[2]);if(fpFrom&&fpTo)break;}
+        }
+      }
+
+      // FALLBACK 3: If we have period end but no due date, calculate (9 months after FY end)
+      if(!ctDue&&fpTo){
+        const d=new Date(fpTo);d.setMonth(d.getMonth()+9);
+        ctDue=nextBusinessDay(d.toISOString().slice(0,10));
+      }
+
+      // FALLBACK 4: Check for CT Registration Application (no dates, just submission)
+      let isApplication=false;
+      let submissionDate=null;
+      let entityName=null;
+      let refNumber=null;
+      if(!ctDue&&!fpFrom){
+        const appMatch=t.match(/Application\s*Submitted\s*Successfully/i);
+        if(appMatch)isApplication=true;
+        const subMatch=t.match(/Submission\s*Date[\s\S]*?(\d{1,2}\s+\w+\s+\d{4})/i);
+        if(subMatch)submissionDate=subMatch[1];
+        const entMatch=t.match(/Entity\s*Name[\s\S]*?:\s*(.+?)(?:\n|Applicant)/i);
+        if(entMatch)entityName=entMatch[1].trim();
+        const refMatch=t.match(/Reference\s*Number[\s\S]*?:\s*(\d+)/i);
+        if(refMatch)refNumber=refMatch[1];
+      }
+
+      // Derive Financial Year
+      // FY = the year the tax period covers, NOT the filing year
+      // Period 01/11/2025 to 31/12/2026 → FY end is 31/12/2026 → FY = 2025 (first year of the period)
+      // Due date 30/09/2027 → FY = 2027 - 1 = 2026? No — check the period end year
+      // Rule: FY = year derived from the period, or due_date_year - 1
+      let ctFY=null;
+      if(fpFrom&&fpTo){
+        // The FY end year is in fpTo. For Jan-Dec calendar year, FY = fpTo year
+        // But the "Financial Year" is the year the period ends
+        // Due is always 9 months after fpTo
+        // So FY = fpTo year - but we label it as the ASSESSMENT year
+        // Actually: if period is 01/11/2025 to 31/12/2026, FY = 2026 (year of period end)
+        // But filing is due 30/09/2027
+        // In UAE: FY = year the financial period ends
+        // The CT FY label should match what FTA shows: the year it ends
+        // For due date display: filing in 2027 is FOR FY ending 2026
+        ctFY=fpTo.substring(0,4);
+      } else if(ctDue){
+        ctFY=String(parseInt(ctDue.substring(0,4))-1);
+      }
+
+      // Apply extracted data
+      if(ctDue)sc.ct.dueDate=ctDue;
+      if(ctFY)sc.ct.financialYear=ctFY;
+      markUpdated(sc);
+
+      // Build result message
+      let msg="";
+      if(isApplication){
+        msg=`ℹ This is a CT <b>Registration Application</b> (not the certificate). No due dates available yet.`;
+        if(entityName)msg+=`<br>Entity: <b>${esc(entityName)}</b>`;
+        if(refNumber)msg+=` · Ref: <b>${esc(refNumber)}</b>`;
+        if(submissionDate)msg+=` · Submitted: <b>${esc(submissionDate)}</b>`;
+        msg+=`<br><span style="font-size:11px">Upload the actual CT Registration Certificate once issued to auto-extract dates.</span>`;
+        if(el)el.innerHTML=`<div class="alert alert-info" style="margin:0">${msg}</div>`;
+      } else if(ctDue){
+        msg=`✅ CT extracted`;
+        msg+=` · Due: <b>${fmtDate(ctDue)}</b>`;
+        if(ctFY)msg+=` · FY: <b>${ctFY}</b>`;
+        if(trn)msg+=` · TRN: <b>${esc(trn)}</b>`;
+        if(fpFrom&&fpTo)msg+=` · Period: ${fmtDate(fpFrom)} to ${fmtDate(fpTo)}`;
+        if(el)el.innerHTML=`<div class="alert" style="margin:0;background:var(--green-bg);border:1px solid var(--green-border);color:var(--green)">${msg}</div>`;
+        updateUI();
+      } else {
+        msg=`⚠ Could not extract CT dates.`;
+        if(trn)msg+=` TRN: <b>${esc(trn)}</b>.`;
+        msg+=` Enter due date manually.`;
+        if(el)el.innerHTML=`<div class="alert alert-warning" style="margin:0">${msg}</div>`;
+      }
+    }
+  }catch(err){
+    console.error(err);
+    const el=document.getElementById(type==="vat"?"vatCertStatus":"ctCertStatus");
+    if(el)el.innerHTML=`<div class="alert alert-warning" style="margin:0">❌ ${esc(err.message)}</div>`;
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// EXCEL IMPORT / EXPORT
+// ═══════════════════════════════════════════════════════════════
+function processExcelFile(file){
+  const statusEl=document.getElementById("importStatus");
+  if(!statusEl)return;
+  statusEl.style.display="block";
+  statusEl.innerHTML=`<div class="alert alert-info" style="margin:0">⏳ Reading: ${esc(file.name)}...</div>`;
+  const reader=new FileReader();
+  reader.onload=function(e){
+    try{
+      const data=new Uint8Array(e.target.result);
+      const wb=XLSX.read(data,{type:'array',cellDates:true});
+      const ws=wb.Sheets[wb.SheetNames[0]];
+      const rows=XLSX.utils.sheet_to_json(ws,{header:1,defval:""});
+      let headerIdx=-1;
+      for(let i=0;i<Math.min(rows.length,10);i++){if(rows[i].some(c=>String(c).toLowerCase().includes("client name"))){headerIdx=i;break;}}
+      if(headerIdx===-1){statusEl.innerHTML=`<div class="alert alert-warning" style="margin:0">⚠ "Client Name" header not found in first 10 rows.</div>`;return;}
+      const hdr=rows[headerIdx].map(h=>String(h).toLowerCase().trim());
+      const col={name:hdr.findIndex(h=>h.includes("client name")),entity:hdr.findIndex(h=>h.includes("entity")),team:hdr.findIndex(h=>h.includes("assigned")||h.includes("team")),vat:hdr.findIndex(h=>h.includes("vat")),ct:hdr.findIndex(h=>h.includes("ct")||h.includes("corporate")),fy:hdr.findIndex(h=>h.includes("year start")||h.includes("financial")),ctdue:hdr.findIndex(h=>h.includes("due date")||h.includes("ct due"))};
+      let imported=0,skipped=0,dupes=0;const errors=[];
+      const existing=new Set([...state.clients.map(c=>c.name.toLowerCase()),...state.bulkClients.map(c=>c.name.toLowerCase())]);
+      const validEntities=ENTITY_TYPES;
+      const parseBool=v=>{const s=String(v||"").toLowerCase().trim();return s===""||s==="yes"||s==="y"||s==="true"||s==="1";};
+      const isDate=s=>/^\d{4}-\d{2}-\d{2}$/.test(s)&&!isNaN(new Date(s).getTime());
+      for(let i=headerIdx+1;i<rows.length;i++){
+        const r=rows[i];const rn=i+1;const name=String(r[col.name]||"").trim();
+        if(!name){skipped++;continue;}
+        if(existing.has(name.toLowerCase())){dupes++;continue;}
+        const eRaw=col.entity>=0?String(r[col.entity]||"").trim():"";
+        let entity="Mainland LLC";
+        if(eRaw){if(validEntities.includes(eRaw))entity=eRaw;else errors.push(`Row ${rn}: Unknown entity "${eRaw}" → Mainland LLC`);}
+        const team=col.team>=0?String(r[col.team]||"").trim()||"Unassigned":"Unassigned";
+        let vat="Yes";
+        if(col.vat>=0){const vr=String(r[col.vat]||"").trim().toLowerCase();if(!vr||vr==="yes")vat="Yes";else if(vr==="no")vat="No";else if(vr.includes("pending")||vr.includes("await"))vat="Pending - Documents Awaited";else if(vr.includes("registration")||vr.includes("progress"))vat="Pending - Registration in Progress";else{errors.push(`Row ${rn}: Unknown VAT "${r[col.vat]}" → Yes`);}}
+        let ct=true;if(col.ct>=0)ct=parseBool(r[col.ct]);
+        state.bulkClients.push({name,entityType:entity,assignedTeam:team,vatApplicable:vat,ctApplicable:ct});
+        existing.add(name.toLowerCase());imported++;
+      }
+      let msg=imported?`<div class="alert" style="margin:0 0 6px;background:var(--green-bg);border:1px solid var(--green-border);color:var(--green)">✅ Imported <b>${imported}</b> client${imported!==1?'s':''}${dupes?` · ${dupes} dupes skipped`:''}${skipped?` · ${skipped} empty rows`:''}</div>`:`<div class="alert alert-warning" style="margin:0 0 6px">No valid clients found</div>`;
+      if(errors.length)msg+=`<div style="padding:6px 10px;background:var(--amber-bg);border:1px solid var(--amber-border);border-radius:var(--radius);font-size:11px;max-height:80px;overflow-y:auto;margin-top:4px"><div style="font-weight:700;color:var(--amber);margin-bottom:2px">${errors.length} warning${errors.length!==1?'s':''}:</div>${errors.map(e=>`<div style="color:var(--text-secondary)">• ${esc(e)}</div>`).join("")}</div>`;
+      statusEl.innerHTML=msg;render();
+    }catch(err){statusEl.innerHTML=`<div class="alert alert-warning" style="margin:0">❌ ${esc(err.message)}</div>`;}
+  };
+  reader.onerror=()=>{statusEl.innerHTML=`<div class="alert alert-warning" style="margin:0">❌ Read failed</div>`;};
+  reader.readAsArrayBuffer(file);
+}
+
+function generateTemplateXLSX(){
+  const wb=XLSX.utils.book_new();
+  const wsData=[
+    ["UAE Compliance Tracker — Client Import Template"],
+    ["Fill details. * = required. VAT: Yes/No/Pending - Documents Awaited/Pending - Registration in Progress. CT: Yes/No. Dates: YYYY-MM-DD"],
+    [],
+    ["Client Name *","Entity Type *","Assigned Team Member","VAT Applicable","CT Applicable"],
+    ["Al Noor Trading","Mainland LLC","","Yes","Yes"],
+    ["Gulf Star","FZE (Free Zone)","","Pending - Documents Awaited","Yes"],
+    ["Horizon","FZCO (Free Zone)","","No","No"],
+  ];
+  const ws=XLSX.utils.aoa_to_sheet(wsData);
+  ws['!cols']=[{wch:36},{wch:24},{wch:26},{wch:34},{wch:18}];
+  ws['!merges']=[{s:{r:0,c:0},e:{r:0,c:4}},{s:{r:1,c:0},e:{r:1,c:4}}];
+  XLSX.utils.book_append_sheet(wb,ws,"Client Import");
+  XLSX.writeFile(wb,"client_import_template.xlsx");
+}
+
+function renderAddModal(){
+  const to=getTeamOptions();const bc=state.bulkClients;
+  let h=`<div class="modal-overlay" data-action="closeModal"><div class="modal" onclick="event.stopPropagation()" style="width:760px;max-width:95vw"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px"><div class="modal-title" style="margin-bottom:0">Add Clients</div><span style="font-size:12px;color:var(--text-muted)">${bc.length} staged</span></div>`;
+
+  // Excel import section
+  h+=`<div class="card" style="padding:14px;margin-bottom:10px;border-color:var(--green-border);background:var(--bg-base)">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+      <div class="card-title" style="font-size:13px;margin-bottom:0"><span style="font-size:15px">📊</span> Import from Excel</div>
+      <a href="#" data-action="downloadTemplate" style="font-size:11px;color:var(--accent);text-decoration:none;font-weight:600">⬇ Download Template</a>
+    </div>
+    <div id="dropZone" style="border:2px dashed var(--border);border-radius:var(--radius);padding:16px;text-align:center;cursor:pointer;background:var(--bg-card)">
+      <input type="file" id="excelFileInput" accept=".xlsx,.xls,.csv" style="display:none">
+      <div style="font-size:12px;color:var(--text-secondary)">Drag &amp; drop Excel file or <span style="color:var(--accent);text-decoration:underline">click to browse</span></div>
+    </div>
+    <div id="importStatus" style="display:none;margin-top:6px"></div>
+  </div>`;
+
+  // Divider
+  h+=`<div style="display:flex;align-items:center;gap:12px;margin-bottom:10px"><div style="flex:1;height:1px;background:var(--border)"></div><span style="font-size:10px;color:var(--text-muted);font-weight:600">OR ADD MANUALLY</span><div style="flex:1;height:1px;background:var(--border)"></div></div>`;
+
+  // Manual input
+  h+=`<div class="card" style="padding:14px;margin-bottom:12px;border-color:var(--accent-soft)"><div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:10px"><div><div class="form-label">Client Name *</div><input class="form-input" id="bcName" placeholder="e.g., Al Noor Trading"></div><div><div class="form-label">Entity Type</div><select class="form-input" id="bcEntity">${ENTITY_TYPES.map(e=>`<option>${e}</option>`).join("")}</select></div><div><div class="form-label">Assigned To</div><select class="form-input" id="bcTeam">${to.map(t=>`<option>${esc(t)}</option>`).join("")}</select></div></div><div style="display:flex;gap:16px;align-items:flex-end"><div style="flex:1"><div class="form-label">VAT</div><select class="form-input" id="bcVAT" style="padding:5px 8px;font-size:12px">${VAT_OPTIONS.map(o=>`<option${o==="Yes"?' selected':''}>${esc(o)}</option>`).join("")}</select></div><label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;padding-bottom:6px"><input type="checkbox" id="bcCT" checked> Corp Tax</label><button class="btn btn-primary btn-sm" data-action="addToList">+ Add to List</button></div></div>`;
+
+  // Staged list
+  if(bc.length){h+=`<div style="max-height:180px;overflow-y:auto;margin-bottom:12px"><table><thead><tr><th style="padding:6px 8px;font-size:9px">#</th><th style="padding:6px 8px;font-size:9px">Name</th><th style="padding:6px 8px;font-size:9px">Entity</th><th style="padding:6px 8px;font-size:9px">VAT</th><th style="padding:6px 8px;font-size:9px"></th></tr></thead><tbody>`;bc.forEach((c,i)=>{h+=`<tr><td style="padding:5px 8px;font-size:11px">${i+1}</td><td style="padding:5px 8px;font-size:12px;font-weight:600">${esc(c.name)}</td><td style="padding:5px 8px;font-size:11px;color:var(--text-muted)">${esc(c.entityType)}</td><td style="padding:5px 8px;font-size:11px;color:${c.vatApplicable==='Yes'?'var(--green)':c.vatApplicable==='No'?'var(--text-muted)':'var(--amber)'}">${c.vatApplicable.startsWith('Pending')?'Pending':c.vatApplicable}</td><td style="padding:5px 8px"><button class="tm-remove" data-action="removeBulkItem" data-idx="${i}">✕</button></td></tr>`;});h+=`</tbody></table></div>`;}
+  else h+=`<div style="padding:16px;text-align:center;background:var(--bg-elevated);border-radius:var(--radius);margin-bottom:12px;border:1px dashed var(--border);font-size:12px;color:var(--text-muted)">No clients staged — import or add manually above</div>`;
+
+  // Footer
+  h+=`<div style="display:flex;justify-content:space-between;align-items:center;padding-top:12px;border-top:1px solid var(--border)"><button class="btn btn-danger btn-sm" data-action="clearBulkList" style="${bc.length?'':'opacity:0.3;pointer-events:none'}">Clear</button><div style="display:flex;gap:8px"><button class="btn" data-action="closeModal">Cancel</button><button class="btn btn-primary" data-action="saveBulkClients" style="${bc.length?'':'opacity:0.3;pointer-events:none'}">Save All (${bc.length})</button></div></div></div></div>`;
+  return h;
+}
+
+function renderTeamModal(){
+  return`<div class="modal-overlay" data-action="closeModal"><div class="modal" onclick="event.stopPropagation()"><div class="modal-title">Manage Team</div>${state.teamMembers.length?`<div class="tm-list">${state.teamMembers.map((m,i)=>`<div class="tm-item"><span class="tm-item-name">${esc(m)}</span><span class="tm-item-count">${state.clients.filter(c=>c.assignedTeam===m).length} clients</span><button class="tm-remove" data-action="removeTeamMember" data-idx="${i}">✕</button></div>`).join("")}</div>`:`<div style="padding:20px;text-align:center;background:var(--bg-elevated);border-radius:var(--radius);margin:12px 0;font-size:13px;color:var(--text-muted)">No team members</div>`}<div style="display:flex;gap:8px;margin-top:8px"><input class="form-input" id="tmName" placeholder="Enter name..." style="flex:1"><button class="btn btn-primary" data-action="addTeamMember">Add</button></div><div class="modal-actions" style="margin-top:24px"><button class="btn" data-action="closeModal">Done</button></div></div></div>`;
+}
+
+// 5) VAT Return Add Modal
+function renderAddVatReturnModal(){
+  return`<div class="modal-overlay" data-action="closeModal"><div class="modal" onclick="event.stopPropagation()"><div class="modal-title">Add VAT Return Period</div><div class="form-group"><label class="form-label">Financial Year</label><select class="form-input" id="vrFY">${FY_OPTIONS.map(y=>`<option${y===String(new Date().getFullYear())?' selected':''}>${y}</option>`).join("")}</select></div><div class="form-group"><label class="form-label">Period Label</label><input class="form-input" id="vrLabel" placeholder="e.g., Q1 (Jan-Mar), Q2 (Apr-Jun)"></div><div class="form-group"><label class="form-label">Return Due Date</label><input type="date" class="form-input" id="vrDueDate"></div><div class="modal-actions"><button class="btn" data-action="closeModal">Cancel</button><button class="btn btn-primary" data-action="saveVatReturn">Add Period</button></div></div></div>`;
+}
+
+// 3) Add Custom Credential Modal
+function renderAddCredentialModal(){
+  return`<div class="modal-overlay" data-action="closeModal"><div class="modal" onclick="event.stopPropagation()"><div class="modal-title">Add Portal / Credential</div><div class="form-group"><label class="form-label">Portal Name</label><input class="form-input" id="credName" placeholder="e.g., Bank Portal, MOHRE, Immigration"></div><div class="modal-actions"><button class="btn" data-action="closeModal">Cancel</button><button class="btn btn-primary" data-action="saveCredential">Add Portal</button></div></div></div>`;
+}
+
+function getFilteredClients(){
+  return state.clients.filter(c=>{
+    if(state.search&&!c.name.toLowerCase().includes(state.search.toLowerCase()))return false;
+    if(state.filterTeam!=="All"&&c.assignedTeam!==state.filterTeam)return false;
+    if(state.filterStatus!=="All"&&metricsCache[c.id]?.overallStatus!==state.filterStatus)return false;
+    return true;
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════
+// EVENT BINDING
+// ═══════════════════════════════════════════════════════════════
+function bindEvents(){
+  document.querySelectorAll("[data-nav]").forEach(el=>el.onclick=()=>{state.activeTab=el.dataset.nav;state.selectedClientId=null;render();});
+  document.querySelectorAll("[data-client]").forEach(el=>el.onclick=(e)=>{if(e.target.closest("select,input,button,.tm-remove"))return;state.selectedClientId=el.dataset.client;state.detailTab=el.dataset.detail||"overview";render();});
+  document.querySelectorAll("[data-detail-nav]").forEach(el=>el.onclick=()=>{state.detailTab=el.dataset.detailNav;render();});
+
+  document.querySelectorAll("[data-action]").forEach(el=>{
+    const a=el.dataset.action;
+    if(a==="openAddClient")el.onclick=()=>{state.showModal="addClient";state.bulkClients=[];render();};
+    if(a==="openManageTeam")el.onclick=()=>{state.showModal="manageTeam";render();};
+    if(a==="openAddVatReturn")el.onclick=()=>{state.showModal="addVatReturn";render();};
+    if(a==="openAddCredential")el.onclick=()=>{state.showModal="addCredential";render();};
+    if(a==="closeModal")el.onclick=()=>{state.showModal=null;render();};
+    if(a==="backToList")el.onclick=()=>{state.selectedClientId=null;render();};
+    if(a==="logout")el.onclick=()=>{logout();};
+    if(a==="search")el.oninput=(e)=>{state.search=e.target.value;render();setTimeout(()=>{const i=document.querySelector('[data-action="search"]');if(i){i.focus();i.selectionStart=i.selectionEnd=state.search.length;}},0);};
+    if(a==="filterStatus")el.onchange=(e)=>{state.filterStatus=e.target.value;render();};
+    if(a==="filterTeam")el.onchange=(e)=>{state.filterTeam=e.target.value;render();};
+    if(a==="removeClient")el.onclick=()=>{if(!confirm("Remove?"))return;state.clients=state.clients.filter(c=>c.id!==el.dataset.id);state.selectedClientId=null;updateAndSave();};
+
+    // Bulk add
+    if(a==="addToList")el.onclick=()=>{
+      const n=document.getElementById("bcName")?.value?.trim();if(!n){alert("Enter client name");return;}
+      if(state.bulkClients.some(c=>c.name.toLowerCase()===n.toLowerCase())){alert("Already in list");return;}
+      state.bulkClients.push({name:n,entityType:document.getElementById("bcEntity")?.value,assignedTeam:document.getElementById("bcTeam")?.value||"Unassigned",vatApplicable:document.getElementById("bcVAT")?.value||"Yes",ctApplicable:document.getElementById("bcCT")?.checked??true});
+      render();setTimeout(()=>{const i=document.getElementById("bcName");if(i)i.focus();},0);
+    };
+    if(a==="removeBulkItem")el.onclick=()=>{state.bulkClients.splice(parseInt(el.dataset.idx),1);render();};
+    if(a==="clearBulkList")el.onclick=()=>{state.bulkClients=[];render();};
+    if(a==="saveBulkClients")el.onclick=()=>{
+      if(!state.bulkClients.length)return;
+      state.bulkClients.forEach(bc=>{const c=createBlankClient(bc);if(bc.ctDueDate)c.ct.dueDate=bc.ctDueDate;state.clients.push(c);});
+      state.bulkClients=[];state.showModal=null;updateAndSave();
+    };
+    if(a==="downloadTemplate")el.onclick=(e)=>{e.preventDefault();generateTemplateXLSX();};
+
+    // Team
+    if(a==="addTeamMember")el.onclick=()=>{const n=document.getElementById("tmName")?.value?.trim();if(!n)return;if(state.teamMembers.includes(n)){alert("Exists");return;}state.teamMembers.push(n);updateAndSave();setTimeout(()=>{const i=document.getElementById("tmName");if(i)i.focus();},0);};
+    if(a==="removeTeamMember")el.onclick=()=>{const idx=parseInt(el.dataset.idx);const nm=state.teamMembers[idx];if(!confirm(`Remove "${nm}"?`))return;state.clients.forEach(c=>{if(c.assignedTeam===nm)c.assignedTeam="Unassigned";if(c.ct.assignedPerson===nm)c.ct.assignedPerson="Unassigned";});state.teamMembers.splice(idx,1);updateAndSave();};
+
+    // 5) VAT Return
+    if(a==="saveVatReturn")el.onclick=()=>{
+      const fy=document.getElementById("vrFY")?.value||"";
+      const label=document.getElementById("vrLabel")?.value?.trim();
+      const due=document.getElementById("vrDueDate")?.value;
+      if(!label||!due){alert("Enter both label and date");return;}
+      const sc=getClient(state.selectedClientId);if(!sc)return;
+      sc.vat.returnDates.push({id:uid(),period:label,dueDate:due,fy:fy,filingStatus:"Not Started",paymentStatus:"Not Started"});
+      sc.vat.returnDates.sort((a,b)=>a.dueDate.localeCompare(b.dueDate));
+      markUpdated(sc);state.showModal=null;updateAndSave();
+    };
+    if(a==="removeVatReturn")el.onclick=()=>{const sc=getClient(el.dataset.cid);if(!sc)return;sc.vat.returnDates.splice(parseInt(el.dataset.idx),1);markUpdated(sc);updateAndSave();};
+
+    // 3) Add credential
+    if(a==="saveCredential")el.onclick=()=>{
+      const nm=document.getElementById("credName")?.value?.trim();if(!nm){alert("Enter portal name");return;}
+      const sc=getClient(state.selectedClientId);if(!sc)return;
+      sc.logins.push({id:uid(),name:nm,enabled:false,username:"",password:"",createdAt:"",lastModified:""});
+      markUpdated(sc);state.showModal=null;updateAndSave();
+    };
+    if(a==="removeCredential")el.onclick=()=>{const sc=getClient(el.dataset.cid);if(!sc)return;const idx=parseInt(el.dataset.idx);if(DEFAULT_PORTALS.includes(sc.logins[idx]?.name))return;sc.logins.splice(idx,1);markUpdated(sc);updateAndSave();};
+
+    // 4) Change FY
+    if(a==="changeFY")el.onchange=(e)=>{
+      const sc=getClient(el.dataset.cid);if(!sc)return;
+      const newFY=e.target.value;sc.accounting.financialYear=newFY;
+      const newMS={};MONTHS.forEach((m,i)=>{const key=`${newFY}-${String(i+1).padStart(2,'0')}`;newMS[key]=sc.accounting.monthlyStatus[key]||"Not Started";});
+      sc.accounting.monthlyStatus=newMS;markUpdated(sc);updateAndSave();
+    };
+
+    // VAT FY switcher — syncs with accounting FY
+    if(a==="changeVatFY")el.onchange=(e)=>{
+      const sc=getClient(el.dataset.cid);if(!sc)return;
+      const newFY=e.target.value;sc.accounting.financialYear=newFY;
+      const newMS={};MONTHS.forEach((m,i)=>{const key=`${newFY}-${String(i+1).padStart(2,'0')}`;newMS[key]=sc.accounting.monthlyStatus[key]||"Not Started";});
+      sc.accounting.monthlyStatus=newMS;markUpdated(sc);updateAndSave();
+    };
+
+    // Password toggle
+    if(a==="togglePwd")el.onclick=()=>{const idx=el.dataset.idx;const inp=document.querySelector(`[data-login-field="password"][data-login-idx="${idx}"]`);if(inp)inp.type=inp.type==="password"?"text":"password";};
+  });
+
+  // Enter keys
+  const tmI=document.getElementById("tmName");if(tmI)tmI.onkeydown=(e)=>{if(e.key==="Enter"){e.preventDefault();document.querySelector('[data-action="addTeamMember"]')?.click();}};
+  const bcI=document.getElementById("bcName");if(bcI)bcI.onkeydown=(e)=>{if(e.key==="Enter"){e.preventDefault();document.querySelector('[data-action="addToList"]')?.click();}};
+
+  // Excel file import
+  const dz=document.getElementById("dropZone"),fi=document.getElementById("excelFileInput");
+  if(dz&&fi){
+    dz.onclick=()=>fi.click();
+    fi.onchange=(e)=>{if(e.target.files[0])processExcelFile(e.target.files[0]);};
+    dz.ondragover=(e)=>{e.preventDefault();dz.style.borderColor='var(--accent)';dz.style.background='var(--accent-soft)';};
+    dz.ondragleave=(e)=>{e.preventDefault();dz.style.borderColor='var(--border)';dz.style.background='var(--bg-card)';};
+    dz.ondrop=(e)=>{e.preventDefault();dz.style.borderColor='var(--border)';dz.style.background='var(--bg-card)';if(e.dataTransfer.files[0])processExcelFile(e.dataTransfer.files[0]);};
+  }
+
+  // VAT certificate upload
+  const vatDz=document.getElementById("vatCertDrop"),vatFi=document.getElementById("vatCertInput");
+  if(vatDz&&vatFi){
+    vatDz.onclick=()=>vatFi.click();
+    vatFi.onchange=(e)=>{if(e.target.files[0]&&state.selectedClientId)extractCertificateData(e.target.files[0],"vat",state.selectedClientId);};
+    vatDz.ondragover=(e)=>{e.preventDefault();vatDz.style.borderColor='var(--accent)';vatDz.style.background='var(--accent-soft)';};
+    vatDz.ondragleave=(e)=>{e.preventDefault();vatDz.style.borderColor='var(--border)';vatDz.style.background='var(--bg-card)';};
+    vatDz.ondrop=(e)=>{e.preventDefault();vatDz.style.borderColor='var(--border)';vatDz.style.background='var(--bg-card)';if(e.dataTransfer.files[0]&&state.selectedClientId)extractCertificateData(e.dataTransfer.files[0],"vat",state.selectedClientId);};
+  }
+
+  // CT certificate upload
+  const ctDz=document.getElementById("ctCertDrop"),ctFi=document.getElementById("ctCertInput");
+  if(ctDz&&ctFi){
+    ctDz.onclick=()=>ctFi.click();
+    ctFi.onchange=(e)=>{if(e.target.files[0]&&state.selectedClientId)extractCertificateData(e.target.files[0],"ct",state.selectedClientId);};
+    ctDz.ondragover=(e)=>{e.preventDefault();ctDz.style.borderColor='var(--accent)';ctDz.style.background='var(--accent-soft)';};
+    ctDz.ondragleave=(e)=>{e.preventDefault();ctDz.style.borderColor='var(--border)';ctDz.style.background='var(--bg-card)';};
+    ctDz.ondrop=(e)=>{e.preventDefault();ctDz.style.borderColor='var(--border)';ctDz.style.background='var(--bg-card)';if(e.dataTransfer.files[0]&&state.selectedClientId)extractCertificateData(e.dataTransfer.files[0],"ct",state.selectedClientId);};
+  }
+
+  // Client fields
+  document.querySelectorAll("[data-client-field]").forEach(el=>{el.onchange=(e)=>{const c=getClient(el.dataset.clientField);if(c){c.assignedTeam=e.target.value;markUpdated(c);updateAndSave();}};});
+  document.querySelectorAll("[data-client-vatapp]").forEach(el=>{el.onchange=(e)=>{const c=getClient(el.dataset.clientVatapp);if(c){c.vatApplicable=e.target.value;if(e.target.value==="Yes"&&!c.vat.returnDates.length){}if(e.target.value==="No")c.documents["VAT Registration"]="N/A";else if(c.documents["VAT Registration"]==="N/A")c.documents["VAT Registration"]="Pending";markUpdated(c);updateAndSave();}};});
+  // Blocked reasons (per-item)
+  document.querySelectorAll("[data-blocked-reason]").forEach(el=>{el.onchange=(e)=>{const c=getClient(el.dataset.cid);if(c){if(!c.blockedReasons)c.blockedReasons={};c.blockedReasons[el.dataset.blockedReason]=e.target.value;markUpdated(c);updateAndSave();}};});
+
+  // Accounting
+  document.querySelectorAll("[data-acct-key]").forEach(el=>{el.onchange=(e)=>{const c=getClient(el.dataset.cid);if(c){c.accounting.monthlyStatus[el.dataset.acctKey]=e.target.value;markUpdated(c);updateAndSave();}};});
+
+  // VAT
+  document.querySelectorAll("[data-vat-field]").forEach(el=>{el.onchange=(e)=>{const c=getClient(el.dataset.cid);if(!c)return;const idx=parseInt(el.dataset.vatIdx);const f=el.dataset.vatField;const v=e.target.value;if(f==="filingStatus"&&v==="Completed"){const r=c.vat.returnDates[idx];if(r){const chk=checkPeriodAccounting(c,r.period);if(!chk.complete){const pendingMonths=chk.pending.map(formatMonthKey).join(", ");alert(`⚠ Cannot complete VAT filing for ${r.period}.\n\nAccounting is not completed for: ${pendingMonths}\n\nPlease complete accounting for these months first.`);e.target.value=c.vat.returnDates[idx].filingStatus;return;}}}c.vat.returnDates[idx][f]=v;markUpdated(c);updateAndSave();};});
+
+  // CT
+  document.querySelectorAll("[data-ct-field]").forEach(el=>{const handler=(e)=>{const c=getClient(el.dataset.cid);if(!c)return;const f=el.dataset.ctField;const v=e.target.value;if(f==="status"&&v==="Completed"){const m=calcMetrics(c);if(m.acctPct<100){alert("⚠ Cannot complete CT before accounting.");e.target.value=c.ct.status;return;}}c.ct[f]=v;if(f==="dueDate"&&v){c.ct.financialYear=String(parseInt(v.substring(0,4))-1);}markUpdated(c);updateAndSave();};if(el.tagName==="TEXTAREA")el.onblur=handler;else el.onchange=handler;});
+
+  // Documents
+  document.querySelectorAll("[data-doc]").forEach(el=>{el.onclick=()=>{const c=getClient(el.dataset.cid);if(c){c.documents[el.dataset.doc]=el.dataset.docVal;markUpdated(c);updateAndSave();}};});
+
+  // Data toggles
+  document.querySelectorAll("[data-toggle]").forEach(el=>{const n=el.dataset.toggle;el.onchange=(e)=>{
+    if(n.startsWith("login_")){
+      const parts=n.split("_");const idx=parseInt(parts[1]);const cid=parts.slice(2).join("_");
+      const c=getClient(cid);if(c&&c.logins[idx]){c.logins[idx].enabled=e.target.checked;if(e.target.checked&&!c.logins[idx].createdAt)c.logins[idx].createdAt=nowISO();markUpdated(c);updateAndSave();}
+    }
+  };});
+
+  // Login fields — username & password with timestamp tracking
+  document.querySelectorAll("[data-login-field]").forEach(el=>{el.onchange=(e)=>{
+    const c=getClient(el.dataset.cid);if(!c)return;
+    const idx=parseInt(el.dataset.loginIdx);const f=el.dataset.loginField;
+    if(c.logins[idx]){
+      c.logins[idx][f]=e.target.value;
+      c.logins[idx].lastModified=nowISO();
+      if(!c.logins[idx].createdAt)c.logins[idx].createdAt=nowISO();
+      markUpdated(c);updateAndSave();
+    }
+  };});
+}
+
+// ═══════════════════════════════════════════════════════════════
+// KEYBOARD NAVIGATION
+// ═══════════════════════════════════════════════════════════════
+const DETAIL_TABS=["overview","accounting","vat","ct","documents","logins"];
+const HEADER_TABS=["dashboard","clients","deadlines","team"];
+
+document.addEventListener("keydown",(e)=>{
+  // Skip if user is typing in an input, select, or textarea
+  const tag=document.activeElement?.tagName;
+  if(tag==="INPUT"||tag==="SELECT"||tag==="TEXTAREA") return;
+
+  // Escape — close modal or go back
+  if(e.key==="Escape"){
+    if(state.showModal){state.showModal=null;render();return;}
+    if(state.selectedClientId){state.selectedClientId=null;render();return;}
+    return;
+  }
+
+  // Arrow Up / Down — navigate detail tabs (when client is open)
+  if(state.selectedClientId && (e.key==="ArrowUp"||e.key==="ArrowDown")){
+    e.preventDefault();
+    const idx=DETAIL_TABS.indexOf(state.detailTab);
+    if(idx===-1) return;
+    if(e.key==="ArrowDown"&&idx<DETAIL_TABS.length-1){state.detailTab=DETAIL_TABS[idx+1];render();}
+    else if(e.key==="ArrowUp"&&idx>0){state.detailTab=DETAIL_TABS[idx-1];render();}
+    return;
+  }
+
+  // Arrow Left / Right — navigate header tabs (when no client is open)
+  if(!state.selectedClientId && !state.showModal && (e.key==="ArrowLeft"||e.key==="ArrowRight")){
+    e.preventDefault();
+    const idx=HEADER_TABS.indexOf(state.activeTab);
+    if(idx===-1) return;
+    if(e.key==="ArrowRight"&&idx<HEADER_TABS.length-1){state.activeTab=HEADER_TABS[idx+1];render();}
+    else if(e.key==="ArrowLeft"&&idx>0){state.activeTab=HEADER_TABS[idx-1];render();}
+    return;
+  }
+
+  // Enter on dashboard/clients — open first or focused client
+  if(!state.selectedClientId && e.key==="Enter"){
+    const firstClient=document.querySelector("[data-client]");
+    if(firstClient){state.selectedClientId=firstClient.dataset.client;state.detailTab="overview";render();}
+    return;
+  }
+
+  // Backspace — go back (when no input focused)
+  if(e.key==="Backspace" && state.selectedClientId){
+    e.preventDefault();
+    state.selectedClientId=null;render();
+    return;
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════
+// INIT
+// ═══════════════════════════════════════════════════════════════
+// Load user and data from server
+(async()=>{
+  await loadCurrentUser();
+  refreshMetrics();render();
+  try{
+    const s=await loadData();
+    if(s&&typeof s==="object"){
+      if(Array.isArray(s.teamMembers))state.teamMembers=s.teamMembers;
+      if(Array.isArray(s.clients))state.clients=s.clients;
+      refreshMetrics();render();
+    }
+  }catch(e){console.warn("Load error:",e);}
+})();
+</script>
+</body>
+</html>

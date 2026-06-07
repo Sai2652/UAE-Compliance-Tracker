@@ -385,7 +385,23 @@ function markUpdated(c){c.lastUpdated=nowISO().slice(0,10);c.lastUpdatedBy=curre
 // ═══════════════════════════════════════════════════════════════
 // RENDER
 // ═══════════════════════════════════════════════════════════════
+// ---- Render coalescing ----
+// Many async loaders call render() when they resolve. If two fire in the same
+// tick they used to rebuild the DOM twice in quick succession, which made
+// clicks miss their targets. We batch all render() calls within one animation
+// frame into a single rebuild.
+let _renderQueued=false, _renderInProgress=false;
 function render(){
+  if(_renderInProgress) return;
+  if(_renderQueued) return;
+  _renderQueued=true;
+  requestAnimationFrame(()=>{
+    _renderQueued=false;
+    _renderInProgress=true;
+    try{ _renderImpl(); } finally { _renderInProgress=false; }
+  });
+}
+function _renderImpl(){
   try{
     refreshMetrics();
     const app=document.getElementById("app");if(!app)return;
@@ -479,7 +495,10 @@ function renderMain(){
 // ═══════════════════════════════════════════════════════════════
 
 async function loadMorningDashboard(force){
-  try{ const j=await apiJSON('/api/dashboard/morning'+(force?'?refresh=1':'')); state.morning=j; state.morningLoadedAt=Date.now(); render(); }catch(e){ console.error(e); }
+  return _once('morning'+(force?'-force':''), async()=>{
+    try{ const j=await apiJSON('/api/dashboard/morning'+(force?'?refresh=1':'')); state.morning=j; state.morningLoadedAt=Date.now(); render(); }
+    catch(e){ console.error(e); state.morning={error:e.message||'Failed to load'}; render(); }
+  });
 }
 
 function renderMorningDashboard(){
@@ -1356,15 +1375,17 @@ function tierOrder(t){ return t==='A'?0:t==='B'?1:t==='C'?2:3; }
 // Cache keyed in `state` so existing render() refreshes pick it up.
 async function ensureReadinessLoaded(force){
   if(!force && state.clientReadiness && state.clientReadinessLoadedAt && (Date.now()-state.clientReadinessLoadedAt)<60000) return state.clientReadiness;
-  try{
-    const j=await apiJSON('/api/clients/readiness');
-    state.clientReadiness=j;
-    state.clientReadinessLoadedAt=Date.now();
-    state.clientReadinessByClient={};
-    (j.clients||[]).forEach(r=>{ state.clientReadinessByClient[String(r.clientId)]=r; });
-    render();
-    return j;
-  }catch(e){ console.error('[readiness]', e); return null; }
+  return _once('readiness', async()=>{
+    try{
+      const j=await apiJSON('/api/clients/readiness');
+      state.clientReadiness=j;
+      state.clientReadinessLoadedAt=Date.now();
+      state.clientReadinessByClient={};
+      (j.clients||[]).forEach(r=>{ state.clientReadinessByClient[String(r.clientId)]=r; });
+      render();
+      return j;
+    }catch(e){ console.error('[readiness]', e); return null; }
+  });
 }
 function readinessFor(clientId){
   const map=state.clientReadinessByClient||{};
@@ -2217,7 +2238,15 @@ function taskRow(t){
   return `<tr data-task="${t.id}" style="cursor:pointer"><td>${priorityPill(t.priority_score)}</td><td style="font-weight:600">${esc(t.client_name)}</td><td>${esc(t.task_type.replace(/_/g,' '))}</td><td>${statusBadge(t.status)}</td><td style="font-size:12px;color:${dueColor}">${dueStr}</td><td style="font-size:12px;color:var(--text-muted)">${esc(t.assigned_user_name||'Unassigned')}</td></tr>`;
 }
 
-async function loadPriorityQueue(){ try{ const j=await apiJSON('/api/my/priority-queue'); taskState.priority=j.tasks||[]; render(); }catch(e){ console.error(e); } }
+// Tiny in-flight guard — prevents the same loader from being fired on every
+// render while the previous fetch is still pending.
+const _inflight={};
+function _once(key, fn){
+  if(_inflight[key]) return _inflight[key];
+  const p = Promise.resolve().then(fn).finally(()=>{ delete _inflight[key]; });
+  _inflight[key] = p; return p;
+}
+async function loadPriorityQueue(){ return _once('priority', async()=>{ try{ const j=await apiJSON('/api/my/priority-queue'); taskState.priority=j.tasks||[]; render(); }catch(e){ console.error(e); } }); }
 function renderPriorityQueue(){
   if(!taskState.priority.length && !taskState.loading){ setTimeout(loadPriorityQueue,0); return `<div class="empty-state"><div class="empty-state-icon">⚡</div><div class="empty-state-title">Loading your priority work…</div></div>`; }
   if(!taskState.priority.length) return `<div class="empty-state"><div class="empty-state-icon">✅</div><div class="empty-state-title">All caught up</div><div class="empty-state-text">No open tasks assigned to you.</div></div>`;
@@ -2228,7 +2257,7 @@ function renderPriorityQueue(){
   return h;
 }
 
-async function loadTasks(){ try{ const j=await apiJSON('/api/tasks'); taskState.tasks=j.tasks||[]; render(); }catch(e){ console.error(e); } }
+async function loadTasks(){ return _once('tasks', async()=>{ try{ const j=await apiJSON('/api/tasks'); taskState.tasks=j.tasks||[]; render(); }catch(e){ console.error(e); } }); }
 function renderTasksBoard(){
   if(!taskState.tasks.length){ setTimeout(loadTasks,0); }
   const byStatus={};
@@ -2243,7 +2272,7 @@ function renderTasksBoard(){
   return h;
 }
 
-async function loadDocuments(){ try{ const j=await apiJSON('/api/documents?status=pending'); taskState.documents=j.documents||[]; render(); }catch(e){ console.error(e); } }
+async function loadDocuments(){ return _once('documents', async()=>{ try{ const j=await apiJSON('/api/documents?status=pending'); taskState.documents=j.documents||[]; render(); }catch(e){ console.error(e); } }); }
 function renderDocumentsView(){
   if(!taskState.documents.length){ setTimeout(loadDocuments,0); }
   let h=`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><div class="card-title">📎 Missing Documents (${taskState.documents.length})</div><button class="btn btn-primary" data-action="openNewDoc">+ Request Document</button></div>`;
@@ -2257,7 +2286,7 @@ function renderDocumentsView(){
   return h;
 }
 
-async function loadOps(){ try{ const j=await apiJSON('/api/manager/dashboard'); taskState.ops=j; render(); }catch(e){ console.error(e); } }
+async function loadOps(){ return _once('ops', async()=>{ try{ const j=await apiJSON('/api/manager/dashboard'); taskState.ops=j; render(); }catch(e){ console.error(e); } }); }
 function renderManagerDashboard(){
   if(!taskState.ops){ setTimeout(loadOps,0); return `<div class="empty-state"><div class="empty-state-icon">📊</div><div class="empty-state-title">Loading manager dashboard…</div></div>`; }
   const o=taskState.ops;

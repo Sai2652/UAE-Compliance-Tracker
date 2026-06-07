@@ -5,6 +5,11 @@ var path = require('path');
 var { initDatabase } = require('./database');
 var { verifyToken } = require('./auth');
 var apiRoutes = require('./api');
+var supabase = require('./supabase');
+var taskEngine = require('./taskEngine');
+var obligationEngine = require('./obligationEngine');
+var escalationEngine = require('./escalationEngine');
+var slaMonitor = require('./slaMonitor');
 
 var app = express();
 var PORT = process.env.PORT || 3000;
@@ -42,4 +47,18 @@ app.listen(PORT, '0.0.0.0', function() {
   console.log('  Running at: http://localhost:' + PORT);
   console.log('  Admin: ' + (process.env.ADMIN_EMAIL || 'admin@tracker.com'));
   console.log('');
+  // Compliance / task engine bootstrap (non-fatal if Supabase is missing).
+  supabase.probe().then(function(r) {
+    if (!r.ok) {
+      console.warn('[compliance] Supabase probe failed:', r.error, '— task engine disabled. Run db/schema.sql and set env vars.');
+      return;
+    }
+    console.log('[compliance] Supabase connected — engines starting');
+    taskEngine.startScheduler();
+    obligationEngine.startScheduler();
+    escalationEngine.startScheduler();
+    // Recompute SLA statuses once on boot and then hourly.
+    setTimeout(function(){ slaMonitor.recomputeAll().catch(function(e){ console.error('[sla] init:', e.message); }); }, 15000);
+    setInterval(function(){ slaMonitor.recomputeAll().catch(function(e){ console.error('[sla]:', e.message); }); }, 60 * 60 * 1000);
+  }).catch(function(e){ console.warn('[compliance] probe error:', e.message); });
 });

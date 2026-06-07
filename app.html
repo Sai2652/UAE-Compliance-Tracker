@@ -369,7 +369,7 @@ function calcMetrics(c){
 // ═══════════════════════════════════════════════════════════════
 // STATE
 // ═══════════════════════════════════════════════════════════════
-let state={clients:[],teamMembers:[],activeTab:"dashboard",selectedClientId:null,detailTab:"overview",search:"",filterStatus:"All",filterTeam:"All",showModal:null,bulkClients:[]};
+let state={clients:[],teamMembers:[],activeTab:"morning",selectedClientId:null,detailTab:"overview",search:"",filterStatus:"All",filterTeam:"All",filterReadiness:"All",filterClientTier:"All",sortByTier:false,showModal:null,bulkClients:[],clientReadiness:null,clientReadinessByClient:{},clientReadinessLoadedAt:0,morning:null,morningLoadedAt:0};
 let metricsCache={};
 
 function refreshMetrics(){metricsCache={};state.clients.forEach(c=>{metricsCache[c.id]=calcMetrics(c);});}
@@ -417,8 +417,17 @@ function render(){
 }
 
 function renderHeader(){
-  const tabs=[["dashboard","Dashboard"],["clients","Clients"],["deadlines","Deadlines"]];
-  if(isAdmin()) tabs.push(["team","Team"]);
+  const tabs=[];
+  if(isAdmin()) tabs.push(["morning","Morning Briefing"]);
+  tabs.push(["priority","My Next Priority Work"]);
+  tabs.push(["dashboard","Clients Overview"]);
+  tabs.push(["calendar","Calendar"]);
+  tabs.push(["clients","Clients"]);
+  tabs.push(["deadlines","Deadlines"]);
+  tabs.push(["tasks","Tasks"]);
+  tabs.push(["documents","Documents"]);
+  tabs.push(["aiAssist","AI Assistant"]);
+  if(isAdmin()) { tabs.push(["command","Command Center"]); tabs.push(["portfolio","Portfolio"]); tabs.push(["reports","Reports"]); tabs.push(["risk","Risk Center"]); tabs.push(["analytics","Team Analytics"]); tabs.push(["health","Health"]); tabs.push(["exceptions","Exceptions"]); tabs.push(["ops","Manager Dashboard"]); tabs.push(["team","Team"]); }
   const adminBtns=isAdmin()?`<button class="btn" data-action="openManageTeam">👥 Team (${state.teamMembers.length})</button><button class="btn btn-primary" data-action="openAddClient">+ Add Client</button>`:'';
   return`<div class="header"><div class="logo"><div class="logo-mark">CT</div><div><div class="logo-text">UAE Compliance Tracker</div><div class="logo-sub">Accounting &amp; Tax Ops</div></div></div><div class="nav">${tabs.map(([k,l])=>`<button class="nav-btn ${state.activeTab===k&&!state.selectedClientId?'active':''}" data-nav="${k}">${l}</button>`).join("")}</div><div class="header-actions">${adminBtns}${currentUser?`<div style="display:flex;align-items:center;gap:8px;margin-left:8px;padding-left:12px;border-left:1px solid var(--border)"><span style="font-size:12px;color:var(--text-muted)">${esc(currentUser.name)}</span><span style="font-size:9px;padding:2px 6px;border-radius:4px;background:${currentUser.role==='admin'?'var(--accent-soft)':'var(--bg-elevated)'};color:${currentUser.role==='admin'?'var(--accent)':'var(--text-muted)'};font-weight:700;text-transform:uppercase">${currentUser.role}</span>${currentUser.role==='admin'?'<a href="/admin" style="font-size:11px;color:var(--accent);text-decoration:none">⚙</a>':''}<button class="btn btn-sm" data-action="logout" style="font-size:11px">Logout</button></div>`:''}</div></div>`;
 }
@@ -426,8 +435,1910 @@ function renderHeader(){
 function renderMain(){
   switch(state.activeTab){
     case"dashboard":return renderDashboard();case"clients":return renderClientsList();
-    case"deadlines":return renderDeadlines();case"team":return renderTeamView();default:return renderDashboard();
+    case"deadlines":return renderDeadlines();case"team":return renderTeamView();
+    case"priority":return renderPriorityQueue();
+    case"tasks":return renderTasksBoard();
+    case"documents":return renderDocumentsView();
+    case"ops":return renderManagerDashboard();
+    case"calendar":return renderCalendar();
+    case"exceptions":return renderExceptions();
+    case"health":return renderHealthBoard();
+    case"command":return renderCommandCenter();
+    case"analytics":return renderAnalytics();
+    case"risk":return renderRiskCenter();
+    case"reports":return renderReports();
+    case"portfolio":return renderPortfolio();
+    case"aiAssist":return renderAIAssistant();
+    case"morning":return renderMorningDashboard();
+    default:return isAdmin()?renderMorningDashboard():renderPriorityQueue();
   }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// PHASE 9 — Morning Manager Dashboard
+// Default landing for admin. Single screen, 8 sections, 30-second comprehension.
+// ═══════════════════════════════════════════════════════════════
+
+async function loadMorningDashboard(force){
+  try{ const j=await apiJSON('/api/dashboard/morning'+(force?'?refresh=1':'')); state.morning=j; state.morningLoadedAt=Date.now(); render(); }catch(e){ console.error(e); }
+}
+
+function renderMorningDashboard(){
+  if(!isAdmin()) return renderPriorityQueue();
+  if(!state.clientReadiness){ setTimeout(ensureReadinessLoaded,0); }
+  if(!state.morning){ setTimeout(loadMorningDashboard,0); return `<div class="empty-state"><div class="empty-state-icon">☕</div><div class="empty-state-title">Composing morning briefing…</div></div>`; }
+  const d=state.morning;
+  const ageSec=Math.floor((Date.now()-new Date(d.generatedAt).getTime())/1000);
+  let h=`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:8px">
+    <div><div style="font-size:20px;font-weight:800">☕ Morning Briefing</div><div style="font-size:11px;color:var(--text-muted)">Generated ${ageSec}s ago · Composed from existing operational data</div></div>
+    <button class="btn btn-sm" id="mb-refresh">↻ Refresh</button>
+  </div>`;
+
+  // ---- Section 8: Business Health Snapshot (top of screen — executive context)
+  h+=renderMB_BusinessHealth(d.businessHealth);
+
+  // ---- Section 5: Filing Readiness chips (clickable)
+  h+=renderMB_ReadinessChips(d.readinessCounts);
+
+  // ---- Sections 1 + 6 side-by-side
+  h+=`<div style="display:grid;grid-template-columns:2fr 1fr;gap:14px;margin-bottom:14px">`;
+  h+=renderMB_TodaysFocus(d.todaysFocus);
+  h+=renderMB_ManagerActions(d.managerActions);
+  h+=`</div>`;
+
+  // ---- Section 2: Critical Deadlines
+  h+=renderMB_Deadlines(d.deadlines);
+
+  // ---- Section 3: Clients Requiring Attention
+  h+=renderMB_ClientsAttention(d.clientsAttention);
+
+  // ---- Section 4: Team Health
+  h+=renderMB_TeamHealth(d.teamHealth);
+
+  // ---- Section 7: Risk Summary (click-throughs at the bottom)
+  h+=renderMB_RiskSummary(d.riskSummary);
+
+  setTimeout(()=>{
+    const r=document.getElementById('mb-refresh'); if(r) r.onclick=()=>{ state.morning=null; loadMorningDashboard(true); };
+    // Click handlers for readiness chips → drill into Clients Overview with filter
+    document.querySelectorAll('[data-mb-readiness]').forEach(b=>{ b.onclick=()=>{ state.filterReadiness=b.dataset.mbReadiness; state.activeTab='dashboard'; render(); }; });
+    // Risk Summary tile click-throughs
+    document.querySelectorAll('[data-mb-go]').forEach(b=>{ b.onclick=()=>{
+      const target=b.dataset.mbGo;
+      if(target==='portfolio_action'){ state.activeTab='portfolio'; portfolioState.subTab='action'; }
+      else if(target==='risk_critical'){ state.activeTab='risk'; riskState.subTab='dashboard'; riskState.readinessFilter='All'; }
+      else if(target==='risk_action'){ state.activeTab='risk'; riskState.subTab='action'; }
+      else if(target==='overdue'){ state.activeTab='dashboard'; }
+      render();
+    }; });
+  },0);
+  return h;
+}
+
+// ----- Section 8 -----
+function renderMB_BusinessHealth(b){
+  if(!b) return '';
+  const tile=(label,val,suffix,color)=>`<div class="card" style="text-align:center"><div style="color:var(--text-muted);font-size:11px;text-transform:uppercase;letter-spacing:0.05em">${label}</div><div style="font-size:24px;font-weight:800;color:${color||'var(--text-primary)'};margin-top:2px">${val==null?'—':val}${suffix||''}</div></div>`;
+  let h=`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px;margin-bottom:12px">`;
+  h+=tile('Active Clients',     b.totalActiveClients);
+  h+=tile('Ready For Filing',   b.readyForFiling, '', 'var(--green)');
+  h+=tile('Blocked',            b.blockedClients, '', b.blockedClients>0?'var(--red)':'var(--text-primary)');
+  h+=tile('Filing Completion',  b.filingCompletionRate, '%', b.filingCompletionRate>=90?'var(--green)':b.filingCompletionRate>=70?'var(--amber)':b.filingCompletionRate==null?null:'var(--red)');
+  h+=tile('SLA Compliance',     b.slaCompliancePct, '%', b.slaCompliancePct>=90?'var(--green)':b.slaCompliancePct>=70?'var(--amber)':b.slaCompliancePct==null?null:'var(--red)');
+  h+=tile('Team Utilisation',   b.teamUtilizationPct, '%', b.teamUtilizationPct>100?'var(--red)':b.teamUtilizationPct>=80?'var(--amber)':'var(--green)');
+  h+=`</div>`;
+  return h;
+}
+
+// ----- Section 5 -----
+function renderMB_ReadinessChips(counts){
+  if(!counts) return '';
+  const order=['high_risk','blocked','filing_due','awaiting_client_approval','awaiting_documents','awaiting_review','partially_ready','ready'];
+  let h=`<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px;align-items:center">
+    <span style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em;margin-right:4px">Filing readiness</span>`;
+  order.forEach(s=>{
+    const n=counts[s]||0; const m=READINESS_STATE_META[s]; if(!m) return;
+    h+=`<button class="btn btn-sm" data-mb-readiness="${s}" style="border-left:3px solid ${m.color}">${esc(m.label)}: <b>${n}</b></button>`;
+  });
+  h+=`</div>`;
+  return h;
+}
+
+// ----- Section 1 -----
+function renderMB_TodaysFocus(tf){
+  if(!tf) return '';
+  const items=tf.items||[];
+  let h=`<div class="card"><div class="card-title">🎯 Today's Focus (Top ${items.length})</div>`;
+  if(!items.length){ h+=`<div style="padding:8px;font-size:12px;color:var(--text-muted)">Nothing requires immediate attention.</div></div>`; return h; }
+  h+=`<div style="overflow:auto"><table style="width:100%;font-size:12px"><thead><tr style="text-align:left;color:var(--text-muted);font-weight:600"><th style="padding:4px">Client</th><th style="padding:4px">Issue</th><th style="padding:4px">Due</th><th style="padding:4px">Owner</th><th style="padding:4px">Recommended action</th></tr></thead><tbody>`;
+  items.forEach(i=>{
+    const due=i.dueDate?`<span style="color:${daysUntilLocal(i.dueDate)<0?'var(--red)':daysUntilLocal(i.dueDate)<=3?'var(--amber)':'var(--text-muted)'};font-weight:700">${i.dueDate}</span>`:'—';
+    h+=`<tr style="cursor:pointer" data-client="${i.clientId}"><td style="padding:6px 4px"><b>${esc(i.clientName)}</b> ${tierBadgeMini(i.tier)}</td><td style="padding:6px 4px">${esc(i.issue)}</td><td style="padding:6px 4px">${due}</td><td style="padding:6px 4px;color:var(--text-muted)">${esc(i.assignedUser||'—')}</td><td style="padding:6px 4px;color:var(--accent)">${esc(i.recommendedAction||'')}</td></tr>`;
+  });
+  h+=`</tbody></table></div></div>`;
+  return h;
+}
+function daysUntilLocal(d){ if(!d) return null; return Math.floor((new Date(d).getTime()-Date.now())/86400000); }
+
+// ----- Section 6 -----
+function renderMB_ManagerActions(actions){
+  let h=`<div class="card" style="border-color:var(--accent-soft)"><div class="card-title" style="color:var(--accent)">→ Recommended Actions Today (${(actions||[]).length})</div>`;
+  if(!actions||!actions.length){ h+=`<div style="padding:8px;font-size:12px;color:var(--text-muted)">Nothing to action.</div></div>`; return h; }
+  h+=`<div style="display:grid;gap:6px">`;
+  actions.forEach(a=>{
+    const clickable=a.clientId||a.taskId;
+    h+=`<div${clickable?` style="cursor:pointer" ${a.taskId?`data-task="${a.taskId}"`:''}${a.clientId?` data-client="${a.clientId}"`:''}`:''} class="card" data-mb-action style="padding:8px;background:var(--bg-deep);border:1px solid var(--border)"><div style="font-size:12px">${esc(a.sentence)}</div></div>`;
+  });
+  h+=`</div></div>`;
+  return h;
+}
+
+// ----- Section 2 -----
+function renderMB_Deadlines(d){
+  if(!d) return '';
+  const tile=(label,n,color)=>`<div class="card" style="text-align:center;border-color:${color||'var(--border)'}"><div style="color:var(--text-muted);font-size:11px;text-transform:uppercase">${label}</div><div style="font-size:22px;font-weight:800;color:${color||'var(--text-primary)'}">${n||0}</div></div>`;
+  let h=`<div class="card-title" style="margin-top:14px;margin-bottom:10px">⏰ Critical Deadlines</div>`;
+  h+=`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px;margin-bottom:12px">`;
+  h+=tile('Overdue',     d.overdueCount, 'var(--red)');
+  h+=tile('Due Today',   d.todayCount,   d.todayCount>0?'var(--amber)':'var(--border)');
+  h+=tile('Next 7 Days', d.next7Count);
+  h+=tile('Next 14 Days',d.next14Count);
+  h+=`</div>`;
+  // By category breakdown (upcoming only)
+  const cats=d.byCategory||{};
+  h+=`<div class="card" style="padding:0;overflow:auto;margin-bottom:14px"><table style="width:100%;font-size:12px"><thead><tr style="text-align:left;color:var(--text-muted)"><th style="padding:6px">Category</th><th style="padding:6px">Count</th><th style="padding:6px">Earliest</th><th style="padding:6px">Latest</th></tr></thead><tbody>`;
+  ['VAT','CT','Registration','Review','Client Approval','Other'].forEach(k=>{
+    const list=cats[k]||[];
+    if(!list.length) return;
+    const dates=list.map(x=>x.dueDate).filter(Boolean).sort();
+    h+=`<tr><td style="padding:6px;font-weight:600">${esc(k)}</td><td style="padding:6px">${list.length}</td><td style="padding:6px">${dates[0]||'—'}</td><td style="padding:6px">${dates[dates.length-1]||'—'}</td></tr>`;
+  });
+  h+=`</tbody></table></div>`;
+  // Overdue detail (if any) — first 8 rows
+  if(d.overdue && d.overdue.length){
+    h+=`<div class="card" style="border-color:var(--red-border);margin-bottom:14px"><div class="card-title" style="color:var(--red)">Overdue (${d.overdueCount})</div><div style="overflow:auto"><table style="width:100%;font-size:12px"><tbody>`;
+    d.overdue.slice(0,8).forEach(t=>{
+      h+=`<tr data-task="${t.taskId}" style="cursor:pointer"><td style="padding:4px;font-weight:600">${esc(t.clientName)}</td><td style="padding:4px">${esc((t.taskType||'').replace(/_/g,' '))}</td><td style="padding:4px;color:var(--red)">${t.dueDate} (${-t.daysToDue}d overdue)</td><td style="padding:4px;color:var(--text-muted)">${esc(t.assignedUser||'—')}</td></tr>`;
+    });
+    h+=`</tbody></table></div></div>`;
+  }
+  return h;
+}
+
+// ----- Section 3 -----
+function renderMB_ClientsAttention(rows){
+  let h=`<div class="card" style="margin-bottom:14px"><div class="card-title">🚨 Top 10 Clients Requiring Attention</div>`;
+  if(!rows||!rows.length){ h+=`<div style="padding:8px;font-size:12px;color:var(--text-muted)">No clients require attention.</div></div>`; return h; }
+  h+=`<div style="overflow:auto"><table style="width:100%;font-size:12px"><thead><tr style="text-align:left;color:var(--text-muted)"><th style="padding:6px">Client</th><th style="padding:6px">Tier</th><th style="padding:6px">Risk</th><th style="padding:6px">Readiness</th><th style="padding:6px">Next Deadline</th><th style="padding:6px">Recommended</th></tr></thead><tbody>`;
+  rows.forEach(r=>{
+    h+=`<tr style="cursor:pointer" data-client="${r.clientId}"><td style="padding:6px;font-weight:700">${esc(r.clientName)}</td><td style="padding:6px">${tierBadgeMini(r.tier)}</td><td style="padding:6px">${riskBandPill(r.riskBand)}</td><td style="padding:6px">${readinessPill(r.readinessState)}</td><td style="padding:6px;color:var(--text-muted)">${r.nextDeadline?r.nextDeadline+(r.nextDeadlineType?' ('+r.nextDeadlineType.replace(/_/g,' ')+')':''):'—'}</td><td style="padding:6px;color:var(--accent)">${esc(r.recommendedAction||'')}</td></tr>`;
+  });
+  h+=`</tbody></table></div></div>`;
+  return h;
+}
+
+// ----- Section 4 -----
+function renderMB_TeamHealth(t){
+  if(!t) return '';
+  const tot=t.totals||{};
+  const tile=(label,val,color)=>`<div class="card" style="text-align:center"><div style="color:var(--text-muted);font-size:11px;text-transform:uppercase">${label}</div><div style="font-size:22px;font-weight:800;color:${color||'var(--text-primary)'}">${val||0}</div></div>`;
+  let h=`<div class="card-title" style="margin-bottom:10px">👥 Team Health</div>`;
+  h+=`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;margin-bottom:12px">`;
+  h+=tile('Total Open',      tot.totalOpenTasks);
+  h+=tile('Overdue',         tot.overdueTasks, tot.overdueTasks>0?'var(--red)':'var(--text-primary)');
+  h+=tile('Pending Reviews', tot.pendingReviews, tot.pendingReviews>5?'var(--amber)':'var(--text-primary)');
+  h+=tile('Blocked',         tot.blockedWork, tot.blockedWork>0?'var(--red)':'var(--text-primary)');
+  h+=tile('Open Escalations',tot.openEscalations, tot.openEscalations>0?'var(--red)':'var(--text-primary)');
+  h+=`</div>`;
+  if(t.byUser && t.byUser.length){
+    h+=`<div class="card" style="padding:0;overflow:auto;margin-bottom:14px"><table style="width:100%;font-size:12px"><thead><tr style="text-align:left;color:var(--text-muted)"><th style="padding:6px">User</th><th style="padding:6px">Workload</th><th style="padding:6px">Open</th><th style="padding:6px">Overdue</th><th style="padding:6px">Reviews</th><th style="padding:6px">Blocked</th></tr></thead><tbody>`;
+    t.byUser.forEach(u=>{
+      const c=u.band==='overloaded'?'var(--red)':u.band==='underutilized'?'var(--blue)':'var(--green)';
+      const pct=Math.min(150,(u.workloadRatio||0)*100);
+      h+=`<tr><td style="padding:6px;font-weight:600">${esc(u.userName)}</td><td style="padding:6px;width:30%"><div style="display:flex;align-items:center;gap:6px"><div style="flex:1;background:var(--bg-deep);height:6px;border-radius:3px;overflow:hidden"><div style="width:${Math.min(100,pct)}%;background:${c};height:100%"></div></div><span style="color:${c};font-weight:700;font-size:11px">${u.workloadRatio||0}</span></div></td><td style="padding:6px">${u.openTasks||0}/${u.capacity||'—'}</td><td style="padding:6px;color:${u.overdueTasks>0?'var(--red)':'var(--text-muted)'}">${u.overdueTasks||0}</td><td style="padding:6px">${u.awaitingReview||0}</td><td style="padding:6px">${u.blockedTasks||0}</td></tr>`;
+    });
+    h+=`</tbody></table></div>`;
+  }
+  if(t.overloaded && t.overloaded.length){
+    h+=`<div class="card" style="border-color:var(--red-border);margin-bottom:14px"><div class="card-title" style="color:var(--red)">⚠ Overloaded (${t.overloaded.length})</div><div style="font-size:12px">${t.overloaded.map(u=>esc(u.userName)+' (ratio '+u.workloadRatio+')').join(' · ')}</div></div>`;
+  }
+  return h;
+}
+
+// ----- Section 7 -----
+function renderMB_RiskSummary(r){
+  if(!r) return '';
+  const tile=(label,n,color,target)=>`<button class="card" data-mb-go="${target}" style="cursor:pointer;text-align:center;border-color:${n>0?(color||'var(--border)'):'var(--border)'}"><div style="color:var(--text-muted);font-size:11px;text-transform:uppercase">${label}</div><div style="font-size:26px;font-weight:800;color:${n>0?(color||'var(--text-primary)'):'var(--text-muted)'};margin-top:2px">${n||0}</div><div style="font-size:10px;color:var(--accent);margin-top:4px">View →</div></button>`;
+  let h=`<div class="card-title" style="margin-bottom:10px">📊 Risk Summary</div><div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px;margin-bottom:14px">`;
+  h+=tile('High-Risk Clients',     r.highRiskClients,        'var(--amber)', 'portfolio_action');
+  h+=tile('Critical-Risk Clients', r.criticalRiskClients,    'var(--red)',   'risk_critical');
+  h+=tile('Open Escalations',      r.openEscalations,        'var(--red)',   'risk_action');
+  h+=tile('Overdue Compliance',    r.overdueComplianceItems, 'var(--red)',   'overdue');
+  h+=`</div>`;
+  return h;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// PHASE 8 — AI Operations Assistant (explainable, deterministic)
+// ═══════════════════════════════════════════════════════════════
+const aiState={
+  subTab: null, // default decided in render() based on role
+  briefing:null, priority:null, nextBest:null, bottlenecks:null,
+  copilotQuestions:null, copilotAnswer:null, copilotKey:null,
+  insightClientId:null, insight:null
+};
+
+function renderAIAssistant(){
+  if(!aiState.subTab){ aiState.subTab = isAdmin() ? 'today' : 'mine'; }
+  const tabs=[];
+  if(isAdmin()) tabs.push(['today',"Today's Focus"]);
+  if(isAdmin()) tabs.push(['copilot','Manager Copilot']);
+  if(isAdmin()) tabs.push(['priority','AI Priority']);
+  tabs.push(['mine','My Next Best']);
+  if(isAdmin()) tabs.push(['bottlenecks','Bottlenecks']);
+  if(isAdmin()) tabs.push(['insight','Client Insight']);
+  let h=`<div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin-bottom:12px"><div class="nav" style="margin:0">`;
+  tabs.forEach(([k,l])=>{ h+=`<button class="nav-btn ${aiState.subTab===k?'active':''}" data-at="${k}">${l}</button>`; });
+  h+=`</div><span style="font-size:11px;color:var(--text-muted);margin-left:8px">Deterministic · Explainable · No external AI</span></div>`;
+  switch(aiState.subTab){
+    case 'today':       h+=renderAIToday(); break;
+    case 'copilot':     h+=renderAICopilot(); break;
+    case 'priority':    h+=renderAIPriority(); break;
+    case 'mine':        h+=renderAINextBest(); break;
+    case 'bottlenecks': h+=renderAIBottlenecks(); break;
+    case 'insight':     h+=renderAIInsight(); break;
+  }
+  setTimeout(()=>{ document.querySelectorAll('[data-at]').forEach(b=>{ b.onclick=()=>{ aiState.subTab=b.dataset.at; render(); }; }); },0);
+  return h;
+}
+
+async function loadAIToday(){ try{ aiState.briefing=await apiJSON('/api/ai/today'); render(); }catch(e){console.error(e);} }
+function renderAIToday(){
+  if(!aiState.briefing){ setTimeout(loadAIToday,0); return `<div class="empty-state"><div class="empty-state-icon">🌅</div><div class="empty-state-title">Composing Today's Focus…</div></div>`; }
+  const b=aiState.briefing;
+  let h=`<div class="card-title" style="margin-bottom:6px">🌅 Today's Focus</div><div style="font-size:11px;color:var(--text-muted);margin-bottom:14px">Generated ${new Date(b.generatedAt).toLocaleTimeString()} · Composed from existing operational data</div>`;
+  (b.sections||[]).forEach(s=>{
+    h+=`<div class="card" style="margin-bottom:12px"><div class="card-title">${esc(s.title)} (${s.items.length})</div>`;
+    if(!s.items.length){ h+=`<div style="padding:6px 0;font-size:12px;color:var(--text-muted)">Nothing requires action here.</div>`; }
+    else{
+      h+=`<ul style="margin:6px 0 0 18px;padding:0;font-size:13px;line-height:1.7">`;
+      s.items.forEach(it=>{
+        const clickable = it.taskId || it.clientId;
+        h+=`<li${clickable?` style="cursor:pointer" ${it.taskId?`data-task="${it.taskId}"`:''} ${it.clientId?`data-client="${it.clientId}"`:''}`:''}><b>${esc(it.headline)}</b>${it.detail?`<div style="font-size:12px;color:var(--text-muted);margin:2px 0 6px 0">${esc(it.detail)}</div>`:''}</li>`;
+      });
+      h+=`</ul>`;
+    }
+    h+=`</div>`;
+  });
+  return h;
+}
+
+async function loadAICopilotQuestions(){ if(aiState.copilotQuestions) return; try{ const j=await apiJSON('/api/ai/copilot/questions'); aiState.copilotQuestions=j.questions; render(); }catch(e){console.error(e);} }
+async function askCopilot(k){ try{ aiState.copilotKey=k; aiState.copilotAnswer=null; render(); aiState.copilotAnswer=await apiJSON('/api/ai/copilot/'+k); render(); }catch(e){ alert(e.message); } }
+function renderAICopilot(){
+  if(!aiState.copilotQuestions){ setTimeout(loadAICopilotQuestions,0); return `<div class="empty-state"><div class="empty-state-icon">🧭</div><div class="empty-state-title">Loading…</div></div>`; }
+  let h=`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:10px;margin-bottom:14px">`;
+  Object.entries(aiState.copilotQuestions).forEach(([k,q])=>{
+    const active=aiState.copilotKey===k;
+    h+=`<button class="card" data-copilot="${k}" style="text-align:left;cursor:pointer;${active?'border-color:var(--accent);background:var(--accent-soft)':''}"><div style="font-size:13px;font-weight:600">${esc(q)}</div></button>`;
+  });
+  h+=`</div>`;
+  if(aiState.copilotKey && !aiState.copilotAnswer){
+    h+=`<div class="card"><div style="padding:8px;font-size:12px;color:var(--text-muted)">Computing answer…</div></div>`;
+  }
+  if(aiState.copilotAnswer){
+    const a=aiState.copilotAnswer;
+    h+=`<div class="card"><div class="card-title">${esc(a.question||'')}</div><div style="font-size:13px;margin-bottom:8px"><b>${esc(a.answer||'')}</b></div>`;
+    if(a.items && a.items.length){
+      h+=`<div style="display:grid;gap:6px">`;
+      a.items.forEach(it=>{
+        const target=it.taskId?`data-task="${it.taskId}"`:it.clientId?`data-client="${it.clientId}"`:'';
+        h+=`<div ${target} style="${target?'cursor:pointer;':''}padding:6px 8px;border-bottom:1px solid var(--border);font-size:12px">${esc(it.sentence||'')}</div>`;
+      });
+      h+=`</div>`;
+    }else{ h+=`<div style="font-size:12px;color:var(--text-muted);padding:6px">No items.</div>`; }
+    h+=`</div>`;
+  }
+  setTimeout(()=>{ document.querySelectorAll('[data-copilot]').forEach(b=>{ b.onclick=()=>askCopilot(b.dataset.copilot); }); },0);
+  return h;
+}
+
+async function loadAIPriority(){ try{ aiState.priority=await apiJSON('/api/ai/priority'); render(); }catch(e){console.error(e);} }
+function renderAIPriority(){
+  if(!aiState.priority){ setTimeout(loadAIPriority,0); return `<div class="empty-state"><div class="empty-state-icon">🎯</div><div class="empty-state-title">Ranking…</div></div>`; }
+  const p=aiState.priority;
+  const col=(title,rows,color)=>{
+    let inner=`<div class="card-title" style="color:${color||'var(--text-primary)'}">${title} (${rows.length})</div>`;
+    if(!rows.length){ return `<div class="card">${inner}<div style="padding:8px;font-size:12px;color:var(--text-muted)">No tasks here.</div></div>`; }
+    inner+=`<div style="display:grid;gap:6px;max-height:560px;overflow:auto">`;
+    rows.forEach(r=>{
+      inner+=`<div data-task="${r.taskId}" style="cursor:pointer;padding:8px;border-bottom:1px solid var(--border);font-size:12px"><div style="display:flex;justify-content:space-between;align-items:center;gap:6px"><b>${esc(r.clientName)} · ${esc((r.taskType||'').replace(/_/g,' '))}</b><b style="color:var(--accent)">${r.priorityScore}</b></div><div style="font-size:11px;color:var(--text-muted);margin-top:2px">${esc(r.rationale||'')}</div><div style="display:flex;gap:6px;margin-top:4px;font-size:11px"><span>Due ${r.dueDate||'—'}</span><span style="color:var(--text-muted)">· ${esc(r.owner||'unassigned')}</span><span style="color:var(--text-muted)">· Tier ${esc(r.tier||'B')}</span></div></div>`;
+    });
+    inner+=`</div>`;
+    return `<div class="card">${inner}</div>`;
+  };
+  let h=`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(360px,1fr));gap:16px">`;
+  h+=col('🔥 Highest Priority', p.highest||[], 'var(--red)');
+  h+=col('⏭ Next Priority',     p.next||[], 'var(--amber)');
+  h+=col('🗓 Upcoming',          p.upcoming||[], 'var(--blue)');
+  h+=`</div>`;
+  return h;
+}
+
+async function loadAINextBest(){ try{ aiState.nextBest=await apiJSON('/api/ai/my/next-best'); render(); }catch(e){console.error(e);} }
+function renderAINextBest(){
+  if(!aiState.nextBest){ setTimeout(loadAINextBest,0); return `<div class="empty-state"><div class="empty-state-icon">⚡</div><div class="empty-state-title">Building your next-best list…</div></div>`; }
+  const items=aiState.nextBest.tasks||[];
+  if(!items.length) return `<div class="empty-state"><div class="empty-state-icon">✅</div><div class="empty-state-title">No open tasks. Enjoy.</div></div>`;
+  let h=`<div class="card-title" style="margin-bottom:10px">⚡ My Next Best Tasks</div><div style="display:grid;gap:8px">`;
+  items.forEach((r,i)=>{
+    h+=`<div data-task="${r.taskId}" style="cursor:pointer" class="card"><div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+      <div><div style="display:flex;gap:6px;align-items:center"><span style="font-size:11px;color:var(--text-muted);font-weight:700">#${i+1}</span><b>${esc(r.clientName)}</b> · ${esc((r.taskType||'').replace(/_/g,' '))}</div><div style="font-size:11px;color:var(--text-muted);margin-top:2px">${esc(r.rationale||'')}</div></div>
+      <div style="text-align:right"><div style="font-size:18px;font-weight:700;color:var(--accent)">${r.adjustedScore}</div><div style="font-size:10px;color:var(--text-muted)">${r.bonusApplied?`+${r.bonusApplied} bonus`:'priority'}</div></div>
+    </div></div>`;
+  });
+  h+=`</div>`;
+  return h;
+}
+
+async function loadAIBottlenecks(){ try{ aiState.bottlenecks=await apiJSON('/api/ai/bottlenecks'); render(); }catch(e){console.error(e);} }
+function renderAIBottlenecks(){
+  if(!aiState.bottlenecks){ setTimeout(loadAIBottlenecks,0); return `<div class="empty-state"><div class="empty-state-icon">🚧</div><div class="empty-state-title">Analyzing…</div></div>`; }
+  const b=aiState.bottlenecks;
+  if(!b.bottlenecks.length) return `<div class="empty-state"><div class="empty-state-icon">✅</div><div class="empty-state-title">No bottlenecks detected.</div></div>`;
+  let h=`<div class="card-title" style="margin-bottom:10px">🚧 Bottleneck Analysis</div><div style="display:grid;gap:10px">`;
+  b.bottlenecks.forEach(x=>{
+    h+=`<div class="card" style="border-left:4px solid var(--amber)"><div style="font-weight:700">${esc(x.label)}: ${x.count} stuck (oldest ${x.oldestDays}d)</div><div style="font-size:12px;color:var(--text-muted);margin-top:4px">${esc(x.headline)}</div><div style="font-size:13px;color:var(--accent);margin-top:6px">→ ${esc(x.recommendation)}</div></div>`;
+  });
+  h+=`</div>`;
+  return h;
+}
+
+async function loadAIInsight(){
+  if(!aiState.insightClientId) return;
+  try{ aiState.insight=await apiJSON('/api/ai/clients/'+aiState.insightClientId+'/insight'); render(); }catch(e){console.error(e);}
+}
+function renderAIInsight(){
+  const clientOpts=state.clients.map(c=>`<option value="${c.id}" ${String(c.id)===String(aiState.insightClientId)?'selected':''}>${esc(c.name)}</option>`).join('');
+  let h=`<div style="display:flex;gap:8px;align-items:center;margin-bottom:12px"><label style="font-size:11px;color:var(--text-muted)">Client</label><select class="form-input" id="ai-insight-pick" style="min-width:260px"><option value="">— select —</option>${clientOpts}</select></div>`;
+  if(!aiState.insightClientId){ h+=`<div class="empty-state"><div class="empty-state-icon">🔎</div><div class="empty-state-title">Pick a client to see the insight panel.</div></div>`; }
+  else if(!aiState.insight){ setTimeout(loadAIInsight,0); h+=`<div class="empty-state"><div class="empty-state-icon">⏳</div><div class="empty-state-title">Composing insight…</div></div>`; }
+  else{
+    const i=aiState.insight;
+    h+=`<div class="card" style="margin-bottom:12px"><div class="card-title">${esc(i.client.name)} — Current Status</div>`;
+    (i.status||[]).forEach(s=>{ if(s) h+=`<div style="font-size:13px;margin:4px 0">${esc(s)}</div>`; });
+    h+=`</div>`;
+    const block=(title,items,renderer,empty,color)=>{
+      let inner=`<div class="card-title" style="color:${color||'var(--text-primary)'}">${title} (${items.length})</div>`;
+      if(!items.length){ return `<div class="card">${inner}<div style="padding:6px 0;font-size:12px;color:var(--text-muted)">${empty}</div></div>`; }
+      inner+=`<div style="display:grid;gap:6px">${items.map(renderer).join('')}</div>`;
+      return `<div class="card">${inner}</div>`;
+    };
+    h+=`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(360px,1fr));gap:12px">`;
+    h+=block('Open Risks', i.openRisks||[], r=>`<div style="padding:6px 0;border-bottom:1px solid var(--border);font-size:12px"><span style="font-weight:700;color:${r.level==='critical'||r.level==='high'?'var(--red)':'var(--amber)'};text-transform:uppercase;font-size:10px">${esc(r.level)}</span> ${esc(r.sentence)}</div>`, 'No active risks.', 'var(--red)');
+    h+=block('Missing Items', i.missingItems||[], m=>`<div style="padding:6px 0;border-bottom:1px solid var(--border);font-size:12px">${esc(m.sentence)}</div>`, 'No pending documents.', 'var(--amber)');
+    h+=block('Upcoming Deadlines (30d)', i.upcomingDeadlines||[], u=>`<div style="padding:6px 0;border-bottom:1px solid var(--border);font-size:12px">${esc(u.sentence)}</div>`, 'No upcoming deadlines.', 'var(--blue)');
+    h+=block('Recommended Next Actions', i.recommendedActions||[], a=>`<div style="padding:6px 0;border-bottom:1px solid var(--border);font-size:12px;color:var(--accent)">→ ${esc(a.sentence)}</div>`, 'No specific actions needed right now.', 'var(--accent)');
+    h+=`</div>`;
+  }
+  setTimeout(()=>{ const sel=document.getElementById('ai-insight-pick'); if(sel) sel.onchange=()=>{ aiState.insightClientId=sel.value||null; aiState.insight=null; render(); }; },0);
+  return h;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// PHASE 7 — Portfolio Management & Service Governance
+// ═══════════════════════════════════════════════════════════════
+const portfolioState={ subTab:'dashboard', dashboard:null, insights:null, alerts:null, actionList:null, sortBy:'overallRisk', sortDir:'desc' };
+
+const TIER_META={ A:{ color:'var(--red)', label:'A · High Priority'}, B:{ color:'var(--accent)', label:'B · Standard'}, C:{ color:'var(--text-muted)', label:'C · Low Priority'} };
+function tierBadge(tier){
+  const m=TIER_META[tier]||TIER_META.B;
+  return `<span style="display:inline-block;padding:2px 8px;border-radius:10px;background:var(--bg-elevated);color:${m.color};font-weight:700;font-size:11px">Tier ${esc(tier||'B')}</span>`;
+}
+function riskBandPill(band){
+  const c={low:'var(--green)',medium:'var(--amber)',high:'var(--red)',critical:'var(--red)'}[band]||'var(--text-muted)';
+  return `<span style="display:inline-block;padding:2px 8px;border-radius:10px;background:var(--bg-elevated);color:${c};font-weight:700;font-size:11px;text-transform:uppercase">${esc(band||'low')}</span>`;
+}
+function scorePill(score, lowIsBad){
+  if(score==null) return `<span style="font-size:11px;color:var(--text-muted)">—</span>`;
+  const good=lowIsBad? score>=70 : score<=30;
+  const bad =lowIsBad? score<=30 : score>=70;
+  const c=good?'var(--green)':bad?'var(--red)':'var(--amber)';
+  return `<span style="font-weight:700;color:${c}">${score}</span>`;
+}
+
+function renderPortfolio(){
+  const tabs=[['dashboard','Dashboard'],['action','Manager Action List'],['insights','Insights'],['alerts','Key Alerts']];
+  let h=`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px"><div class="nav" style="margin:0">`;
+  tabs.forEach(([k,l])=>{ h+=`<button class="nav-btn ${portfolioState.subTab===k?'active':''}" data-pt="${k}">${l}</button>`; });
+  h+=`</div>`;
+  const exp=portfolioExportUrl(); if(exp) h+=`<button class="btn btn-sm" onclick="window.location.href='${exp}'">⬇ Export CSV</button>`;
+  h+=`</div>`;
+  switch(portfolioState.subTab){
+    case 'dashboard': h+=renderPortfolioDashboard(); break;
+    case 'action':    h+=renderPortfolioActionList(); break;
+    case 'insights':  h+=renderPortfolioInsights(); break;
+    case 'alerts':    h+=renderPortfolioAlerts(); break;
+  }
+  setTimeout(()=>{ document.querySelectorAll('[data-pt]').forEach(b=>{ b.onclick=()=>{ portfolioState.subTab=b.dataset.pt; render(); }; }); },0);
+  return h;
+}
+function portfolioExportUrl(){
+  if(portfolioState.subTab==='dashboard') return '/api/portfolio/dashboard?format=csv';
+  if(portfolioState.subTab==='action')    return '/api/portfolio/manager-action-list?format=csv&limit=100';
+  return null;
+}
+
+async function loadPortfolioDashboard(){ try{ portfolioState.dashboard=await apiJSON('/api/portfolio/dashboard'); render(); }catch(e){console.error(e);} }
+function renderPortfolioDashboard(){
+  if(!portfolioState.dashboard){ setTimeout(loadPortfolioDashboard,0); return `<div class="empty-state"><div class="empty-state-icon">🗂️</div><div class="empty-state-title">Loading portfolio…</div></div>`; }
+  const rows=(portfolioState.dashboard.rows||[]).slice();
+  // Sortable columns
+  const sb=portfolioState.sortBy; const dir=portfolioState.sortDir==='asc'?1:-1;
+  rows.sort((a,b)=>{ const av=a[sb]; const bv=b[sb]; if(av==null) return 1; if(bv==null) return -1; if(typeof av==='string') return av.localeCompare(bv)*dir; return (av-bv)*dir; });
+  const TH=(key,label)=>`<th data-sort="${key}" style="cursor:pointer;user-select:none">${esc(label)}${portfolioState.sortBy===key?(portfolioState.sortDir==='asc'?' ▲':' ▼'):''}</th>`;
+  let h=`<div class="card" style="padding:0;overflow:auto"><table style="min-width:1300px"><thead><tr>${TH('clientName','Client')}${TH('tier','Tier')}${TH('riskBand','Risk')}${TH('overallRisk','Risk Score')}${TH('healthScore','Health')}${TH('readinessState','Readiness')}${TH('openTasks','Open')}${TH('overdueTasks','Overdue')}${TH('openEscalations','Escalations')}${TH('documentsPending','Docs')}${TH('upcomingDeadlines','Due ≤7d')}${TH('responsivenessScore','Resp')}${TH('effortScore','Effort')}${TH('serviceQualityScore','Quality')}${TH('lastActivity','Last Activity')}</tr></thead><tbody>`;
+  rows.forEach(r=>{
+    h+=`<tr style="cursor:pointer" data-client="${r.clientId}"><td style="font-weight:600">${esc(r.clientName)}</td><td>${tierBadge(r.tier)}</td><td>${riskBandPill(r.riskBand)}</td><td><b>${r.overallRisk||0}</b></td><td>${healthBadge(r.healthScore, r.healthBand)}</td><td>${readinessPill(r.readinessState)}</td><td>${r.openTasks}</td><td style="color:${r.overdueTasks>0?'var(--red)':'var(--text-muted)'}">${r.overdueTasks}</td><td>${r.openEscalations}</td><td>${r.documentsPending}</td><td>${r.upcomingDeadlines}</td><td>${scorePill(r.responsivenessScore,true)}</td><td>${scorePill(r.effortScore,false)}</td><td>${scorePill(r.serviceQualityScore,true)}</td><td style="font-size:11px;color:var(--text-muted)">${r.lastActivity?r.lastActivity.slice(0,10):'—'}</td></tr>`;
+  });
+  h+=`</tbody></table></div>`;
+  setTimeout(()=>{ document.querySelectorAll('[data-sort]').forEach(th=>{ th.onclick=()=>{ const k=th.dataset.sort; if(portfolioState.sortBy===k){ portfolioState.sortDir=portfolioState.sortDir==='asc'?'desc':'asc'; } else { portfolioState.sortBy=k; portfolioState.sortDir='desc'; } render(); }; }); },0);
+  return h;
+}
+
+async function loadPortfolioActionList(){ try{ portfolioState.actionList=await apiJSON('/api/portfolio/manager-action-list?limit=50'); render(); }catch(e){console.error(e);} }
+function renderPortfolioActionList(){
+  if(!portfolioState.actionList){ setTimeout(loadPortfolioActionList,0); return `<div class="empty-state"><div class="empty-state-icon">📋</div><div class="empty-state-title">Loading manager action list…</div></div>`; }
+  const rows=portfolioState.actionList.rows||[];
+  let h=`<div class="card-title" style="margin-bottom:10px">📋 Daily Portfolio Review — ${rows.length} clients requiring attention</div>`;
+  if(!rows.length) return h+`<div class="empty-state"><div class="empty-state-icon">✅</div><div class="empty-state-title">No action required.</div></div>`;
+  h+=`<div style="display:grid;gap:10px">`;
+  rows.forEach(r=>{
+    const c=r.riskBand==='critical'||r.riskBand==='high'?'var(--red)':r.riskBand==='medium'?'var(--amber)':'var(--text-muted)';
+    h+=`<div class="card" style="border-left:4px solid ${c};cursor:pointer" data-client="${r.clientId}">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px">
+        <div style="flex:1">
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><b style="font-size:14px">${esc(r.clientName)}</b>${tierBadge(r.tier)}${riskBandPill(r.riskBand)}${r.hasKeyAlert?`<span style="font-size:10px;color:var(--red);font-weight:700">⚠ KEY ALERT</span>`:''}</div>
+          <div style="font-size:11px;color:var(--text-muted);margin-top:2px">Owner: ${esc(r.owner||'—')}${r.partnerOwner?' · Partner: '+esc(r.partnerOwner):''}</div>
+          <div style="font-size:12px;color:var(--text-muted);margin-top:6px">${(r.reasons||[]).map(x=>esc(x)).join(' · ')}</div>
+        </div>
+        <div style="text-align:right"><div style="font-size:24px;font-weight:800;color:${c}">${r.score}</div><div style="font-size:10px;color:var(--text-muted)">action score</div></div>
+      </div>
+    </div>`;
+  });
+  h+=`</div>`;
+  return h;
+}
+
+async function loadPortfolioInsights(){ try{ portfolioState.insights=await apiJSON('/api/portfolio/insights'); render(); }catch(e){console.error(e);} }
+function renderPortfolioInsights(){
+  if(!portfolioState.insights){ setTimeout(loadPortfolioInsights,0); return `<div class="empty-state"><div class="empty-state-icon">💡</div><div class="empty-state-title">Loading insights…</div></div>`; }
+  const x=portfolioState.insights;
+  const list=(title,rows,renderer)=>{
+    let inner=`<div class="card-title">${title} (${rows.length})</div>`;
+    if(!rows.length) return `<div class="card">${inner}<div style="padding:8px;font-size:12px;color:var(--text-muted)">No data.</div></div>`;
+    inner+=`<div style="max-height:300px;overflow:auto">${rows.map(renderer).join('')}</div>`;
+    return `<div class="card">${inner}</div>`;
+  };
+  const row=r=>`<div data-client="${r.clientId}" style="cursor:pointer;padding:6px 8px;border-bottom:1px solid var(--border);font-size:12px;display:flex;justify-content:space-between;gap:6px"><span style="font-weight:600;flex:1">${esc(r.clientName)}</span>${tierBadge(r.tier)}${riskBandPill(r.riskBand)}<span style="color:var(--text-muted)">risk ${r.overallRisk||0}</span></div>`;
+  const effortRow=r=>`<div data-client="${r.clientId}" style="cursor:pointer;padding:6px 8px;border-bottom:1px solid var(--border);font-size:12px;display:flex;justify-content:space-between"><span style="font-weight:600">${esc(r.clientName)}</span><span>${scorePill(r.effortScore,false)}</span></div>`;
+  const overdueRow=r=>`<div data-client="${r.clientId}" style="cursor:pointer;padding:6px 8px;border-bottom:1px solid var(--border);font-size:12px;display:flex;justify-content:space-between"><span style="font-weight:600">${esc(r.clientName)}</span><span style="color:var(--red);font-weight:700">${r.overdueTasks}</span></div>`;
+  const docRow=r=>`<div data-client="${r.clientId}" style="cursor:pointer;padding:6px 8px;border-bottom:1px solid var(--border);font-size:12px;display:flex;justify-content:space-between"><span style="font-weight:600">${esc(r.clientName)}</span><span style="color:var(--amber);font-weight:700">${r.documentsPending}</span></div>`;
+  const respRow=r=>`<div data-client="${r.clientId}" style="cursor:pointer;padding:6px 8px;border-bottom:1px solid var(--border);font-size:12px;display:flex;justify-content:space-between"><span style="font-weight:600">${esc(r.clientName)}</span><span>${scorePill(r.responsivenessScore,true)}</span></div>`;
+  let h=`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(360px,1fr));gap:16px">`;
+  h+=list('🚨 Top 10 Highest Risk',          x.topHighestRisk||[], row);
+  h+=list('💪 Top 10 Highest Maintenance',    x.topHighestMaintenance||[], effortRow);
+  h+=list('⏰ Most Overdue Work',             x.mostOverdue||[], overdueRow);
+  h+=list('📎 Most Document Delays',          x.mostDocumentDelays||[], docRow);
+  h+=list('👔 Require Partner Attention',     x.requirePartnerAttention||[], row);
+  h+=list('🐢 Least Responsive Clients',      x.leastResponsive||[], respRow);
+  h+=`</div>`;
+  return h;
+}
+
+async function loadPortfolioAlerts(){ try{ portfolioState.alerts=await apiJSON('/api/portfolio/alerts'); render(); }catch(e){console.error(e);} }
+function renderPortfolioAlerts(){
+  if(!portfolioState.alerts){ setTimeout(loadPortfolioAlerts,0); return `<div class="empty-state"><div class="empty-state-icon">⚠</div><div class="empty-state-title">Loading alerts…</div></div>`; }
+  const alerts=portfolioState.alerts.alerts||[];
+  let h=`<div class="card-title" style="margin-bottom:10px">⚠ Key Client Alerts (${alerts.length})</div>`;
+  if(!alerts.length) return h+`<div class="empty-state"><div class="empty-state-icon">✅</div><div class="empty-state-title">No alerts.</div></div>`;
+  h+=`<div style="display:grid;gap:10px">`;
+  alerts.forEach(a=>{
+    const c=a.severity==='high'?'var(--red)':'var(--amber)';
+    h+=`<div class="card" style="border-left:4px solid ${c};cursor:pointer" data-client="${a.clientId}"><div style="display:flex;justify-content:space-between;align-items:center;gap:8px"><div><div style="font-weight:700;display:flex;gap:8px;align-items:center">${esc(a.clientName)}<span style="font-size:10px;color:${c};font-weight:700;text-transform:uppercase">${esc(a.kind.replace(/_/g,' '))}</span></div><div style="font-size:12px;color:var(--text-muted);margin-top:2px">${esc(a.evidence)}</div><div style="font-size:12px;color:var(--accent);margin-top:6px">→ ${esc(a.recommendation||'')}</div></div></div></div>`;
+  });
+  h+=`</div>`;
+  return h;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// PHASE 6 — MIS Reports
+// ═══════════════════════════════════════════════════════════════
+const reportsState={
+  subTab:'summary', period:'month', value:null, options:null,
+  summary:null, employees:null, clients:null, documents:null,
+  vat:null, ct:null, escalations:null, workload:null, workloadSlice:'user',
+  trends:{ filing_completion:null, sla_compliance:null, escalations:null },
+  attention:null
+};
+
+function reportsExportUrl(path){
+  const q=new URLSearchParams();
+  if(reportsState.period) q.set('period', reportsState.period);
+  if(reportsState.value)  q.set('value',  reportsState.value);
+  q.set('format','csv');
+  return path + (path.includes('?') ? '&' : '?') + q.toString();
+}
+
+async function loadReportsOptions(){
+  if(reportsState.options) return;
+  try{ reportsState.options=await apiJSON('/api/reports/period-options'); render(); }catch(e){ console.error(e);}
+}
+function periodSelector(){
+  loadReportsOptions();
+  const opts=reportsState.options;
+  if(!opts) return `<span style="font-size:12px;color:var(--text-muted)">Loading periods…</span>`;
+  const map={month:opts.months, quarter:opts.quarters, year:opts.years};
+  const values=map[reportsState.period]||[];
+  if(!reportsState.value) reportsState.value = values[0];
+  let h=`<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">`;
+  ['month','quarter','year'].forEach(p=>{ h+=`<button class="btn btn-sm ${reportsState.period===p?'btn-primary':''}" data-rp="${p}">${p}</button>`; });
+  h+=`<select class="form-input" id="rp-value" style="min-width:130px">`;
+  values.forEach(v=>{ h+=`<option value="${v}" ${v===reportsState.value?'selected':''}>${v}</option>`; });
+  h+=`</select>`;
+  return h;
+}
+
+function renderReports(){
+  const tabs=[
+    ['summary','Monthly Summary'],['attention','Attention Required'],
+    ['employees','Employees'],['clients','Clients'],['documents','Documents'],
+    ['vat','VAT'],['ct','CT'],['escalations','Escalations'],['workload','Workload'],['trends','Trends']
+  ];
+  let h=`<div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin-bottom:12px"><div class="nav" style="margin:0">`;
+  tabs.forEach(([k,l])=>{ h+=`<button class="nav-btn ${reportsState.subTab===k?'active':''}" data-rt="${k}">${l}</button>`; });
+  h+=`</div>`;
+  if(['summary','employees','clients','documents','vat','ct','escalations'].includes(reportsState.subTab)){
+    h+=`<div style="margin-left:auto;display:flex;gap:8px;align-items:center">${periodSelector()}<button class="btn btn-sm" id="rp-export">⬇ Export CSV</button></div>`;
+  }
+  h+=`</div>`;
+  switch(reportsState.subTab){
+    case 'summary':     h+=renderReportSummary(); break;
+    case 'attention':   h+=renderReportAttention(); break;
+    case 'employees':   h+=renderReportEmployees(); break;
+    case 'clients':     h+=renderReportClients(); break;
+    case 'documents':   h+=renderReportDocuments(); break;
+    case 'vat':         h+=renderReportCompliance('vat'); break;
+    case 'ct':          h+=renderReportCompliance('ct'); break;
+    case 'escalations': h+=renderReportEscalations(); break;
+    case 'workload':    h+=renderReportWorkload(); break;
+    case 'trends':      h+=renderReportTrends(); break;
+  }
+  setTimeout(()=>{
+    document.querySelectorAll('[data-rt]').forEach(b=>{ b.onclick=()=>{ reportsState.subTab=b.dataset.rt; render(); }; });
+    document.querySelectorAll('[data-rp]').forEach(b=>{ b.onclick=()=>{ reportsState.period=b.dataset.rp; reportsState.value=null; reportsClearCache(); render(); }; });
+    const sel=document.getElementById('rp-value'); if(sel) sel.onchange=()=>{ reportsState.value=sel.value; reportsClearCache(); render(); };
+    const exp=document.getElementById('rp-export'); if(exp) exp.onclick=()=>{ const url=reportsExportPath(); if(url) window.location.href=url; };
+  },0);
+  return h;
+}
+function reportsClearCache(){
+  reportsState.summary=null; reportsState.employees=null; reportsState.clients=null;
+  reportsState.documents=null; reportsState.vat=null; reportsState.ct=null; reportsState.escalations=null;
+  reportsState.attention=null;
+}
+function reportsExportPath(){
+  const map={ summary:'/api/reports/management-summary', employees:'/api/reports/employees', clients:'/api/reports/clients',
+    documents:'/api/reports/document-delays', vat:'/api/reports/vat-compliance', ct:'/api/reports/ct-compliance',
+    escalations:'/api/reports/escalations', workload:'/api/reports/workload?slice='+(reportsState.workloadSlice||'user'),
+    attention:'/api/reports/attention-required?limit=50' };
+  const base=map[reportsState.subTab]; if(!base) return null;
+  return reportsExportUrl(base);
+}
+
+// --- per-report renderers ---
+function periodQ(){ const q=new URLSearchParams(); if(reportsState.period) q.set('period',reportsState.period); if(reportsState.value) q.set('value',reportsState.value); return q.toString()?('?'+q.toString()):''; }
+
+async function loadReportSummary(){ try{ reportsState.summary=await apiJSON('/api/reports/management-summary'+(reportsState.value?'?month='+encodeURIComponent(reportsState.value):'')); render(); }catch(e){console.error(e);} }
+function renderReportSummary(){
+  if(!reportsState.summary){ setTimeout(loadReportSummary,0); return `<div class="empty-state"><div class="empty-state-icon">📊</div><div class="empty-state-title">Loading summary…</div></div>`; }
+  const s=reportsState.summary; const k=s.headline;
+  const tile=(label,val,suffix)=>`<div class="card"><div style="color:var(--text-muted);font-size:11px;text-transform:uppercase">${label}</div><div style="font-size:26px;font-weight:700;margin-top:2px">${val==null?'—':val}${suffix||''}</div></div>`;
+  let h=`<div class="card-title" style="margin-bottom:12px">📊 ${esc(s.meta.label)} Monthly Summary</div>`;
+  h+=`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:10px;margin-bottom:16px">`;
+  h+=tile('Total Clients',k.totalClients);
+  h+=tile('Active in Period',k.activeClients);
+  h+=tile('Filing Completion',k.filingCompletionRate,'%');
+  h+=tile('Productivity / User',k.teamProductivity);
+  h+=tile('High-Risk Clients',k.highRiskClients);
+  h+=tile('Open Escalations',k.openEscalations);
+  h+=tile('Overdue Work',k.overdueWork);
+  h+=tile('Pending Reviews',k.pendingReviews);
+  h+=tile('Completed',k.completedInPeriod);
+  h+=`</div>`;
+  // VAT/CT summary
+  h+=`<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">`;
+  ['vat','ct'].forEach(kk=>{
+    const t=s[kk]||{}; const label=kk.toUpperCase();
+    h+=`<div class="card"><div class="card-title">${label} Compliance</div><div style="font-size:13px;display:grid;grid-template-columns:1fr 1fr;gap:6px"><div>Due: <b>${t.due||0}</b></div><div>Filed: <b>${t.filed||0}</b></div><div>On Time: <b>${t.filedOnTime||0}</b></div><div>Overdue: <b style="color:var(--red)">${t.overdue||0}</b></div><div>Timeliness: <b>${t.timelinessPct==null?'—':t.timelinessPct+'%'}</b></div></div></div>`;
+  });
+  h+=`</div>`;
+  // Escalation categories
+  if(s.escalationCategories && s.escalationCategories.length){
+    h+=`<div class="card" style="margin-bottom:12px"><div class="card-title">Escalation Categories</div><table style="width:100%"><tbody>`;
+    s.escalationCategories.forEach(c=>{ h+=`<tr><td style="padding:4px 6px">${esc(c.category)}</td><td style="padding:4px 6px;text-align:right;font-weight:700">${c.count}</td></tr>`; });
+    h+=`</tbody></table></div>`;
+  }
+  // Attention required
+  if(s.attentionRequired && s.attentionRequired.length){
+    h+=`<div class="card"><div class="card-title">🎯 Top 10 Attention Required</div>`;
+    h+=attentionTableHtml(s.attentionRequired.slice(0,10));
+    h+=`</div>`;
+  }
+  return h;
+}
+
+function attentionTableHtml(rows){
+  let h=`<table style="width:100%"><thead><tr><th>Client</th><th>Score</th><th>Readiness</th><th>Risk</th><th>Overdue</th><th>Stale Docs</th><th>Due ≤7d</th><th>Reasons</th></tr></thead><tbody>`;
+  rows.forEach(r=>{
+    h+=`<tr><td style="font-weight:600">${esc(r.clientName)}</td><td><b style="color:var(--red)">${r.score}</b></td><td>${readinessPill(r.readinessState)}</td><td>${escalationPill(r.escalationBand, '')}</td><td style="color:${r.overdueCount?'var(--red)':'var(--text-muted)'}">${r.overdueCount}</td><td>${r.staleDocsCount}</td><td>${r.upcomingDeadlineCount}</td><td style="font-size:11px;color:var(--text-muted)">${esc((r.reasons||[]).join(' · '))}</td></tr>`;
+  });
+  h+=`</tbody></table>`;
+  return h;
+}
+
+async function loadReportAttention(){ try{ reportsState.attention=await apiJSON('/api/reports/attention-required?limit=50'); render(); }catch(e){console.error(e);} }
+function renderReportAttention(){
+  if(!reportsState.attention){ setTimeout(loadReportAttention,0); return `<div class="empty-state"><div class="empty-state-icon">🎯</div><div class="empty-state-title">Loading…</div></div>`; }
+  const rows=reportsState.attention.rows||[];
+  let h=`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px"><div class="card-title">🎯 Top Attention Required Clients (${rows.length})</div><button class="btn btn-sm" onclick="window.location.href='${reportsExportUrl('/api/reports/attention-required?limit=50')}'">⬇ Export CSV</button></div>`;
+  if(!rows.length) return h+`<div class="empty-state"><div class="empty-state-icon">✅</div><div class="empty-state-title">No clients require attention.</div></div>`;
+  h+=`<div class="card" style="padding:0;overflow:auto">${attentionTableHtml(rows)}</div>`;
+  return h;
+}
+
+async function loadReportEmployees(){ try{ reportsState.employees=await apiJSON('/api/reports/employees'+periodQ()); render(); }catch(e){console.error(e);} }
+function renderReportEmployees(){
+  if(!reportsState.employees){ setTimeout(loadReportEmployees,0); return `<div class="empty-state"><div class="empty-state-icon">👥</div><div class="empty-state-title">Loading…</div></div>`; }
+  const r=reportsState.employees; const rows=r.rows||[];
+  let h=`<div class="card-title" style="margin-bottom:10px">Employee Performance · ${esc(r.meta.label)}</div><div class="card" style="padding:0;overflow:auto"><table style="min-width:1000px"><thead><tr><th>User</th><th>Clients</th><th>Open</th><th>Completed</th><th>Overdue</th><th>Done in Period</th><th>Avg Days</th><th>Reviews Pending</th><th>Escalations</th><th>SLA %</th></tr></thead><tbody>`;
+  rows.forEach(u=>{ h+=`<tr><td style="font-weight:600">${esc(u.userName)}</td><td>${u.assignedClients}</td><td>${u.openTasks}</td><td>${u.completedTasks}</td><td style="color:${u.overdueTasks>0?'var(--red)':'var(--text-muted)'}">${u.overdueTasks}</td><td><b>${u.completedInPeriod}</b></td><td>${u.avgCompletionDays==null?'—':u.avgCompletionDays+'d'}</td><td>${u.pendingReviews}</td><td>${u.escalationsGenerated}</td><td>${u.slaAdherencePct==null?'—':u.slaAdherencePct+'%'}</td></tr>`; });
+  h+=`</tbody></table></div>`;
+  return h;
+}
+
+async function loadReportClients(){ try{ reportsState.clients=await apiJSON('/api/reports/clients'+periodQ()); render(); }catch(e){console.error(e);} }
+function renderReportClients(){
+  if(!reportsState.clients){ setTimeout(loadReportClients,0); return `<div class="empty-state"><div class="empty-state-icon">🏢</div><div class="empty-state-title">Loading…</div></div>`; }
+  const r=reportsState.clients; const rows=r.rows||[];
+  let h=`<div class="card-title" style="margin-bottom:10px">Client Performance · ${esc(r.meta.label)}</div><div class="card" style="padding:0;overflow:auto"><table style="min-width:1200px"><thead><tr><th>Client</th><th>Owner</th><th>Readiness</th><th>Completed</th><th>Overdue</th><th>Docs Pending</th><th>Escalations</th><th>Escalation Score</th><th>Filings Due</th><th>Filed</th><th>Timeliness</th><th>Flags</th></tr></thead><tbody>`;
+  rows.forEach(c=>{
+    const flags=[]; if(c.isHighRisk) flags.push('<span style="color:var(--red)">High-Risk</span>'); if(c.isHighMaintenance) flags.push('<span style="color:var(--amber)">High-Maintenance</span>'); if(c.isFrequentlyDelayed) flags.push('<span style="color:var(--red)">Frequently Delayed</span>');
+    h+=`<tr><td style="font-weight:600">${esc(c.clientName)}</td><td style="font-size:12px;color:var(--text-muted)">${esc(c.owner||'—')}</td><td>${readinessPill(c.readinessState)}</td><td>${c.tasksCompletedInPeriod}</td><td style="color:${c.tasksOverdue>0?'var(--red)':'var(--text-muted)'}">${c.tasksOverdue}</td><td>${c.documentsPending}</td><td>${c.escalationsInPeriod}</td><td>${escalationPill(c.escalationBand,c.escalationScore)}</td><td>${c.filingsDue}</td><td>${c.filingsFiled}</td><td>${c.filingTimelinessPct==null?'—':c.filingTimelinessPct+'%'}</td><td style="font-size:11px">${flags.join(' ')}</td></tr>`;
+  });
+  h+=`</tbody></table></div>`;
+  return h;
+}
+
+async function loadReportDocuments(){ try{ reportsState.documents=await apiJSON('/api/reports/document-delays'+periodQ()); render(); }catch(e){console.error(e);} }
+function renderReportDocuments(){
+  if(!reportsState.documents){ setTimeout(loadReportDocuments,0); return `<div class="empty-state"><div class="empty-state-icon">📎</div><div class="empty-state-title">Loading…</div></div>`; }
+  const r=reportsState.documents;
+  let h=`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px;margin-bottom:12px">`;
+  const tile=(label,val,color)=>`<div class="card"><div style="color:var(--text-muted);font-size:11px;text-transform:uppercase">${label}</div><div style="font-size:26px;font-weight:700;margin-top:2px;color:${color||'var(--text-primary)'}">${val==null?'—':val}</div></div>`;
+  h+=tile('Total Pending',r.totals.total);
+  h+=tile('Avg Delay (d)',r.totals.avgDelayDays);
+  h+=tile('>7 days',r.totals.buckets['>7d'],'var(--amber)');
+  h+=tile('>14 days',r.totals.buckets['>14d'],'var(--amber)');
+  h+=tile('>30 days',r.totals.buckets['>30d'],'var(--red)');
+  h+=`</div>`;
+  // Aggregations
+  h+=`<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">`;
+  h+=`<div class="card"><div class="card-title">Top Clients Causing Delays</div><table style="width:100%"><tbody>`;
+  (r.topClients||[]).forEach(c=>{ h+=`<tr><td style="padding:4px 6px;font-weight:600">${esc(c.clientName)}</td><td style="padding:4px 6px;text-align:right">${c.count} (oldest ${c.oldestDays}d)</td></tr>`; }); h+=`</tbody></table></div>`;
+  h+=`<div class="card"><div class="card-title">Most Common Missing Documents</div><table style="width:100%"><tbody>`;
+  (r.topDocs||[]).forEach(c=>{ h+=`<tr><td style="padding:4px 6px;font-weight:600">${esc(c.documentName)}</td><td style="padding:4px 6px;text-align:right">${c.count}</td></tr>`; }); h+=`</tbody></table></div>`;
+  h+=`</div>`;
+  // Detail rows
+  h+=`<div class="card" style="padding:0;overflow:auto"><table style="min-width:900px"><thead><tr><th>Client</th><th>Document</th><th>Requested</th><th>Pending (d)</th><th>Reminders</th><th>Bucket</th></tr></thead><tbody>`;
+  (r.rows||[]).forEach(d=>{ const c=d.pendingDays>30?'var(--red)':d.pendingDays>14?'var(--amber)':'var(--text-muted)'; h+=`<tr><td style="font-weight:600">${esc(d.clientName)}</td><td>${esc(d.documentName)}</td><td style="font-size:12px;color:var(--text-muted)">${d.requestedDate||'—'}</td><td style="color:${c};font-weight:700">${d.pendingDays}</td><td>${d.remindersSent}</td><td>${d.agingBucket}</td></tr>`; });
+  h+=`</tbody></table></div>`;
+  return h;
+}
+
+async function loadReportCompliance(kind){
+  try{
+    const j=await apiJSON('/api/reports/'+kind+'-compliance'+periodQ());
+    reportsState[kind]=j; render();
+  }catch(e){console.error(e);}
+}
+function renderReportCompliance(kind){
+  const data=reportsState[kind];
+  if(!data){ setTimeout(()=>loadReportCompliance(kind),0); return `<div class="empty-state"><div class="empty-state-icon">📅</div><div class="empty-state-title">Loading…</div></div>`; }
+  const t=data.totals||{};
+  let h=`<div class="card-title" style="margin-bottom:10px">${kind.toUpperCase()} Compliance · ${esc(data.meta.label)}</div>`;
+  h+=`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px;margin-bottom:12px">`;
+  const tile=(label,val,color)=>`<div class="card"><div style="color:var(--text-muted);font-size:11px;text-transform:uppercase">${label}</div><div style="font-size:26px;font-weight:700;color:${color||'var(--text-primary)'}">${val==null?'—':val}</div></div>`;
+  h+=tile('Due',t.due);
+  h+=tile('Filed',t.filed,'var(--green)');
+  h+=tile('On Time',t.filedOnTime,'var(--green)');
+  h+=tile('Overdue',t.overdue,'var(--red)');
+  h+=tile('Timeliness',t.timelinessPct,t.timelinessPct>=90?'var(--green)':t.timelinessPct>=70?'var(--amber)':'var(--red)');
+  h+=`</div>`;
+  h+=`<div class="card" style="padding:0;overflow:auto"><table style="min-width:700px"><thead><tr><th>Client</th><th>Period</th><th>Deadline</th><th>Status</th><th>Filed</th><th>On Time</th></tr></thead><tbody>`;
+  (data.rows||[]).forEach(r=>{ h+=`<tr><td style="font-weight:600">${esc(r.clientName)}</td><td>${esc(r.periodLabel)}</td><td style="font-size:12px">${r.filingDeadline}</td><td>${esc(r.status)}</td><td style="font-size:12px">${r.filedAt||'—'}</td><td>${r.onTime===true?'<span style="color:var(--green);font-weight:700">YES</span>':r.onTime===false?'<span style="color:var(--red);font-weight:700">NO</span>':'<span style="color:var(--text-muted)">—</span>'}</td></tr>`; });
+  h+=`</tbody></table></div>`;
+  return h;
+}
+
+async function loadReportEscalations(){ try{ reportsState.escalations=await apiJSON('/api/reports/escalations'+periodQ()); render(); }catch(e){console.error(e);} }
+function renderReportEscalations(){
+  if(!reportsState.escalations){ setTimeout(loadReportEscalations,0); return `<div class="empty-state"><div class="empty-state-icon">🚨</div><div class="empty-state-title">Loading…</div></div>`; }
+  const r=reportsState.escalations; const t=r.totals||{};
+  let h=`<div class="card-title" style="margin-bottom:10px">Escalations · ${esc(r.meta.label)}</div><div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:10px;margin-bottom:12px">`;
+  const tile=(label,val,c)=>`<div class="card"><div style="color:var(--text-muted);font-size:11px;text-transform:uppercase">${label}</div><div style="font-size:26px;font-weight:700;color:${c||'var(--text-primary)'}">${val==null?'—':val}</div></div>`;
+  h+=tile('Created',t.created);
+  h+=tile('Resolved',t.resolved,'var(--green)');
+  h+=tile('Open',t.open,'var(--red)');
+  h+=tile('Avg Open Age (d)',t.openAgeAvgDays,'var(--amber)');
+  h+=tile('Avg Resolved Age (d)',t.resolvedAgeAvgDays);
+  h+=`</div>`;
+  h+=`<div class="card" style="margin-bottom:12px"><div class="card-title">Root Causes</div><table style="width:100%"><tbody>`;
+  (r.categories||[]).forEach(c=>{ h+=`<tr><td style="padding:4px 6px">${esc(c.category)}</td><td style="padding:4px 6px;text-align:right;font-weight:700">${c.count}</td></tr>`; });
+  h+=`</tbody></table></div>`;
+  h+=`<div class="card" style="padding:0;overflow:auto"><table style="min-width:900px"><thead><tr><th>Triggered</th><th>Client</th><th>Rule</th><th>Category</th><th>Severity</th><th>Status</th><th>Age</th></tr></thead><tbody>`;
+  (r.rows||[]).forEach(e=>{ h+=`<tr><td style="font-size:12px">${e.triggeredAt}</td><td style="font-weight:600">${esc(e.clientName||'')}</td><td style="font-size:12px">${esc(e.ruleName||'')}</td><td><b>${esc(e.category)}</b></td><td>${e.severity}</td><td>${e.status==='open'?`<span style="color:var(--red);font-weight:700">OPEN</span>`:`<span style="color:var(--green)">resolved</span>`}</td><td style="color:${e.ageDays>14?'var(--red)':e.ageDays>7?'var(--amber)':'var(--text-muted)'}">${e.ageDays}d</td></tr>`; });
+  h+=`</tbody></table></div>`;
+  return h;
+}
+
+async function loadReportWorkload(){ try{ reportsState.workload=await apiJSON('/api/reports/workload?slice='+(reportsState.workloadSlice||'user')); render(); }catch(e){console.error(e);} }
+function renderReportWorkload(){
+  if(!reportsState.workload){ setTimeout(loadReportWorkload,0); return `<div class="empty-state"><div class="empty-state-icon">⚖️</div><div class="empty-state-title">Loading…</div></div>`; }
+  const r=reportsState.workload;
+  let h=`<div style="display:flex;gap:6px;align-items:center;margin-bottom:10px"><span style="font-size:11px;color:var(--text-muted)">Slice by</span>`;
+  ['user','client','type'].forEach(s=>{ h+=`<button class="btn btn-sm ${r.slice===s?'btn-primary':''}" data-ws="${s}">${s}</button>`; });
+  h+=`<button class="btn btn-sm" style="margin-left:auto" onclick="window.location.href='${reportsExportUrl('/api/reports/workload?slice='+(r.slice||'user'))}'">⬇ Export CSV</button></div>`;
+  h+=`<div class="card" style="padding:0;overflow:auto"><table style="min-width:600px"><thead><tr>${(r.columns||[]).map(c=>`<th>${esc(c)}</th>`).join('')}</tr></thead><tbody>`;
+  (r.rows||[]).forEach(row=>{ h+=`<tr>${(r.columns||[]).map(c=>`<td>${esc(row[c]==null?'—':row[c])}</td>`).join('')}</tr>`; });
+  h+=`</tbody></table></div>`;
+  if(r.concentrationRisks && r.concentrationRisks.length){
+    h+=`<div class="card" style="margin-top:12px;border-color:var(--amber)"><div class="card-title" style="color:var(--amber)">⚠ Resource Concentration Risks</div><table style="width:100%"><tbody>`;
+    r.concentrationRisks.forEach(x=>{ h+=`<tr><td style="padding:4px 6px;font-weight:600">${esc(x.clientName)}</td><td style="padding:4px 6px">${esc(x.userName)} holds ${x.userShare}% of ${x.openTasks} open tasks</td></tr>`; });
+    h+=`</tbody></table></div>`;
+  }
+  setTimeout(()=>{ document.querySelectorAll('[data-ws]').forEach(b=>{ b.onclick=()=>{ reportsState.workloadSlice=b.dataset.ws; reportsState.workload=null; render(); }; }); },0);
+  return h;
+}
+
+async function loadTrend(metric){ try{ reportsState.trends[metric]=await apiJSON('/api/reports/trends?metric='+metric); render(); }catch(e){console.error(e);} }
+function renderReportTrends(){
+  const want=['filing_completion','sla_compliance','escalations'];
+  want.forEach(m=>{ if(!reportsState.trends[m]){ setTimeout(()=>loadTrend(m),0); } });
+  let h=`<div class="card-title" style="margin-bottom:10px">Trends (last 12 months)</div>`;
+  h+=`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(360px,1fr));gap:16px">`;
+  h+=trendCard('Filing Completion (%)', reportsState.trends.filing_completion, 'pct');
+  h+=trendCard('SLA Compliance (%)',    reportsState.trends.sla_compliance, 'pct');
+  h+=trendCard('Escalations Triggered', reportsState.trends.escalations, 'triggered');
+  h+=`</div>`;
+  h+=`<div class="card" style="margin-top:12px;border-color:var(--text-muted)"><div style="font-size:12px;color:var(--text-muted);padding:6px">Health Score and Readiness trends require daily snapshots, which are not enabled in this environment.</div></div>`;
+  return h;
+}
+function trendCard(title, data, key){
+  if(!data){ return `<div class="card"><div class="card-title">${title}</div><div style="padding:8px;color:var(--text-muted);font-size:12px">Loading…</div></div>`; }
+  if(!data.available){ return `<div class="card"><div class="card-title">${title}</div><div style="padding:8px;color:var(--text-muted);font-size:12px">${esc(data.reason||'Unavailable')}</div></div>`; }
+  const pts=data.points||[];
+  const vals=pts.map(p=>p[key]).map(v=>v==null?0:v);
+  const max=Math.max(1,...vals);
+  let h=`<div class="card"><div class="card-title">${title}</div><div style="display:flex;align-items:flex-end;gap:4px;height:120px;border-bottom:1px solid var(--border);padding-bottom:4px">`;
+  pts.forEach(p=>{ const v=p[key]==null?0:p[key]; const hpx=Math.max(2,Math.round((v/max)*110)); h+=`<div title="${p.period}: ${p[key]==null?'—':p[key]}" style="flex:1;background:var(--accent);height:${hpx}px;border-radius:2px 2px 0 0"></div>`; });
+  h+=`</div><div style="display:flex;justify-content:space-between;font-size:10px;color:var(--text-muted);margin-top:4px"><span>${pts[0]?.period||''}</span><span>${pts[pts.length-1]?.period||''}</span></div></div>`;
+  return h;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// PHASE 5 — Risk Center (+ Phase 4 workflow widget)
+// ═══════════════════════════════════════════════════════════════
+const riskState={ subTab:'dashboard', groupBy:'client',
+  findings:null, clientScores:null, accountability:null, action:null, bottlenecks:null, briefing:null, followUp:null, sla:null,
+  readinessFilter:'All', readinessSort:'off' /* off | asc | desc */ };
+
+// ---- Readiness filter / sort helpers shared across Risk Center sub-tabs ----
+function riskReadinessMatches(clientId){
+  if(!riskState.readinessFilter || riskState.readinessFilter==='All') return true;
+  const r=readinessFor(clientId);
+  if(!r) return false;
+  return r.state===riskState.readinessFilter;
+}
+function riskSortByReadiness(rows, getId){
+  if(riskState.readinessSort==='off') return rows;
+  const dir=riskState.readinessSort==='desc'?-1:1;
+  return rows.slice().sort((a,b)=>{
+    const ra=readinessFor(getId(a)); const rb=readinessFor(getId(b));
+    const oa=ra?readinessOrder(ra.state):999;
+    const ob=rb?readinessOrder(rb.state):999;
+    return (oa-ob)*dir;
+  });
+}
+function readinessFilterStrip(){
+  if(!state.clientReadiness){ setTimeout(ensureReadinessLoaded,0); return ''; }
+  const counts=state.clientReadiness.counts||{};
+  const order=['high_risk','blocked','filing_due','awaiting_client_approval','awaiting_documents','awaiting_review','partially_ready','ready'];
+  let h=`<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:10px"><span style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em;margin-right:4px">Readiness filter</span>`;
+  const isAll=!riskState.readinessFilter||riskState.readinessFilter==='All';
+  h+=`<button class="btn btn-sm ${isAll?'btn-primary':''}" data-rrf="All">All</button>`;
+  order.forEach(s=>{
+    const n=counts[s]||0; if(!n) return;
+    const m=READINESS_STATE_META[s]; const active=riskState.readinessFilter===s;
+    h+=`<button class="btn btn-sm" data-rrf="${s}" style="border-left:3px solid ${m.color};${active?'background:var(--bg-elevated);font-weight:700':''}">${esc(m.label)}: ${n}</button>`;
+  });
+  // Sort toggle
+  const sortLabel={off:'⇅ Sort by readiness', asc:'↑ Readiness (worst first)', desc:'↓ Readiness (best first)'}[riskState.readinessSort];
+  h+=`<button class="btn btn-sm" data-rrs="toggle" style="margin-left:auto">${sortLabel}</button>`;
+  h+=`</div>`;
+  setTimeout(()=>{
+    document.querySelectorAll('[data-rrf]').forEach(b=>{ b.onclick=()=>{ riskState.readinessFilter=b.dataset.rrf; render(); }; });
+    document.querySelectorAll('[data-rrs]').forEach(b=>{ b.onclick=()=>{ riskState.readinessSort = riskState.readinessSort==='off'?'asc':riskState.readinessSort==='asc'?'desc':'off'; render(); }; });
+  },0);
+  return h;
+}
+
+function riskLevelPill(lvl){
+  const c={critical:'var(--red)',high:'var(--red)',medium:'var(--amber)',low:'var(--text-muted)'}[lvl]||'var(--text-muted)';
+  return `<span style="display:inline-block;min-width:60px;text-align:center;padding:2px 8px;border-radius:10px;background:var(--bg-elevated);color:${c};font-weight:700;font-size:10px;text-transform:uppercase">${lvl}</span>`;
+}
+function escalationPill(band, score){
+  const c={green:'var(--green)',amber:'var(--amber)',red:'var(--red)'}[band]||'var(--text-muted)';
+  return `<span style="display:inline-flex;align-items:center;gap:6px;padding:2px 10px;border-radius:12px;background:var(--bg-elevated);color:${c};font-weight:700;font-size:11px">●&nbsp;${score}</span>`;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Client Readiness — shared pill, cache, filter state
+// ═══════════════════════════════════════════════════════════════
+const READINESS_STATE_META={
+  high_risk:               { label:'High Risk',                color:'var(--red)',        order:0 },
+  blocked:                 { label:'Blocked',                  color:'var(--red)',        order:1 },
+  filing_due:              { label:'Filing Due',               color:'var(--amber)',      order:2 },
+  awaiting_client_approval:{ label:'Awaiting Client Approval', color:'var(--amber)',      order:3 },
+  awaiting_documents:      { label:'Awaiting Documents',       color:'var(--amber)',      order:4 },
+  awaiting_review:         { label:'Awaiting Review',          color:'var(--accent)',     order:5 },
+  partially_ready:         { label:'Partially Ready',          color:'var(--blue)',       order:6 },
+  ready:                   { label:'Ready',                    color:'var(--green)',      order:7 },
+  idle:                    { label:'Active',                   color:'var(--text-muted)', order:8 }
+};
+function readinessPill(state){
+  const m=READINESS_STATE_META[state]||READINESS_STATE_META.idle;
+  return `<span style="display:inline-block;padding:2px 8px;border-radius:10px;background:var(--bg-elevated);color:${m.color};font-weight:700;font-size:10px;text-transform:uppercase;white-space:nowrap">${esc(m.label)}</span>`;
+}
+function readinessOrder(state){ return (READINESS_STATE_META[state]||READINESS_STATE_META.idle).order; }
+
+// Compact tier badge for list/table contexts — visually quiet for B (the
+// default), prominent for A. Priority order in any row: risk → readiness → tier.
+const TIER_MINI_META = {
+  A: { color: 'var(--red)',        bg: 'rgba(239,68,68,0.12)', weight: 800 },
+  B: { color: 'var(--text-muted)', bg: 'var(--bg-elevated)',   weight: 600 },
+  C: { color: 'var(--text-muted)', bg: 'var(--bg-elevated)',   weight: 600 }
+};
+function tierBadgeMini(tier){
+  const t=tier||'B'; const m=TIER_MINI_META[t]||TIER_MINI_META.B;
+  return `<span title="Tier ${esc(t)}" style="display:inline-block;min-width:18px;padding:1px 5px;border-radius:4px;background:${m.bg};color:${m.color};font-size:10px;font-weight:${m.weight};text-align:center;letter-spacing:0.5px">${esc(t)}</span>`;
+}
+function tierFor(clientId){
+  const map=state.clientReadinessByClient||{};
+  const r=map[String(clientId)]; return r ? (r.tier || 'B') : null;
+}
+function tierForName(name){
+  if(!state.clientReadiness) return null;
+  const row=(state.clientReadiness.clients||[]).find(r=>r.clientName===name);
+  return row ? (row.tier || 'B') : null;
+}
+function tierOrder(t){ return t==='A'?0:t==='B'?1:t==='C'?2:3; }
+
+// Cache keyed in `state` so existing render() refreshes pick it up.
+async function ensureReadinessLoaded(force){
+  if(!force && state.clientReadiness && state.clientReadinessLoadedAt && (Date.now()-state.clientReadinessLoadedAt)<60000) return state.clientReadiness;
+  try{
+    const j=await apiJSON('/api/clients/readiness');
+    state.clientReadiness=j;
+    state.clientReadinessLoadedAt=Date.now();
+    state.clientReadinessByClient={};
+    (j.clients||[]).forEach(r=>{ state.clientReadinessByClient[String(r.clientId)]=r; });
+    render();
+    return j;
+  }catch(e){ console.error('[readiness]', e); return null; }
+}
+function readinessFor(clientId){
+  const map=state.clientReadinessByClient||{};
+  return map[String(clientId)]||null;
+}
+
+function renderRiskCenter(){
+  // Make sure readiness data is loaded — sub-tabs depend on it.
+  if(!state.clientReadiness){ setTimeout(ensureReadinessLoaded,0); }
+  const tabs=[['dashboard','Dashboard'],['action','Action Center'],['bottlenecks','Bottlenecks'],['sla','SLA Prediction'],['briefing','Daily Briefing'],['followup','Follow-up'],['team','Team Accountability']];
+  let h=`<div style="display:flex;gap:12px;align-items:center;margin-bottom:12px;flex-wrap:wrap"><div class="nav" style="margin:0">`;
+  tabs.forEach(([k,l])=>{ h+=`<button class="nav-btn ${riskState.subTab===k?'active':''}" data-rs="${k}">${l}</button>`; });
+  h+=`</div></div>`;
+  // Readiness filter strip — applies to all sub-tabs except Team Accountability.
+  if(riskState.subTab!=='team' && riskState.subTab!=='bottlenecks') h+=readinessFilterStrip();
+  switch(riskState.subTab){
+    case 'dashboard':  h+=renderRiskDashboard(); break;
+    case 'action':     h+=renderActionCenter(); break;
+    case 'bottlenecks':h+=renderBottlenecks(); break;
+    case 'sla':        h+=renderSlaPrediction(); break;
+    case 'briefing':   h+=renderBriefing(); break;
+    case 'followup':   h+=renderFollowUp(); break;
+    case 'team':       h+=renderAccountability(); break;
+  }
+  setTimeout(()=>{ document.querySelectorAll('[data-rs]').forEach(b=>{ b.onclick=()=>{ riskState.subTab=b.dataset.rs; render(); }; }); },0);
+  return h;
+}
+
+async function loadRiskFindings(){
+  try{
+    const params=new URLSearchParams({groupBy:riskState.groupBy});
+    const j=await apiJSON('/api/risk/findings?'+params.toString());
+    riskState.findings=j;
+    const c=await apiJSON('/api/risk/clients'); riskState.clientScores=c;
+    render();
+  }catch(e){ console.error(e);}
+}
+function renderRiskDashboard(){
+  if(!riskState.findings){ setTimeout(loadRiskFindings,0); return `<div class="empty-state"><div class="empty-state-icon">🛡️</div><div class="empty-state-title">Loading risk findings…</div></div>`; }
+  const t=riskState.findings.totals;
+  const tile=(lvl,n)=>{ const c={critical:'var(--red)',high:'var(--red)',medium:'var(--amber)',low:'var(--text-muted)'}[lvl]; return `<div class="card" style="border-color:${c}"><div style="color:var(--text-muted);font-size:11px;text-transform:uppercase">${lvl}</div><div style="font-size:28px;font-weight:700;color:${c}">${n}</div></div>`; };
+  let h=`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px;margin-bottom:12px">`+tile('critical',t.critical)+tile('high',t.high)+tile('medium',t.medium)+tile('low',t.low)+`</div>`;
+  h+=`<div style="display:flex;gap:6px;align-items:center;margin-bottom:8px"><label style="font-size:11px;color:var(--text-muted)">Group by</label>`;
+  ['client','user','type'].forEach(g=>{ h+=`<button class="btn btn-sm ${riskState.groupBy===g?'btn-primary':''}" data-gb="${g}">${g}</button>`; });
+  h+=`</div>`;
+  let groups=riskState.findings.grouped||[];
+  // Readiness filter at group level: keep groups that have at least one matching item.
+  if(riskState.readinessFilter && riskState.readinessFilter!=='All'){
+    groups = groups.map(g=>{
+      const items=(g.items||[]).filter(f=>riskReadinessMatches(f.clientId));
+      const totals={critical:0,high:0,medium:0,low:0};
+      items.forEach(f=>{ totals[f.level]++; });
+      return Object.assign({}, g, { items, totals });
+    }).filter(g=>g.items.length>0);
+  }
+  h+=`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(380px,1fr));gap:16px">`;
+  groups.forEach(g=>{
+    // If grouped by client, show readiness + tier pill in the group header.
+    const groupReadiness = (riskState.groupBy==='client' && g.items[0]) ? readinessFor(g.items[0].clientId) : null;
+    const groupTier = (riskState.groupBy==='client' && g.items[0]) ? tierFor(g.items[0].clientId) : null;
+    h+=`<div class="card"><div class="card-title" style="display:flex;align-items:center;gap:6px">${esc(g.key)} ${groupReadiness?readinessPill(groupReadiness.state):''}${groupTier?tierBadgeMini(groupTier):''} <span style="font-size:11px;color:var(--text-muted)">· ${g.items.length}</span></div><div style="display:flex;gap:6px;margin:4px 0 8px">`;
+    ['critical','high','medium','low'].forEach(l=>{ if(g.totals[l]) h+=`<span style="font-size:10px;color:var(--text-muted)">${l}: <b style="color:var(--text-primary)">${g.totals[l]}</b></span>`; });
+    h+=`</div><div style="max-height:240px;overflow:auto">`;
+    g.items.slice(0,15).forEach(f=>{
+      const r=readinessFor(f.clientId);
+      h+=`<div style="padding:6px 8px;border-bottom:1px solid var(--border);font-size:12px;display:flex;gap:8px;justify-content:space-between;align-items:center">${riskLevelPill(f.level)}<span style="flex:1">${esc(f.evidence||f.kind)}</span>${r&&riskState.groupBy!=='client'?readinessPill(r.state):''}${f.taskId?`<a href="#" data-task="${f.taskId}" style="color:var(--accent);font-size:11px">view</a>`:''}</div>`;
+    });
+    h+=`</div></div>`;
+  });
+  h+=`</div>`;
+  // Client scores — apply filter + sort, add Readiness column.
+  if(riskState.clientScores){
+    let rows=(riskState.clientScores.scores||[]).filter(r=>r.band!=='green');
+    rows = rows.filter(r=>riskReadinessMatches(r.clientId));
+    rows = riskSortByReadiness(rows, r=>r.clientId).slice(0,30);
+    if(rows.length){
+      h+=`<div class="card" style="margin-top:16px"><div class="card-title">Client Escalation Scores (non-green)</div><table style="width:100%"><thead><tr><th>Client</th><th>Readiness</th><th>Tier</th><th>Band</th><th>Score</th><th>Critical</th><th>High</th><th>Medium</th></tr></thead><tbody>`;
+      rows.forEach(r=>{ const rd=readinessFor(r.clientId); const t=tierFor(r.clientId); h+=`<tr><td style="font-weight:600">${esc(r.clientName||'')}</td><td>${rd?readinessPill(rd.state):'<span style="font-size:10px;color:var(--text-muted)">—</span>'}</td><td>${t?tierBadgeMini(t):'<span style="font-size:10px;color:var(--text-muted)">—</span>'}</td><td>${escalationPill(r.band,r.score)}</td><td>${r.score}</td><td style="color:var(--red)">${r.totals.critical}</td><td>${r.totals.high}</td><td>${r.totals.medium}</td></tr>`; });
+      h+=`</tbody></table></div>`;
+    }
+  }
+  setTimeout(()=>{ document.querySelectorAll('[data-gb]').forEach(b=>{ b.onclick=()=>{ riskState.groupBy=b.dataset.gb; riskState.findings=null; render(); }; }); },0);
+  return h;
+}
+
+async function loadActionCenter(){ try{ riskState.action=await apiJSON('/api/risk/manager-action-center'); render(); }catch(e){ console.error(e);} }
+function renderActionCenter(){
+  if(!riskState.action){ setTimeout(loadActionCenter,0); return `<div class="empty-state"><div class="empty-state-icon">🎯</div><div class="empty-state-title">Loading…</div></div>`; }
+  let items=(riskState.action.items||[]).filter(i=>i.clientId==null||riskReadinessMatches(i.clientId));
+  items = riskSortByReadiness(items, i=>i.clientId);
+  let h=`<div class="card-title" style="margin-bottom:12px">🎯 Requires Manager Attention (${items.length})</div>`;
+  if(!items.length) return h+`<div class="empty-state"><div class="empty-state-icon">✅</div><div class="empty-state-title">Nothing demanding your attention.</div></div>`;
+  h+=`<div style="display:grid;gap:10px">`;
+  items.forEach(i=>{
+    const c=i.severity==='critical'||i.severity==='high'?'var(--red)':i.severity==='medium'?'var(--amber)':'var(--text-muted)';
+    const r=i.clientId!=null?readinessFor(i.clientId):null;
+    const t=i.clientId!=null?tierFor(i.clientId):null;
+    h+=`<div class="card" style="border-left:4px solid ${c}"><div style="display:flex;justify-content:space-between;align-items:start;gap:8px"><div style="flex:1"><div style="font-weight:700;display:flex;gap:6px;align-items:center">${esc(i.title)} ${r?readinessPill(r.state):''}${t?tierBadgeMini(t):''}</div><div style="font-size:12px;color:var(--text-muted);margin-top:2px">${esc(i.detail||'')}</div><div style="font-size:12px;color:var(--accent);margin-top:6px">→ ${esc(i.recommendation||'')}</div></div><div>${riskLevelPill(i.severity)}</div></div></div>`;
+  });
+  h+=`</div>`;
+  return h;
+}
+
+async function loadBottlenecks(){ try{ riskState.bottlenecks=await apiJSON('/api/risk/bottlenecks'); render(); }catch(e){ console.error(e);} }
+function renderBottlenecks(){
+  if(!riskState.bottlenecks){ setTimeout(loadBottlenecks,0); return `<div class="empty-state"><div class="empty-state-icon">🚧</div><div class="empty-state-title">Analyzing bottlenecks…</div></div>`; }
+  const b=riskState.bottlenecks;
+  let h='';
+  if(b.suggestedOwner){
+    h+=`<div class="card" style="margin-bottom:12px;background:var(--accent-soft);border-color:var(--accent)"><div style="font-size:13px"><b>Suggested owner with spare capacity:</b> ${esc(b.suggestedOwner.name)} (ratio ${b.suggestedOwner.ratio||0})</div></div>`;
+  }
+  h+=`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(360px,1fr));gap:16px">`;
+  b.bottlenecks.forEach(x=>{
+    const c=x.isBottleneck?'var(--red)':'var(--text-muted)';
+    h+=`<div class="card" style="border-color:${c}"><div class="card-title">${esc(x.label)} <span style="font-size:11px;color:var(--text-muted)">· ${x.count} stuck</span></div>`;
+    h+=`<div style="font-size:12px;color:var(--text-muted);margin:4px 0">Oldest: <b style="color:var(--text-primary)">${x.oldestDays}d</b></div>`;
+    if(x.topClients.length){
+      h+=`<div style="font-size:12px;color:var(--text-muted)">Top contributors:</div><ul style="margin:4px 0 0 16px;padding:0;font-size:12px">`;
+      x.topClients.forEach(c=>{ h+=`<li>${esc(c.name)} (${c.count})</li>`; });
+      h+=`</ul>`;
+    }
+    h+=`</div>`;
+  });
+  h+=`</div>`;
+  return h;
+}
+
+async function loadSla(){ try{ riskState.sla=await apiJSON('/api/risk/sla-prediction'); render(); }catch(e){ console.error(e);} }
+function renderSlaPrediction(){
+  if(!riskState.sla){ setTimeout(loadSla,0); return `<div class="empty-state"><div class="empty-state-icon">🔮</div><div class="empty-state-title">Predicting breaches…</div></div>`; }
+  // SLA predictions don't carry clientId — match on clientName as fallback.
+  const byName={}; (state.clientReadiness&&state.clientReadiness.clients||[]).forEach(r=>{ byName[r.clientName]=r; });
+  const readinessForRow=p=>{ const byName2=byName[p.clientName]; if(byName2) return readinessFor(byName2.clientId); return null; };
+  let ps=(riskState.sla.predictions||[]).filter(p=>{
+    if(!riskState.readinessFilter||riskState.readinessFilter==='All') return true;
+    const r=readinessForRow(p); return r && r.state===riskState.readinessFilter;
+  });
+  if(riskState.readinessSort!=='off'){
+    const dir=riskState.readinessSort==='desc'?-1:1;
+    ps=ps.slice().sort((a,b)=>{ const ra=readinessForRow(a); const rb=readinessForRow(b); const oa=ra?readinessOrder(ra.state):999; const ob=rb?readinessOrder(rb.state):999; return (oa-ob)*dir; });
+  }
+  let h=`<div class="card-title" style="margin-bottom:12px">SLA Breach Predictions (${ps.length})</div>`;
+  if(!ps.length) return h+`<div class="empty-state"><div class="empty-state-icon">✅</div><div class="empty-state-title">No likely breaches in current window.</div></div>`;
+  h+=`<div class="card" style="padding:0;overflow:auto"><table style="min-width:1080px"><thead><tr><th>Client</th><th>Readiness</th><th>Tier</th><th>Task</th><th>Status</th><th>Due</th><th>Days Left</th><th>Est. Days Needed</th><th>Likely Breach Date</th><th>Confidence</th></tr></thead><tbody>`;
+  ps.forEach(p=>{ const r=readinessForRow(p); const t=tierForName(p.clientName); h+=`<tr data-task="${p.taskId}" style="cursor:pointer"><td style="font-weight:600">${esc(p.clientName||'')}</td><td>${r?readinessPill(r.state):'<span style="font-size:10px;color:var(--text-muted)">—</span>'}</td><td>${t?tierBadgeMini(t):'<span style="font-size:10px;color:var(--text-muted)">—</span>'}</td><td>${esc((p.taskType||'').replace(/_/g,' '))}</td><td>${statusBadge(p.status)}</td><td>${p.dueDate}</td><td style="color:${p.daysLeft<0?'var(--red)':'var(--amber)'};font-weight:700">${p.daysLeft}</td><td>${p.estimatedDaysNeeded}</td><td style="color:var(--red)">${p.likelyBreachDate}</td><td style="font-size:11px;color:var(--text-muted)">${p.lowConfidence?'low':'ok'}</td></tr>`; });
+  h+=`</tbody></table></div>`;
+  return h;
+}
+
+async function loadBriefing(){ try{ riskState.briefing=await apiJSON('/api/risk/daily-briefing'); render(); }catch(e){ console.error(e);} }
+function renderBriefing(){
+  if(!riskState.briefing){ setTimeout(loadBriefing,0); return `<div class="empty-state"><div class="empty-state-icon">📋</div><div class="empty-state-title">Loading briefing…</div></div>`; }
+  const b=riskState.briefing;
+  let h=`<div class="card-title" style="margin-bottom:12px">📋 Today's Briefing</div>`;
+  h+=`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px;margin-bottom:16px">`;
+  h+=`<div class="card"><div style="color:var(--text-muted);font-size:11px">OVERDUE</div><div style="font-size:28px;font-weight:700;color:var(--red)">${b.overdueCount}</div></div>`;
+  h+=`<div class="card"><div style="color:var(--text-muted);font-size:11px">PENDING REVIEW</div><div style="font-size:28px;font-weight:700">${b.pendingReviewCount}</div></div>`;
+  h+=`<div class="card"><div style="color:var(--text-muted);font-size:11px">MISSING DOCS</div><div style="font-size:28px;font-weight:700;color:var(--amber)">${b.missingDocumentCount}</div></div>`;
+  h+=`<div class="card"><div style="color:var(--text-muted);font-size:11px">DEADLINES THIS WEEK</div><div style="font-size:28px;font-weight:700">${(b.deadlinesThisWeek||[]).length}</div></div>`;
+  h+=`</div>`;
+  const card=(title,items,renderer,empty)=>{ let r=`<div class="card-title">${title} (${items.length})</div>`; if(!items.length) return `<div class="card">${r}<div style="padding:8px;font-size:12px;color:var(--text-muted)">${empty}</div></div>`; r+=`<div style="max-height:280px;overflow:auto">${items.slice(0,15).map(renderer).join('')}</div>`; return `<div class="card">${r}</div>`; };
+  const taskRow=t=>`<div data-task="${t.id}" style="cursor:pointer;padding:6px 8px;border-bottom:1px solid var(--border);font-size:12px;display:flex;justify-content:space-between"><span><b>${esc(t.client_name||'')}</b> · ${esc((t.task_type||'').replace(/_/g,' '))}</span><span style="color:var(--text-muted)">${t.due_date||''}</span></div>`;
+  const riskRow=f=>`<div style="padding:6px 8px;border-bottom:1px solid var(--border);font-size:12px;display:flex;gap:6px">${riskLevelPill(f.level)}<span style="flex:1"><b>${esc(f.clientName||'')}</b> — ${esc(f.evidence||'')}</span></div>`;
+  const cli=c=>{ const r=readinessFor(c.clientId); const t=tierFor(c.clientId); return `<div style="padding:6px 8px;border-bottom:1px solid var(--border);font-size:12px;display:flex;justify-content:space-between;align-items:center;gap:6px"><b style="flex:1">${esc(c.clientName||'')}</b>${r?readinessPill(r.state):''}${t?tierBadgeMini(t):''}${escalationPill(c.band,c.score)}</div>`; };
+  h+=`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(380px,1fr));gap:16px">`;
+  h+=card('🔥 Top 10 Risks', b.topRisks||[], riskRow, 'No risks.');
+  h+=card('💔 Top Critical Clients', b.topCriticalClients||[], cli, 'No critical clients.');
+  h+=card('📅 Deadlines This Week', b.deadlinesThisWeek||[], taskRow, 'No deadlines.');
+  h+=card('⏰ Overdue Sample', b.overdueSample||[], taskRow, 'No overdue.');
+  h+=card('👀 Pending Reviews', b.pendingReviewSample||[], taskRow, 'No pending reviews.');
+  h+=card('📎 Missing Docs', b.missingDocSample||[], d=>`<div style="padding:6px 8px;border-bottom:1px solid var(--border);font-size:12px"><b>${esc(d.client_name)}</b> — ${esc(d.document_name)}</div>`, 'No missing docs.');
+  h+=`</div>`;
+  return h;
+}
+
+async function loadFollowUp(){ try{ riskState.followUp=await apiJSON('/api/risk/follow-up'); render(); }catch(e){ console.error(e);} }
+function renderFollowUp(){
+  if(!riskState.followUp){ setTimeout(loadFollowUp,0); return `<div class="empty-state"><div class="empty-state-icon">💬</div><div class="empty-state-title">Loading follow-up board…</div></div>`; }
+  let rows=(riskState.followUp.clients||[]).filter(r=>riskReadinessMatches(r.clientId));
+  rows = riskSortByReadiness(rows, r=>r.clientId);
+  let h=`<div class="card-title" style="margin-bottom:12px">💬 Client Follow-up (silent ≥ ${riskState.followUp.silenceThresholdDays}d)</div>`;
+  h+=`<div class="card" style="padding:0;overflow:auto"><table style="min-width:1180px"><thead><tr><th>Client</th><th>Readiness</th><th>Tier</th><th>Owner</th><th>Last Contact</th><th>Silence</th><th>Last Doc Req</th><th>Pending</th><th>Reminders</th><th>Critical</th><th>High</th><th>Causing Risk</th></tr></thead><tbody>`;
+  rows.forEach(r=>{
+    const c=r.silent?'var(--red)':r.silenceDays==null?'var(--text-muted)':r.silenceDays>7?'var(--amber)':'var(--text-muted)';
+    const rd=readinessFor(r.clientId);
+    const t=tierFor(r.clientId);
+    h+=`<tr><td style="font-weight:600">${esc(r.clientName)}</td><td>${rd?readinessPill(rd.state):'<span style="font-size:10px;color:var(--text-muted)">—</span>'}</td><td>${t?tierBadgeMini(t):'<span style="font-size:10px;color:var(--text-muted)">—</span>'}</td><td style="font-size:12px;color:var(--text-muted)">${esc(r.owner||'—')}</td><td style="font-size:12px">${r.lastCommunication?r.lastCommunication.slice(0,10):'Never'}</td><td style="color:${c};font-weight:700">${r.silenceDays==null?'∞':r.silenceDays}</td><td style="font-size:12px">${r.lastDocRequest?r.lastDocRequest.slice(0,10):'—'}</td><td>${r.pendingDocCount}</td><td>${r.totalReminders}</td><td style="color:var(--red)">${r.riskFindings.critical}</td><td style="color:var(--red)">${r.riskFindings.high}</td><td>${r.causingFilingRisk?'<span style="color:var(--red);font-weight:700">YES</span>':'<span style="color:var(--text-muted)">—</span>'}</td></tr>`;
+  });
+  h+=`</tbody></table></div>`;
+  return h;
+}
+
+async function loadAccountability(){ try{ riskState.accountability=await apiJSON('/api/risk/team-accountability'); render(); }catch(e){ console.error(e);} }
+function renderAccountability(){
+  if(!riskState.accountability){ setTimeout(loadAccountability,0); return `<div class="empty-state"><div class="empty-state-icon">👤</div><div class="empty-state-title">Loading…</div></div>`; }
+  const rows=riskState.accountability.rows||[];
+  let h=`<div class="card-title" style="margin-bottom:12px">👤 Team Accountability</div><div class="card" style="padding:0;overflow:auto"><table style="min-width:900px"><thead><tr><th>User</th><th>Band</th><th>Open</th><th>Overdue</th><th>Reviews Pending</th><th>Blocked</th><th>Escalations</th><th>SLA %</th><th>Critical</th><th>High</th></tr></thead><tbody>`;
+  rows.forEach(r=>{ h+=`<tr><td style="font-weight:600">${esc(r.userName)}</td><td>${bandPill(r.workloadBand)}</td><td>${r.openTasks}/${r.capacity||'—'}</td><td style="color:${r.tasksOverdue>0?'var(--red)':'var(--text-muted)'}">${r.tasksOverdue}</td><td>${r.reviewsPending}</td><td>${r.blockedWork}</td><td>${r.escalationsGenerated}</td><td>${r.slaAdherencePct==null?'—':r.slaAdherencePct+'%'}</td><td style="color:var(--red)">${r.findings.critical}</td><td style="color:var(--red)">${r.findings.high}</td></tr>`; });
+  h+=`</tbody></table></div>`;
+  return h;
+}
+
+// ----- Phase 7: client portfolio card + timeline embedded in client detail -----
+async function loadClientPortfolio(clientId){
+  const tierEl=document.getElementById('cli-tier-'+clientId);
+  const portEl=document.getElementById('cli-portfolio-'+clientId);
+  if(!portEl) return;
+  try{
+    const data=await apiJSON('/api/clients/'+clientId+'/portfolio');
+    const settings=data.settings||{ tier:'B', isDefault:true };
+    const row=data.row||null;
+    if(tierEl) tierEl.innerHTML=tierBadge(settings.tier);
+    portEl.innerHTML=renderServiceGovernanceCard(clientId, settings, row);
+    portEl.querySelectorAll('[data-tier-edit]').forEach(b=>{ b.onclick=()=>openTierEditor(clientId, settings); });
+  }catch(e){
+    portEl.innerHTML=`<div class="card" style="border-color:var(--red-border)"><div style="padding:8px;font-size:12px;color:var(--red)">Portfolio unavailable: ${esc(e.message||'error')}</div></div>`;
+  }
+}
+function renderServiceGovernanceCard(clientId, settings, row){
+  const t=settings.tier||'B';
+  const tile=(label,val,color)=>`<div style="background:var(--bg-deep);border-radius:8px;padding:8px;text-align:center"><div style="font-size:10px;color:var(--text-muted);text-transform:uppercase">${esc(label)}</div><div style="font-size:18px;font-weight:700;color:${color||'var(--text-primary)'}">${val==null?'—':val}</div></div>`;
+  let h=`<div class="card"><div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:10px">
+    <div><div style="font-size:11px;color:var(--text-muted);text-transform:uppercase">Service Governance</div><div style="margin-top:4px;display:flex;gap:8px;align-items:center">${tierBadge(t)}${row?riskBandPill(row.riskBand):''}${settings.partnerOwner?`<span style="font-size:12px;color:var(--text-muted)">Partner: <b style="color:var(--text-primary)">${esc(settings.partnerOwner)}</b></span>`:''}</div></div>
+    <div><button class="btn btn-sm" data-tier-edit>Edit Tier / Owner</button></div>
+  </div>`;
+  if(row){
+    h+=`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:8px">`;
+    h+=tile('Health', row.healthScore!=null?row.healthScore:'—', row.healthScore>=80?'var(--green)':row.healthScore>=60?'var(--blue)':'var(--amber)');
+    h+=tile('Responsiveness', row.responsivenessScore!=null?row.responsivenessScore:'—', row.responsivenessScore>=70?'var(--green)':row.responsivenessScore>=40?'var(--amber)':'var(--red)');
+    h+=tile('Effort', row.effortScore!=null?row.effortScore:'—', row.effortScore>=70?'var(--red)':row.effortScore<=30?'var(--green)':'var(--amber)');
+    h+=tile('Service Quality', row.serviceQualityScore!=null?row.serviceQualityScore:'—', row.serviceQualityScore>=80?'var(--green)':row.serviceQualityScore>=60?'var(--amber)':'var(--red)');
+    h+=tile('Compliance Risk', row.complianceRisk, row.complianceRisk>=75?'var(--red)':row.complianceRisk>=50?'var(--amber)':'var(--green)');
+    h+=tile('Operational Risk', row.operationalRisk, row.operationalRisk>=75?'var(--red)':row.operationalRisk>=50?'var(--amber)':'var(--green)');
+    h+=tile('Overall Risk', row.overallRisk, row.overallRisk>=75?'var(--red)':row.overallRisk>=50?'var(--amber)':'var(--green)');
+    h+=`</div>`;
+    if(row.isHighMaintenance) h+=`<div style="margin-top:8px;font-size:12px;color:var(--red);font-weight:700">⚠ High-maintenance client (effort score above threshold)</div>`;
+  }else{
+    h+=`<div style="padding:6px;font-size:12px;color:var(--text-muted)">No portfolio scores yet.</div>`;
+  }
+  if(settings.overrideReason){
+    h+=`<div style="margin-top:8px;padding:6px 8px;background:var(--bg-deep);border-radius:6px;font-size:11px;color:var(--text-muted)"><b>Override reason:</b> ${esc(settings.overrideReason)} ${settings.updatedByName?'<span style="margin-left:6px">— by '+esc(settings.updatedByName)+'</span>':''}</div>`;
+  }
+  h+=`</div>`;
+  return h;
+}
+
+function openTierEditor(clientId, currentSettings){
+  const html=`<div id="tierModal" style="position:fixed;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:1000">
+    <div style="background:var(--bg-card);padding:22px;border-radius:8px;max-width:480px;width:90%">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><h3 style="margin:0">Edit Tier / Service Settings</h3><button class="btn btn-sm" id="tierClose">✕</button></div>
+      <div style="display:grid;gap:10px;font-size:13px">
+        <label>Tier
+          <select id="tierSel" class="form-input">
+            <option value="A" ${currentSettings.tier==='A'?'selected':''}>A — High Priority (× ${TIER_META.A?'1.5':''})</option>
+            <option value="B" ${currentSettings.tier==='B'?'selected':''}>B — Standard (× 1.0)</option>
+            <option value="C" ${currentSettings.tier==='C'?'selected':''}>C — Low Priority (× 0.75)</option>
+          </select>
+        </label>
+        <label>Partner Owner<input id="tierOwner" class="form-input" placeholder="e.g. Partner Name" value="${esc(currentSettings.partnerOwner||'')}"></label>
+        <label>Override Reason (required when changing tier)
+          <textarea id="tierReason" class="form-input" placeholder="e.g. Strategic client, high-revenue, new client requiring extra attention…" rows="3">${esc(currentSettings.overrideReason||'')}</textarea>
+        </label>
+        <label>Internal Notes (optional)<textarea id="tierNotes" class="form-input" rows="2">${esc(currentSettings.notes||'')}</textarea></label>
+      </div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px"><button class="btn" id="tierCancel">Cancel</button><button class="btn btn-primary" id="tierSave">Save</button></div>
+    </div>
+  </div>`;
+  document.body.insertAdjacentHTML('beforeend', html);
+  document.getElementById('tierClose').onclick=()=>document.getElementById('tierModal').remove();
+  document.getElementById('tierCancel').onclick=()=>document.getElementById('tierModal').remove();
+  document.getElementById('tierSave').onclick=async function(){
+    const newTier=document.getElementById('tierSel').value;
+    const reason=document.getElementById('tierReason').value.trim();
+    const changingTier=newTier!==currentSettings.tier;
+    if(changingTier && !reason){ alert('Please provide a reason when changing tier.'); return; }
+    try{
+      await apiJSON('/api/clients/'+clientId+'/settings',{
+        method:'PUT',
+        body: JSON.stringify({
+          tier: newTier,
+          partner_owner: document.getElementById('tierOwner').value.trim() || null,
+          override_reason: reason || null,
+          notes: document.getElementById('tierNotes').value.trim() || null
+        })
+      });
+      document.getElementById('tierModal').remove();
+      loadClientPortfolio(clientId);
+    }catch(e){ alert(e.message); }
+  };
+}
+
+async function loadClientTimeline(clientId){
+  const el=document.getElementById('cli-timeline-'+clientId); if(!el) return;
+  try{
+    const data=await apiJSON('/api/clients/'+clientId+'/timeline?limit=100');
+    el.innerHTML=renderTimelineCard(data);
+  }catch(e){ /* silent */ }
+}
+function renderTimelineCard(data){
+  const events=data.events||[];
+  if(!events.length) return `<div class="card"><div class="card-title">📜 History Timeline</div><div style="padding:8px;font-size:12px;color:var(--text-muted)">No history yet.</div></div>`;
+  const iconFor=k=>({
+    task_created:'📝', task_completed:'✓', task_submitted_review:'👀', task_escalated:'🚨',
+    doc_requested:'📎', doc_received:'📥',
+    obligation_filed:'📤', obligation_due:'⏰',
+    escalation_triggered:'⚠', review_approve:'✅', review_reject:'❌',
+    workflow_step:'▸'
+  }[k]||'•');
+  let h=`<div class="card"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><div class="card-title" style="margin:0">📜 History Timeline (${data.total} events)</div>${data.total>events.length?`<span style="font-size:11px;color:var(--text-muted)">showing latest ${events.length}</span>`:''}</div><div style="max-height:320px;overflow:auto">`;
+  events.forEach(e=>{
+    h+=`<div style="display:flex;gap:10px;padding:6px 4px;border-bottom:1px solid var(--border);font-size:12px;align-items:flex-start"><span style="width:90px;color:var(--text-muted);font-size:11px;flex-shrink:0">${(e.at||'').slice(0,10)}</span><span style="width:20px;flex-shrink:0">${iconFor(e.kind)}</span><span style="flex:1">${esc(e.label||e.kind)}</span></div>`;
+  });
+  h+=`</div></div>`;
+  return h;
+}
+
+// ----- Phase 4/5: full lifecycle section embedded in client detail -----
+async function loadClientLifecycle(clientId){
+  const containerId='cli-lifecycle-'+clientId;
+  const el=document.getElementById(containerId); if(!el) return;
+  try{
+    const data=await apiJSON('/api/clients/'+clientId+'/lifecycle-summary');
+    el.innerHTML=renderClientLifecycle(data);
+    el.querySelectorAll('[data-wf-open]').forEach(b=>{ b.onclick=()=>openWorkflowModal(b.dataset.wfOpen); });
+  }catch(e){
+    el.innerHTML=`<div class="card" style="border-color:var(--red-border)"><div style="padding:8px;font-size:12px;color:var(--red)">Lifecycle unavailable: ${esc(e.message||'error')}</div></div>`;
+  }
+}
+
+function lifecycleStageColor(status){
+  return ({
+    complete:'var(--green)', completed:'var(--green)',
+    in_progress:'var(--accent)',
+    pending:'var(--amber)', stalled:'var(--red)',
+    not_required:'var(--text-muted)', none:'var(--text-muted)',
+    not_ready:'var(--red)', partially_ready:'var(--amber)', ready_for_filing:'var(--green)'
+  })[status] || 'var(--text-muted)';
+}
+function lifecycleStageIcon(status){
+  return ({
+    complete:'✓', completed:'✓', in_progress:'●',
+    pending:'◐', stalled:'⚠', not_required:'—', none:'—',
+    not_ready:'✕', partially_ready:'◐', ready_for_filing:'✓'
+  })[status] || '○';
+}
+function readinessLabel(r){
+  return ({
+    ready_for_filing:'Ready For Filing',
+    partially_ready:'Partially Ready',
+    not_ready:'Not Ready',
+    completed:'Completed',
+    none:'No Active Filings'
+  })[r] || r;
+}
+
+function lifecycleTile(label, stage){
+  if(!stage) return '';
+  const c=lifecycleStageColor(stage.status);
+  const icon=lifecycleStageIcon(stage.status);
+  return `<div style="background:var(--bg-deep);border-radius:8px;padding:10px;border-left:3px solid ${c}">
+    <div style="display:flex;justify-content:space-between;align-items:center"><div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em">${esc(label)}</div><div style="font-size:16px;color:${c};font-weight:700">${icon}</div></div>
+    <div style="font-size:13px;font-weight:700;color:${c};margin-top:4px;text-transform:capitalize">${esc((stage.status||'').replace(/_/g,' '))}</div>
+    ${stage.detail?`<div style="font-size:11px;color:var(--text-muted);margin-top:4px;line-height:1.4">${esc(stage.detail)}</div>`:''}
+  </div>`;
+}
+
+function renderClientLifecycle(data){
+  if(!data) return '';
+  const s=data.stages; const overall=data.overallReadiness;
+  const overallColor=lifecycleStageColor(overall);
+  const escalation=data.escalation||{score:0,band:'green'};
+  const health=data.health;
+
+  // Header strip with overall readiness + scores
+  let h=`<div class="card" style="border-color:${overallColor};margin-bottom:12px">
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px">
+      <div>
+        <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em">Compliance Lifecycle</div>
+        <div style="font-size:20px;font-weight:800;color:${overallColor};margin-top:2px">${readinessLabel(overall)}</div>
+      </div>
+      <div style="display:flex;gap:14px;align-items:center;font-size:12px">
+        ${health?`<div><div style="color:var(--text-muted);font-size:10px;text-transform:uppercase">Health</div><div style="margin-top:2px">${healthBadge(health.score, health.band)}</div></div>`:''}
+        <div><div style="color:var(--text-muted);font-size:10px;text-transform:uppercase">Escalation</div><div style="margin-top:2px">${escalationPill(escalation.band, escalation.score)}</div></div>
+        ${data.findings && data.findings.length?`<div><div style="color:var(--text-muted);font-size:10px;text-transform:uppercase">Open Risks</div><div style="margin-top:2px;font-weight:700">${data.findings.length}</div></div>`:''}
+      </div>
+    </div>`;
+
+  // 8-tile stage grid
+  h+=`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:8px;margin-top:14px">`;
+  h+=lifecycleTile('Onboarding',         s.onboarding);
+  h+=lifecycleTile('VAT Registration',   s.vatRegistration);
+  h+=lifecycleTile('CT Registration',    s.ctRegistration);
+  h+=lifecycleTile('Accounting',         s.accounting);
+  h+=lifecycleTile('Review',             s.review);
+  h+=lifecycleTile('Client Approval',    s.clientApproval);
+  h+=lifecycleTile('Filing',             s.filing);
+  h+=`<div style="background:var(--bg-deep);border-radius:8px;padding:10px;border-left:3px solid ${overallColor}">
+    <div style="display:flex;justify-content:space-between;align-items:center"><div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em">Overall Readiness</div><div style="font-size:16px;color:${overallColor};font-weight:700">${lifecycleStageIcon(overall)}</div></div>
+    <div style="font-size:13px;font-weight:700;color:${overallColor};margin-top:4px">${readinessLabel(overall)}</div>
+  </div>`;
+  h+=`</div>`;
+  h+=`</div>`;
+
+  // Blockers + next actions
+  if((data.blockers&&data.blockers.length)||(data.nextActions&&data.nextActions.length)){
+    h+=`<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">`;
+    if(data.blockers&&data.blockers.length){
+      h+=`<div class="card" style="border-color:var(--red-border)"><div class="card-title" style="color:var(--red)">⚠ Blockers</div>`;
+      data.blockers.forEach(b=>{ h+=`<div style="padding:6px 0;font-size:12px;border-bottom:1px solid var(--border)">${esc(b)}</div>`; });
+      h+=`</div>`;
+    }else{
+      h+=`<div class="card"><div class="card-title">✓ Blockers</div><div style="padding:8px;font-size:12px;color:var(--text-muted)">No active blockers.</div></div>`;
+    }
+    if(data.nextActions&&data.nextActions.length){
+      h+=`<div class="card" style="border-color:var(--accent-soft)"><div class="card-title" style="color:var(--accent)">→ Next Actions</div>`;
+      data.nextActions.forEach(a=>{ h+=`<div style="padding:6px 0;font-size:12px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;gap:8px"><span>${esc(a.title)}</span>${a.workflowId?`<button class="btn btn-sm" data-wf-open="${a.workflowId}">Open</button>`:''}</div>`; });
+      h+=`</div>`;
+    }else{
+      h+=`<div class="card"><div class="card-title">→ Next Actions</div><div style="padding:8px;font-size:12px;color:var(--text-muted)">Nothing to action — lifecycle clean.</div></div>`;
+    }
+    h+=`</div>`;
+  }
+
+  // Workflows list (compact)
+  if(data.workflows&&data.workflows.length){
+    h+=`<div class="card" style="margin-bottom:8px"><div class="card-title">Workflows</div>`;
+    data.workflows.forEach(w=>{
+      const c=w.status==='completed'?'var(--green)':w.status==='active'?'var(--accent)':'var(--text-muted)';
+      h+=`<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border);font-size:12px"><div><b>${esc(w.workflow_type.replace(/_/g,' '))}</b> ${w.period_label?'· '+esc(w.period_label):''}</div><div style="display:flex;gap:8px;align-items:center"><span style="color:${c};font-size:11px;font-weight:700;text-transform:uppercase">${esc(w.status)}</span><span style="color:var(--text-muted);font-size:11px">${esc(w.current_step_key||'—')}</span><button class="btn btn-sm" data-wf-open="${w.id}">Open</button></div></div>`;
+    });
+    h+=`</div>`;
+  }
+
+  return h;
+}
+
+// ----- Phase 4 minimal: workflow widget (drop-in for client detail) -----
+async function loadWorkflowsForClient(clientId, containerId){
+  try{
+    const j=await apiJSON('/api/clients/'+clientId+'/workflows');
+    const el=document.getElementById(containerId); if(!el) return;
+    el.innerHTML=renderClientWorkflows(j.workflows||[]);
+    el.querySelectorAll('[data-wf-open]').forEach(b=>{ b.onclick=()=>openWorkflowModal(b.dataset.wfOpen); });
+  }catch(e){ console.error(e);}
+}
+function renderClientWorkflows(workflows){
+  if(!workflows.length) return `<div style="padding:8px;font-size:12px;color:var(--text-muted)">No active workflows. Workflows auto-start when VAT/CT obligations are generated.</div>`;
+  return workflows.map(w=>`<div class="card" style="margin-bottom:8px"><div style="display:flex;justify-content:space-between;align-items:center"><div><b>${esc(w.workflow_type.replace(/_/g,' '))}</b> ${w.period_label?'· '+esc(w.period_label):''}</div><div style="display:flex;gap:6px"><span style="font-size:11px;color:var(--text-muted)">Current: ${esc(w.current_step_key||'—')}</span><button class="btn btn-sm" data-wf-open="${w.id}">Open</button></div></div></div>`).join('');
+}
+async function openWorkflowModal(workflowId){
+  try{
+    const data=await apiJSON('/api/workflows/'+workflowId);
+    const wf=data.workflow; const steps=data.steps||[];
+    const stepHtml=steps.map(s=>{
+      const c=s.status==='completed'?'var(--green)':s.status==='in_progress'?'var(--accent)':s.status==='skipped'?'var(--text-muted)':'var(--text-muted)';
+      const icon=s.status==='completed'?'✓':s.status==='in_progress'?'●':s.status==='skipped'?'⊘':'○';
+      return `<div style="display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid var(--border)"><span style="color:${c};font-size:18px;width:20px">${icon}</span><div style="flex:1"><div style="font-weight:${s.status==='in_progress'?'700':'400'}">${esc(s.step_label)}</div>${s.completed_at?`<div style="font-size:11px;color:var(--text-muted)">${s.completed_at.slice(0,10)} by ${esc(s.completed_by_name||'')}</div>`:''}</div></div>`;
+    }).join('');
+    const current=steps.find(s=>s.status==='in_progress');
+    const html=`<div id="wfModal" style="position:fixed;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:1000"><div style="background:var(--bg-card);padding:20px;border-radius:8px;max-width:620px;width:90%;max-height:90vh;overflow:auto"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px"><h3 style="margin:0">${esc(wf.workflow_type.replace(/_/g,' '))} ${wf.period_label?'· '+esc(wf.period_label):''}</h3><button class="btn btn-sm" id="wfClose">✕</button></div><div style="font-size:12px;color:var(--text-muted);margin-bottom:10px">Status: ${esc(wf.status)} · Client: ${esc(wf.client_name)}</div><div>${stepHtml}</div>${current?`<div style="margin-top:14px;display:flex;gap:8px"><input id="wfNotes" class="form-input" placeholder="Notes (optional)" style="flex:1"><button class="btn btn-primary" id="wfAdvance">Complete "${esc(current.step_label)}"</button></div>`:`<div style="margin-top:14px;color:var(--green);font-weight:700">✓ Workflow complete</div>`}</div></div>`;
+    document.body.insertAdjacentHTML('beforeend',html);
+    document.getElementById('wfClose').onclick=()=>document.getElementById('wfModal').remove();
+    if(current){
+      document.getElementById('wfAdvance').onclick=async function(){
+        try{ await apiJSON('/api/workflows/'+workflowId+'/advance',{method:'POST',body:JSON.stringify({requireKey:current.step_key,notes:document.getElementById('wfNotes').value||null})}); document.getElementById('wfModal').remove(); openWorkflowModal(workflowId); }
+        catch(err){ alert(err.message); }
+      };
+    }
+  }catch(e){ alert(e.message); }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// PHASE 3 — Command Center & Team Analytics
+// ═══════════════════════════════════════════════════════════════
+const phase3={ command:null, analyticsTab:'capacity', range:'30',
+  capacity:null, workloadRecs:null, productivity:null, kpis:null, forecast:null,
+  reviewQueue:null, communication:null };
+
+function trendArrow(delta){
+  if(delta===null||delta===undefined) return '<span style="color:var(--text-muted)">—</span>';
+  if(delta===0) return '<span style="color:var(--text-muted)">→ 0%</span>';
+  const c=delta>0?'var(--green)':'var(--red)';
+  const arrow=delta>0?'▲':'▼';
+  return `<span style="color:${c};font-weight:700">${arrow} ${Math.abs(delta)}%</span>`;
+}
+function bandPill(band){
+  const c={healthy:'var(--green)',balanced:'var(--green)',watch:'var(--blue)',underutilized:'var(--blue)',at_risk:'var(--amber)',overloaded:'var(--red)',critical:'var(--red)',unknown:'var(--text-muted)'}[band]||'var(--text-muted)';
+  return `<span style="padding:2px 8px;border-radius:10px;background:var(--bg-elevated);color:${c};font-weight:700;font-size:11px">${(band||'').replace(/_/g,' ')}</span>`;
+}
+
+// ----- Command Center -----
+async function loadCommand(){ try{ phase3.command=await apiJSON('/api/ops/command-center'); render(); }catch(e){ console.error(e);} }
+function renderCommandCenter(){
+  if(!phase3.command){ setTimeout(loadCommand,0); return `<div class="empty-state"><div class="empty-state-icon">⚡</div><div class="empty-state-title">Loading command center…</div></div>`; }
+  if(!state.clientReadiness){ setTimeout(ensureReadinessLoaded,0); }
+  if(!reportsState.attention){ setTimeout(loadReportAttention,0); }
+  const x=phase3.command;
+  let h=`<div class="card-title" style="margin-bottom:12px">⚡ Manager Command Center</div>`;
+  if(x.insights && x.insights.length){
+    h+=`<div class="card" style="border-color:var(--accent-soft);margin-bottom:16px"><div class="card-title">Actionable Insights</div><ul style="margin:8px 0 0 18px;padding:0;font-size:13px;line-height:1.7">`+x.insights.map(i=>`<li>${esc(i)}</li>`).join('')+`</ul></div>`;
+  }
+  // Top Attention Required Clients — the most-used management report, embedded here.
+  if(reportsState.attention && (reportsState.attention.rows||[]).length){
+    h+=`<div class="card" style="border-color:var(--red-border);margin-bottom:16px"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><div class="card-title" style="color:var(--red);margin:0">🎯 Top Attention Required Clients</div><div style="display:flex;gap:6px"><button class="btn btn-sm" data-rt="attention">View All</button><button class="btn btn-sm" onclick="window.location.href='${reportsExportUrl('/api/reports/attention-required?limit=50')}'">⬇ CSV</button></div></div><div style="overflow:auto">${attentionTableHtml((reportsState.attention.rows||[]).slice(0,10))}</div></div>`;
+    setTimeout(()=>{ document.querySelectorAll('[data-rt="attention"]').forEach(b=>{ b.onclick=()=>{ state.activeTab='reports'; reportsState.subTab='attention'; render(); }; }); },0);
+  }
+  // Readiness chips — reuses the Risk Center filter state so it carries across screens.
+  h+=readinessFilterStrip();
+
+  // Client-name lookup for items that don't carry clientId (review bottlenecks).
+  const byName={}; (state.clientReadiness&&state.clientReadiness.clients||[]).forEach(r=>{ byName[r.clientName]=r; });
+  const matchByName=name=>{ if(!riskState.readinessFilter||riskState.readinessFilter==='All') return true; const r=byName[name]; return r && r.state===riskState.readinessFilter; };
+  const matchById  =id  =>{ if(!riskState.readinessFilter||riskState.readinessFilter==='All') return true; if(id==null) return false; const r=readinessFor(id); return r && r.state===riskState.readinessFilter; };
+  const pillForId  =id  => { const r=id!=null?readinessFor(id):null; return r?readinessPill(r.state):''; };
+  const pillForName=name=> { const r=byName[name]; return r?readinessPill(r.state):''; };
+
+  // Apply filters per card. Cards that have no client mapping pass through unchanged.
+  const topPriority   = (x.topPriorityClients||[]).filter(c=>matchById(c.clientId));
+  const criticalDL    = (x.criticalDeadlines||[]).filter(t=>matchById(t.client_external_id));
+  const escalationRisks=(x.escalationRisks||[]); // no client mapping on raw event row
+  const overloaded    = (x.overloadedEmployees||[]); // user-centric — never filtered by client readiness
+  const stuckDocs     = (x.missingDocuments||[]).filter(d=>matchById(d.client_external_id));
+  const highRisk      = (x.highRiskClients||[]).filter(c=>matchById(c.clientId));
+  const reviewBottle  = (x.reviewBottlenecks||[]).filter(r=>matchByName(r.client));
+  const capacityWarns = (x.capacityWarnings||[]);
+
+  const taskMini=t=>`<div data-task="${t.id}" style="cursor:pointer;padding:6px 8px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;font-size:12px;gap:8px"><span style="font-weight:600">${esc(t.client_name||'')}</span>${pillForId(t.client_external_id)}<span style="color:var(--text-muted)">${esc((t.task_type||'').replace(/_/g,' '))}</span><span>${priorityPill(t.priority_score)}</span><span style="color:var(--text-muted)">${t.due_date||'—'}</span></div>`;
+  const clientMini=c=>`<div style="padding:6px 8px;border-bottom:1px solid var(--border);font-size:12px;display:flex;justify-content:space-between;align-items:center;gap:6px"><span style="font-weight:600;flex:1">${esc(c.clientName||'')}</span>${pillForId(c.clientId)}<span style="color:var(--text-muted)">${c.openTasks||0} open · prio ${c.totalPriority||0}</span></div>`;
+  const userMini=u=>`<div style="padding:6px 8px;border-bottom:1px solid var(--border);font-size:12px;display:flex;justify-content:space-between"><span style="font-weight:600">${esc(u.userName||'')}</span><span>${u.openTasks||0}/${u.capacity||'—'} · ratio ${u.workloadRatio||'—'}</span>${bandPill(u.band)}</div>`;
+  const card=(title,items,renderer,emptyMsg,color)=>{
+    let inner=`<div class="card-title" style="color:${color||'var(--text-primary)'}">${title} (${items.length})</div>`;
+    if(!items.length) return `<div class="card">${inner}<div style="padding:8px;font-size:12px;color:var(--text-muted)">${emptyMsg||'None.'}</div></div>`;
+    inner+=`<div style="max-height:260px;overflow:auto">${items.slice(0,12).map(renderer).join('')}</div>`;
+    return `<div class="card">${inner}</div>`;
+  };
+  h+=`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(360px,1fr));gap:16px">`;
+  h+=card('🔥 Top Priority Clients',     topPriority, clientMini, 'No priority clients.');
+  h+=card('⏰ Critical Deadlines (7d)',   criticalDL,  taskMini, 'No urgent deadlines.');
+  h+=card('🚨 Escalation Risks',         escalationRisks, e=>`<div style="padding:6px 8px;border-bottom:1px solid var(--border);font-size:12px">Task #${e.task_id} · ${esc(e.rule_name||'')} · sev ${e.severity}</div>`, 'No open escalations.');
+  h+=card('👥 Overloaded Employees',     overloaded, userMini, 'No one overloaded — nice!');
+  h+=card('📎 Stuck Documents',          stuckDocs, d=>`<div style="padding:6px 8px;border-bottom:1px solid var(--border);font-size:12px;display:flex;justify-content:space-between;align-items:center;gap:6px"><span><b>${esc(d.client_name)}</b> — ${esc(d.document_name)}</span>${pillForId(d.client_external_id)}</div>`, 'No stuck documents.');
+  h+=card('💔 High-Risk Clients',        highRisk, c=>`<div style="padding:6px 8px;border-bottom:1px solid var(--border);font-size:12px;display:flex;justify-content:space-between;align-items:center;gap:6px"><b>${esc(c.clientName||'')}</b>${pillForId(c.clientId)}${healthBadge(c.score,c.band)}</div>`, 'All clients healthy.');
+  h+=card('👀 Review Bottlenecks',       reviewBottle, r=>`<div style="padding:6px 8px;border-bottom:1px solid var(--border);font-size:12px;display:flex;justify-content:space-between;align-items:center;gap:6px"><b>${esc(r.client)}</b>${pillForName(r.client)}<span style="color:var(--text-muted)">${esc((r.taskType||'').replace(/_/g,' '))}</span><span style="color:${r.aging==='alarm'?'var(--red)':r.aging==='warn'?'var(--amber)':'var(--text-muted)'}">${r.ageDays}d</span></div>`, 'No reviews waiting.');
+  h+=card('📈 Capacity Warnings',        capacityWarns, w=>`<div style="padding:6px 8px;border-bottom:1px solid var(--border);font-size:12px;color:${w.severity==='high'?'var(--red)':'var(--amber)'}">${esc(w.message)}</div>`, 'Capacity looks healthy.');
+  h+=`</div>`;
+  return h;
+}
+
+// ----- Team Analytics (sub-tabs) -----
+function renderAnalytics(){
+  const tabs=[['capacity','Capacity'],['workload','Workload'],['productivity','Productivity'],['kpis','KPIs'],['forecast','Forecast'],['reviewq','Reviews'],['comms','Communication']];
+  let h=`<div style="display:flex;gap:12px;align-items:center;margin-bottom:12px;flex-wrap:wrap"><div class="nav" style="margin:0">`;
+  tabs.forEach(([k,l])=>{ h+=`<button class="nav-btn ${phase3.analyticsTab===k?'active':''}" data-aa="${k}">${l}</button>`; });
+  h+=`</div>`;
+  if(['productivity','kpis'].includes(phase3.analyticsTab)){
+    h+=`<div style="display:flex;gap:4px;align-items:center;margin-left:auto"><label style="font-size:11px;color:var(--text-muted)">Range</label>`;
+    ['7','30','90'].forEach(r=>{ h+=`<button class="btn btn-sm ${phase3.range===r?'btn-primary':''}" data-range="${r}">${r}d</button>`; });
+    h+=`</div>`;
+  }
+  h+=`</div>`;
+  switch(phase3.analyticsTab){
+    case 'capacity': h+=renderCapacityTab(); break;
+    case 'workload': h+=renderWorkloadTab(); break;
+    case 'productivity': h+=renderProductivityTab(); break;
+    case 'kpis': h+=renderKpiTab(); break;
+    case 'forecast': h+=renderForecastTab(); break;
+    case 'reviewq': h+=renderReviewQueueTab(); break;
+    case 'comms': h+=renderCommunicationTab(); break;
+  }
+  setTimeout(()=>{
+    document.querySelectorAll('[data-aa]').forEach(b=>{ b.onclick=()=>{ phase3.analyticsTab=b.dataset.aa; render(); }; });
+    document.querySelectorAll('[data-range]').forEach(b=>{ b.onclick=()=>{ phase3.range=b.dataset.range; phase3.productivity=null; phase3.kpis=null; render(); }; });
+  },0);
+  return h;
+}
+
+async function loadCapacity(){ try{ phase3.capacity=await apiJSON('/api/team/capacity'); render(); }catch(e){ console.error(e);} }
+function renderCapacityTab(){
+  if(!phase3.capacity){ setTimeout(loadCapacity,0); return `<div class="empty-state"><div class="empty-state-icon">⏳</div><div class="empty-state-title">Loading capacity…</div></div>`; }
+  const rows=phase3.capacity.rows||[];
+  let h=`<div class="card" style="padding:0;overflow:auto"><table style="min-width:1100px"><thead><tr><th>User</th><th>Band</th><th>Clients</th><th>Open</th><th>Cap</th><th>Ratio</th><th>Overdue</th><th>Awaiting Review</th><th>Blocked</th><th>Due ≤7d</th><th>Completed</th><th>Avg Days</th><th>SLA %</th></tr></thead><tbody>`;
+  rows.forEach(r=>{
+    h+=`<tr><td style="font-weight:600">${esc(r.userName)}</td><td>${bandPill(r.band)}</td><td>${r.assignedClients==null?'—':r.assignedClients}</td><td>${r.openTasks}</td><td>${r.capacity||'—'}</td><td>${r.workloadRatio==null?'—':r.workloadRatio}</td><td style="color:${r.overdueTasks>0?'var(--red)':'var(--text-muted)'}">${r.overdueTasks}</td><td>${r.awaitingReview}</td><td>${r.blockedTasks}</td><td>${r.dueWithin7d}</td><td>${r.completedTasks}</td><td>${r.avgCompletionDays==null?'—':r.avgCompletionDays}</td><td>${r.slaAdherencePct==null?'—':r.slaAdherencePct+'%'}</td></tr>`;
+  });
+  h+=`</tbody></table></div>`;
+  return h;
+}
+
+async function loadWorkloadRecs(){ try{ phase3.workloadRecs=await apiJSON('/api/team/workload/recommendations'); render(); }catch(e){ console.error(e);} }
+function renderWorkloadTab(){
+  if(!phase3.capacity){ setTimeout(loadCapacity,0); return `<div class="empty-state"><div class="empty-state-icon">⏳</div><div class="empty-state-title">Loading…</div></div>`; }
+  if(!phase3.workloadRecs){ setTimeout(loadWorkloadRecs,0); }
+  const rows=phase3.capacity.rows||[];
+  let h=`<div class="card"><div class="card-title">Workload Distribution</div><div style="display:grid;gap:8px">`;
+  rows.forEach(r=>{
+    const ratio=r.workloadRatio||0;
+    const pct=Math.min(150, ratio*100);
+    const c=r.band==='overloaded'?'var(--red)':r.band==='underutilized'?'var(--blue)':'var(--green)';
+    h+=`<div><div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:2px"><span style="font-weight:600">${esc(r.userName)}</span><span>${r.openTasks}/${r.capacity||'—'} · ratio ${ratio} · ${bandPill(r.band)}</span></div><div style="background:var(--bg-deep);height:8px;border-radius:4px;overflow:hidden"><div style="width:${Math.min(100,pct)}%;background:${c};height:100%"></div></div></div>`;
+  });
+  h+=`</div></div>`;
+
+  const recs=(phase3.workloadRecs&&phase3.workloadRecs.recommendations)||[];
+  h+=`<div class="card" style="margin-top:16px"><div class="card-title">Balancing Recommendations (${recs.length})</div>`;
+  if(!recs.length) h+=`<div style="padding:8px;font-size:12px;color:var(--text-muted)">No imbalance detected.</div>`;
+  recs.forEach((r,i)=>{
+    h+=`<div style="border:1px solid var(--border);border-radius:8px;padding:12px;margin:8px 0;font-size:13px"><div style="font-weight:600;margin-bottom:4px">${r.kind==='assign_unassigned'?'Assign Unassigned':'Reassign'} → ${esc(r.toUserName)} (${r.count})</div><div style="color:var(--text-muted);font-size:12px;margin-bottom:8px">${esc(r.reason)}</div>${r.kind==='reassign_tasks'?`<button class="btn btn-sm btn-primary" data-apply-rec="${i}">Apply</button>`:''}</div>`;
+  });
+  h+=`</div>`;
+  setTimeout(()=>{
+    document.querySelectorAll('[data-apply-rec]').forEach(b=>{
+      b.onclick=async function(){
+        const r=recs[parseInt(b.dataset.applyRec,10)];
+        if(!confirm('Reassign '+r.count+' task(s) to '+r.toUserName+'?')) return;
+        try{ await apiJSON('/api/team/workload/recommendations/apply',{method:'POST',body:JSON.stringify({recommendation:r})}); phase3.capacity=null; phase3.workloadRecs=null; render(); }
+        catch(err){ alert(err.message); }
+      };
+    });
+  },0);
+  return h;
+}
+
+async function loadProductivity(){ try{ phase3.productivity=await apiJSON('/api/team/productivity?range='+phase3.range); render(); }catch(e){ console.error(e);} }
+function renderProductivityTab(){
+  if(!phase3.productivity){ setTimeout(loadProductivity,0); return `<div class="empty-state"><div class="empty-state-icon">📈</div><div class="empty-state-title">Loading…</div></div>`; }
+  const users=phase3.productivity.users||(phase3.productivity.user?[phase3.productivity.user]:[]);
+  let h=`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:16px">`;
+  users.forEach(u=>{
+    const types=(u.completedByType||[]).slice(0,5).map(t=>`<span style="font-size:11px;color:var(--text-muted);margin-right:8px">${esc(t.type.replace(/_/g,' '))}: ${t.count}</span>`).join('');
+    h+=`<div class="card"><div class="card-title">${esc(u.userName)} <span style="font-size:11px;color:var(--text-muted);font-weight:normal">· ${u.rangeDays}d</span></div><div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;font-size:12px"><div><div style="color:var(--text-muted)">Completed</div><div style="font-size:20px;font-weight:700">${u.tasksCompleted}</div></div><div><div style="color:var(--text-muted)">Avg duration</div><div style="font-size:20px;font-weight:700">${u.avgCompletionDays==null?'—':u.avgCompletionDays+'d'}</div></div><div><div style="color:var(--text-muted)">SLA adherence</div><div style="font-size:18px;font-weight:700">${u.slaAdherencePct==null?'—':u.slaAdherencePct+'%'}</div></div><div><div style="color:var(--text-muted)">Review accept</div><div style="font-size:18px;font-weight:700">${u.reviewAcceptanceRate==null?'—':u.reviewAcceptanceRate+'%'}</div></div><div><div style="color:var(--text-muted)">Escalations</div><div style="font-size:18px;font-weight:700">${u.escalations}</div></div></div>${types?`<div style="margin-top:10px;border-top:1px solid var(--border);padding-top:8px">${types}</div>`:''}</div>`;
+  });
+  h+=`</div>`;
+  return h;
+}
+
+async function loadKpis(){ try{ phase3.kpis=await apiJSON('/api/team/kpis?range='+phase3.range); render(); }catch(e){ console.error(e);} }
+function renderKpiTab(){
+  if(!phase3.kpis){ setTimeout(loadKpis,0); return `<div class="empty-state"><div class="empty-state-icon">📊</div><div class="empty-state-title">Loading KPIs…</div></div>`; }
+  const k=phase3.kpis; const c=k.current; const t=k.trend;
+  const tile=(label,val,delta,suffix)=>`<div class="card"><div style="color:var(--text-muted);font-size:11px;text-transform:uppercase;letter-spacing:0.05em">${label}</div><div style="font-size:28px;font-weight:700;margin-top:4px">${val==null?'—':val}${suffix||''}</div><div style="margin-top:6px">${trendArrow(delta)} <span style="font-size:11px;color:var(--text-muted)">vs previous ${k.range}d</span></div></div>`;
+  let h=`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px;margin-bottom:12px">`;
+  h+=`<div class="card"><div style="color:var(--text-muted);font-size:11px;text-transform:uppercase">This Week</div><div style="font-size:28px;font-weight:700">${k.headline.completedThisWeek}</div><div style="font-size:11px;color:var(--text-muted)">tasks completed</div></div>`;
+  h+=`<div class="card"><div style="color:var(--text-muted);font-size:11px;text-transform:uppercase">This Month</div><div style="font-size:28px;font-weight:700">${k.headline.completedThisMonth}</div><div style="font-size:11px;color:var(--text-muted)">tasks completed</div></div>`;
+  h+=tile('Tasks Completed', c.tasksCompleted, t.tasksCompleted);
+  h+=tile('SLA Compliance', c.slaCompliancePct, t.slaCompliancePct, '%');
+  h+=tile('Avg Task Duration', c.avgTaskDurationDays, t.avgTaskDurationDays, 'd');
+  h+=tile('Escalations', c.escalationsTriggered, t.escalationsTriggered);
+  h+=tile('Overdue Work', c.overdueWorkPct, t.overdueWorkPct, '%');
+  h+=`</div>`;
+  return h;
+}
+
+async function loadForecast(){ try{ phase3.forecast=await apiJSON('/api/forecast?days=30'); render(); }catch(e){ console.error(e);} }
+function renderForecastTab(){
+  if(!phase3.forecast){ setTimeout(loadForecast,0); return `<div class="empty-state"><div class="empty-state-icon">🔮</div><div class="empty-state-title">Computing forecast…</div></div>`; }
+  const f=phase3.forecast;
+  let h='';
+  if(f.warnings && f.warnings.length){
+    h+=`<div class="card" style="border-color:var(--red-border);margin-bottom:12px"><div class="card-title">⚠ Warnings</div>`+f.warnings.map(w=>`<div style="padding:4px 0;font-size:13px;color:${w.severity==='high'?'var(--red)':'var(--amber)'}">${esc(w.message)}</div>`).join('')+`</div>`;
+  }
+  h+=`<div class="card"><div class="card-title">Next ${f.horizonDays} days — load vs capacity (daily target ${f.dailyCapacity})</div><div style="display:flex;align-items:flex-end;gap:2px;height:160px;border-bottom:1px solid var(--border);padding-bottom:4px">`;
+  const max=Math.max(f.dailyCapacity*2, ...f.buckets.map(b=>b.load), 1);
+  f.buckets.forEach(b=>{
+    const hpx=Math.max(2, Math.round((b.load/max)*150));
+    const c=b.flag==='spike'?'var(--red)':b.flag==='over_capacity'?'var(--amber)':'var(--green)';
+    h+=`<div title="${b.date}: ${b.load} (${b.flag})" style="flex:1;background:${c};height:${hpx}px;min-width:4px;border-radius:2px 2px 0 0"></div>`;
+  });
+  h+=`</div><div style="margin-top:10px;display:flex;gap:16px;font-size:12px;color:var(--text-muted)"><span>Next 7d: <b style="color:var(--text-primary)">${f.next7d}</b></span><span>Next 30d: <b style="color:var(--text-primary)">${f.next30d}</b></span><span>Active users: <b style="color:var(--text-primary)">${f.activeUsers}</b></span></div></div>`;
+  return h;
+}
+
+async function loadReviewQueue(){ try{ phase3.reviewQueue=await apiJSON('/api/review-queue'); render(); }catch(e){ console.error(e);} }
+function renderReviewQueueTab(){
+  if(!phase3.reviewQueue){ setTimeout(loadReviewQueue,0); return `<div class="empty-state"><div class="empty-state-icon">👀</div><div class="empty-state-title">Loading review queue…</div></div>`; }
+  const r=phase3.reviewQueue;
+  let h=`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px;margin-bottom:12px">`;
+  h+=`<div class="card"><div style="color:var(--text-muted);font-size:11px">QUEUE DEPTH</div><div style="font-size:28px;font-weight:700">${r.queueDepth}</div></div>`;
+  h+=`<div class="card"><div style="color:var(--text-muted);font-size:11px">AGING (Fresh / Warn / Alarm)</div><div style="font-size:18px;font-weight:700"><span style="color:var(--green)">${r.countsByAging.fresh}</span> / <span style="color:var(--amber)">${r.countsByAging.warn}</span> / <span style="color:var(--red)">${r.countsByAging.alarm}</span></div></div>`;
+  h+=`<div class="card"><div style="color:var(--text-muted);font-size:11px">AVG TURNAROUND (30d)</div><div style="font-size:28px;font-weight:700">${r.avgTurnaroundHours==null?'—':r.avgTurnaroundHours+'h'}</div></div>`;
+  h+=`</div>`;
+  h+=`<div class="card"><div class="card-title">Oldest in Queue</div><table style="width:100%"><thead><tr><th>Client</th><th>Task</th><th>Owner</th><th>Priority</th><th>Age</th></tr></thead><tbody>`;
+  r.oldest.forEach(o=>{
+    const c=o.aging==='alarm'?'var(--red)':o.aging==='warn'?'var(--amber)':'var(--text-muted)';
+    h+=`<tr data-task="${o.id}" style="cursor:pointer"><td style="font-weight:600">${esc(o.client||'')}</td><td>${esc((o.taskType||'').replace(/_/g,' '))}</td><td style="font-size:12px;color:var(--text-muted)">${esc(o.owner||'—')}</td><td>${priorityPill(o.priority)}</td><td style="color:${c};font-weight:700">${o.ageDays}d</td></tr>`;
+  });
+  h+=`</tbody></table></div>`;
+  if(r.reviewerWorkload && r.reviewerWorkload.length){
+    h+=`<div class="card" style="margin-top:12px"><div class="card-title">Reviewer Workload (last 30d)</div><table style="width:100%"><tbody>`;
+    r.reviewerWorkload.forEach(w=>{ h+=`<tr><td style="padding:4px 6px;font-weight:600">${esc(w.userName)}</td><td style="padding:4px 6px;text-align:right">${w.reviewsLast30d} reviews</td></tr>`; });
+    h+=`</tbody></table></div>`;
+  }
+  return h;
+}
+
+async function loadCommunication(){ try{ phase3.communication=await apiJSON('/api/clients/communication'); render(); }catch(e){ console.error(e);} }
+function renderCommunicationTab(){
+  if(!phase3.communication){ setTimeout(loadCommunication,0); return `<div class="empty-state"><div class="empty-state-icon">💬</div><div class="empty-state-title">Loading…</div></div>`; }
+  const rows=phase3.communication.clients||[];
+  let h=`<div class="card-title" style="margin-bottom:12px">💬 Client Communication (silent threshold: ${phase3.communication.silenceThresholdDays}d)</div>`;
+  h+=`<div class="card" style="padding:0;overflow:auto"><table style="min-width:900px"><thead><tr><th>Client</th><th>Owner</th><th>Last Contact</th><th>Silence (days)</th><th>Last Doc Req</th><th>Pending Docs</th><th>Reminders</th><th>Open Tasks</th></tr></thead><tbody>`;
+  rows.forEach(r=>{
+    const c=r.silent?'var(--red)':r.silenceDays==null?'var(--text-muted)':r.silenceDays>7?'var(--amber)':'var(--text-muted)';
+    h+=`<tr><td style="font-weight:600">${esc(r.clientName)}</td><td style="font-size:12px;color:var(--text-muted)">${esc(r.owner||'—')}</td><td style="font-size:12px">${r.lastCommunication?r.lastCommunication.slice(0,10):'Never'}</td><td style="color:${c};font-weight:700">${r.silenceDays==null?'∞':r.silenceDays}</td><td style="font-size:12px">${r.lastDocRequest?r.lastDocRequest.slice(0,10):'—'}</td><td>${r.pendingDocCount}</td><td>${r.totalReminders}</td><td>${r.outstandingTasks}</td></tr>`;
+  });
+  h+=`</tbody></table></div>`;
+  return h;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// PHASE 2 — Calendar, Exceptions, Health, Compliance Settings
+// ═══════════════════════════════════════════════════════════════
+const phase2={ calendar:null, exceptions:null, health:null, calFilter:{ from:null, to:null, type:'' } };
+
+function healthBadge(score, band){
+  const c=band==='healthy'?'var(--green)':band==='watch'?'var(--blue)':band==='at_risk'?'var(--amber)':'var(--red)';
+  return `<span style="display:inline-flex;align-items:center;gap:6px;padding:2px 10px;border-radius:12px;background:var(--bg-elevated);font-weight:700;color:${c}">●&nbsp;${score}</span>`;
+}
+function slaChip(s){
+  const map={on_track:['var(--green)','On Track'],at_risk:['var(--amber)','At Risk'],likely_breach:['var(--red)','Likely Breach'],breached:['var(--red)','Breached'],met:['var(--green)','Met']};
+  const [c,l]=map[s]||['var(--text-muted)',s||'—'];
+  return `<span style="font-size:10px;padding:2px 6px;border-radius:4px;color:${c};background:var(--bg-elevated)">${l}</span>`;
+}
+
+async function loadCalendar(){
+  try{
+    const today=new Date(); const to=new Date(today.getTime()+90*86400000);
+    const from=phase2.calFilter.from||today.toISOString().slice(0,10);
+    const toStr=phase2.calFilter.to||to.toISOString().slice(0,10);
+    const params=new URLSearchParams({from,to:toStr});
+    if(phase2.calFilter.type) params.set('types',phase2.calFilter.type);
+    const j=await apiJSON('/api/calendar?'+params.toString());
+    phase2.calendar=j; render();
+  }catch(e){ console.error(e); }
+}
+function renderCalendar(){
+  if(!phase2.calendar){ setTimeout(loadCalendar,0); return `<div class="empty-state"><div class="empty-state-icon">📅</div><div class="empty-state-title">Loading calendar…</div></div>`; }
+  const ev=phase2.calendar.events||[];
+  // Group by month
+  const groups={};
+  ev.forEach(e=>{ const k=(e.date||'').slice(0,7)||'unknown'; (groups[k]=groups[k]||[]).push(e); });
+  let h=`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><div class="card-title">📅 Compliance Calendar (${ev.length} events)</div><div style="display:flex;gap:6px"><select class="form-input" id="calType" style="width:auto"><option value="">All types</option><option value="VAT_Return">VAT</option><option value="CT_Return">CT</option><option value="Audit">Audit</option><option value="Management_Report">Mgmt Report</option></select><button class="btn" id="calRefresh">Refresh</button></div></div>`;
+  if(!ev.length) h+=`<div class="empty-state"><div class="empty-state-icon">✨</div><div class="empty-state-title">No upcoming events in this window</div></div>`;
+  Object.keys(groups).sort().forEach(month=>{
+    h+=`<div class="card"><div class="card-title">${month}</div><table style="width:100%"><tbody>`;
+    groups[month].forEach(e=>{
+      const kindColor=e.kind==='obligation'?'var(--accent)':'var(--blue)';
+      h+=`<tr><td style="padding:4px 6px;font-size:12px;color:var(--text-muted);width:90px">${e.date}</td><td style="padding:4px 6px"><span style="font-size:10px;padding:2px 6px;border-radius:4px;background:var(--bg-elevated);color:${kindColor}">${e.kind}</span></td><td style="padding:4px 6px;font-weight:600">${esc(e.client||'')}</td><td style="padding:4px 6px;font-size:12px">${esc(e.title)}</td><td style="padding:4px 6px">${e.status?statusBadge(e.status):''}</td></tr>`;
+    });
+    h+=`</tbody></table></div>`;
+  });
+  // Wire up filters after render
+  setTimeout(()=>{
+    const t=document.getElementById('calType'); if(t){ t.value=phase2.calFilter.type||''; t.onchange=()=>{ phase2.calFilter.type=t.value; phase2.calendar=null; render(); }; }
+    const r=document.getElementById('calRefresh'); if(r) r.onclick=()=>{ phase2.calendar=null; render(); };
+  },0);
+  return h;
+}
+
+async function loadExceptions(){ try{ phase2.exceptions=await apiJSON('/api/exceptions'); render(); }catch(e){ console.error(e); } }
+function renderExceptions(){
+  if(!phase2.exceptions){ setTimeout(loadExceptions,0); return `<div class="empty-state"><div class="empty-state-icon">🚨</div><div class="empty-state-title">Loading exceptions…</div></div>`; }
+  const x=phase2.exceptions;
+  const card=(title,rows,renderer,color)=>{
+    let inner=`<div class="card-title" style="color:${color||'var(--text-primary)'}">${title} (${rows.length})</div>`;
+    if(!rows.length) return `<div class="card">${inner}<div style="padding:8px;font-size:12px;color:var(--text-muted)">None — good news.</div></div>`;
+    inner+=`<div style="max-height:320px;overflow:auto">${rows.slice(0,25).map(renderer).join('')}</div>`;
+    return `<div class="card" style="border-color:${color||'var(--border)'}">${inner}</div>`;
+  };
+  const taskRowMini=t=>`<div data-task="${t.id}" style="cursor:pointer;padding:6px 8px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;gap:8px;font-size:12px"><span style="font-weight:600">${esc(t.client_name)}</span><span style="color:var(--text-muted)">${esc(t.task_type.replace(/_/g,' '))}</span><span>${statusBadge(t.status)}</span><span style="color:var(--text-muted)">${t.due_date||'—'}</span></div>`;
+  const docRow=d=>{ const pending=Math.floor((Date.now()-new Date(d.requested_date))/86400000); return `<div style="padding:6px 8px;border-bottom:1px solid var(--border);font-size:12px"><b>${esc(d.client_name)}</b> — ${esc(d.document_name)} <span style="color:var(--red)">(${pending}d)</span></div>`; };
+  const clientRow=h=>`<div style="padding:6px 8px;border-bottom:1px solid var(--border);font-size:12px;display:flex;justify-content:space-between"><b>${esc(h.clientName||h.client_name||'')}</b> ${healthBadge(h.score,h.band)}</div>`;
+  let h=`<div class="card-title" style="margin-bottom:12px">🚨 Exception Dashboard</div><div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(360px,1fr));gap:16px">`;
+  h+=card('⚠ Overdue', x.overdue, taskRowMini, 'var(--red)');
+  h+=card('⛔ Blocked', x.blocked, taskRowMini, 'var(--amber)');
+  h+=card('🚀 Escalated', x.escalated, taskRowMini, 'var(--red)');
+  h+=card('📎 Missing Documents >7d', x.missingDocuments, docRow, 'var(--amber)');
+  h+=card('💔 High-Risk Clients', x.highRiskClients, clientRow, 'var(--red)');
+  h+=`</div>`;
+  return h;
+}
+
+async function loadHealth(){ try{ phase2.health=await apiJSON('/api/health/summary'); render(); }catch(e){ console.error(e); } }
+function renderHealthBoard(){
+  if(!phase2.health){ setTimeout(loadHealth,0); return `<div class="empty-state"><div class="empty-state-icon">💚</div><div class="empty-state-title">Computing client health…</div></div>`; }
+  const rows=phase2.health.scores||[];
+  let h=`<div class="card-title" style="margin-bottom:12px">💚 Client Health (${rows.length})</div>`;
+  h+=`<div class="card" style="padding:0;overflow:auto"><table style="min-width:700px"><thead><tr><th>Client</th><th>Score</th><th>Band</th><th>Top Factors</th></tr></thead><tbody>`;
+  rows.forEach(r=>{
+    const f=(r.factors||[]).slice(0,3).map(f=>`<span style="font-size:11px;color:var(--text-muted);margin-right:8px">${f.key} (${f.impact})</span>`).join('');
+    h+=`<tr><td style="font-weight:600">${esc(r.clientName||'')}</td><td>${healthBadge(r.score,r.band)}</td><td style="font-size:11px;color:var(--text-muted)">${r.band}</td><td>${f||'<span style="font-size:11px;color:var(--text-muted)">—</span>'}</td></tr>`;
+  });
+  h+=`</tbody></table></div>`;
+  return h;
+}
+
+// ----- Compliance settings inline editor (call from existing client detail) -----
+// Renders a tiny widget; callers can drop this html into the client overview.
+function renderComplianceSettings(client){
+  if(!client) return '';
+  const opts=(v,arr)=>arr.map(o=>`<option value="${o}" ${v===o?'selected':''}>${o}</option>`).join('');
+  return `<div class="card" style="margin-top:12px"><div class="card-title">⚙ Compliance Settings</div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px;font-size:12px">
+      <label>VAT Registration Date<input type="date" class="form-input" data-cs="vatRegistrationDate" value="${client.vatRegistrationDate||''}"></label>
+      <label>VAT Frequency<select class="form-input" data-cs="vatFrequency">${opts(client.vatFrequency||'Quarterly',['Quarterly','Monthly'])}</select></label>
+      <label>Financial Year End (MM-DD)<input class="form-input" data-cs="financialYearEnd" placeholder="12-31" value="${client.financialYearEnd||''}"></label>
+      <label>Incorporation Date<input type="date" class="form-input" data-cs="incorporationDate" value="${client.incorporationDate||''}"></label>
+      <label>CT Registration Date<input type="date" class="form-input" data-cs="ctRegistrationDate" value="${client.ctRegistrationDate||''}"></label>
+    </div>
+    <div style="margin-top:10px;display:flex;gap:8px"><button class="btn btn-primary" data-cs-save="${client.id}">Save & Regenerate Obligations</button><span style="font-size:11px;color:var(--text-muted);align-self:center">Saving recomputes future obligations automatically.</span></div></div>`;
+}
+
+document.addEventListener('click', async function(e){
+  const btn=e.target.closest('[data-cs-save]'); if(!btn) return;
+  const cid=btn.dataset.csSave;
+  const c=state.clients.find(x=>String(x.id)===String(cid)); if(!c) return;
+  document.querySelectorAll('[data-cs]').forEach(el=>{ c[el.dataset.cs]=el.value||null; });
+  try{
+    await apiJSON('/api/tracker',{method:'PUT',body:JSON.stringify({clients:state.clients,teamMembers:state.teamMembers})});
+    alert('Saved. Regenerating obligations…');
+  }catch(err){ alert(err.message); }
+});
+
+// ═══════════════════════════════════════════════════════════════
+// TASK ENGINE — Priority queue, Tasks, Documents, Manager Dashboard
+// ═══════════════════════════════════════════════════════════════
+const TASK_STATUSES=["not_started","waiting_documents","documents_received","in_progress","ready_for_review","reviewed","completed","blocked","escalated"];
+const TASK_TYPES=["Accounting_Bookkeeping","VAT_Filing","VAT_Registration","VAT_Deregistration","CT_Filing","CT_Registration","CT_Deregistration","Audit","Document_Request","Client_Followup","Management_Report","Review","Amendment","Refund","Other"];
+const taskState={ priority:[], tasks:[], documents:[], ops:null, loading:false };
+
+async function apiJSON(url, opts){
+  const r=await fetch(url, Object.assign({credentials:'include',headers:{'Content-Type':'application/json'}}, opts||{}));
+  if(!r.ok){ const j=await r.json().catch(()=>({})); throw new Error(j.error||('HTTP '+r.status)); }
+  return r.json();
+}
+
+function statusBadge(s){
+  const colors={not_started:'var(--text-muted)',waiting_documents:'var(--amber)',documents_received:'var(--blue)',in_progress:'var(--blue)',ready_for_review:'var(--accent)',reviewed:'var(--green)',completed:'var(--green)',blocked:'var(--red)',escalated:'var(--red)'};
+  return `<span style="display:inline-block;padding:2px 8px;border-radius:4px;background:var(--bg-elevated);color:${colors[s]||'var(--text-muted)'};font-size:11px;font-weight:600">${s.replace(/_/g,' ')}</span>`;
+}
+function priorityPill(score){
+  const c=score>=120?'var(--red)':score>=60?'var(--amber)':'var(--text-muted)';
+  return `<span style="font-weight:700;color:${c}">${score||0}</span>`;
+}
+function fmtDate(d){ if(!d) return '—'; return new Date(d).toISOString().slice(0,10); }
+function daysUntil(d){ if(!d) return null; return Math.floor((new Date(d).setHours(0,0,0,0)-new Date().setHours(0,0,0,0))/86400000); }
+
+function taskRow(t){
+  const du=daysUntil(t.due_date);
+  const dueStr=t.due_date?`${fmtDate(t.due_date)} (${du<0?Math.abs(du)+'d overdue':du+'d'})`:'—';
+  const dueColor=du!=null&&du<0?'var(--red)':du!=null&&du<=7?'var(--amber)':'var(--text-muted)';
+  return `<tr data-task="${t.id}" style="cursor:pointer"><td>${priorityPill(t.priority_score)}</td><td style="font-weight:600">${esc(t.client_name)}</td><td>${esc(t.task_type.replace(/_/g,' '))}</td><td>${statusBadge(t.status)}</td><td style="font-size:12px;color:${dueColor}">${dueStr}</td><td style="font-size:12px;color:var(--text-muted)">${esc(t.assigned_user_name||'Unassigned')}</td></tr>`;
+}
+
+async function loadPriorityQueue(){ try{ const j=await apiJSON('/api/my/priority-queue'); taskState.priority=j.tasks||[]; render(); }catch(e){ console.error(e); } }
+function renderPriorityQueue(){
+  if(!taskState.priority.length && !taskState.loading){ setTimeout(loadPriorityQueue,0); return `<div class="empty-state"><div class="empty-state-icon">⚡</div><div class="empty-state-title">Loading your priority work…</div></div>`; }
+  if(!taskState.priority.length) return `<div class="empty-state"><div class="empty-state-icon">✅</div><div class="empty-state-title">All caught up</div><div class="empty-state-text">No open tasks assigned to you.</div></div>`;
+  let h=`<div class="card-title" style="margin-bottom:12px">⚡ My Next Priority Work — ${taskState.priority.length} open</div>`;
+  h+=`<div class="card" style="padding:0;overflow:auto"><table style="min-width:800px"><thead><tr><th style="width:60px">Priority</th><th>Client</th><th>Type</th><th>Status</th><th>Due</th><th>Owner</th></tr></thead><tbody>`;
+  taskState.priority.forEach(t=>{ h+=taskRow(t); });
+  h+=`</tbody></table></div>`;
+  return h;
+}
+
+async function loadTasks(){ try{ const j=await apiJSON('/api/tasks'); taskState.tasks=j.tasks||[]; render(); }catch(e){ console.error(e); } }
+function renderTasksBoard(){
+  if(!taskState.tasks.length){ setTimeout(loadTasks,0); }
+  const byStatus={};
+  TASK_STATUSES.forEach(s=>byStatus[s]=[]);
+  taskState.tasks.forEach(t=>{ (byStatus[t.status]||(byStatus[t.status]=[])).push(t); });
+  let h=`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><div class="card-title">Tasks (${taskState.tasks.length})</div>`;
+  if(isAdmin()) h+=`<div style="display:flex;gap:8px"><button class="btn" data-action="runGeneration">↻ Run Generation</button><button class="btn btn-primary" data-action="openNewTask">+ New Task</button></div>`;
+  h+=`</div>`;
+  h+=`<div class="card" style="padding:0;overflow:auto"><table style="min-width:900px"><thead><tr><th style="width:60px">Priority</th><th>Client</th><th>Type</th><th>Status</th><th>Due</th><th>Owner</th></tr></thead><tbody>`;
+  taskState.tasks.slice().sort((a,b)=>b.priority_score-a.priority_score).forEach(t=>{ h+=taskRow(t); });
+  h+=`</tbody></table></div>`;
+  return h;
+}
+
+async function loadDocuments(){ try{ const j=await apiJSON('/api/documents?status=pending'); taskState.documents=j.documents||[]; render(); }catch(e){ console.error(e); } }
+function renderDocumentsView(){
+  if(!taskState.documents.length){ setTimeout(loadDocuments,0); }
+  let h=`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><div class="card-title">📎 Missing Documents (${taskState.documents.length})</div><button class="btn btn-primary" data-action="openNewDoc">+ Request Document</button></div>`;
+  if(!taskState.documents.length) return h+`<div class="empty-state"><div class="empty-state-icon">📎</div><div class="empty-state-title">No pending documents</div></div>`;
+  h+=`<div class="card" style="padding:0;overflow:auto"><table style="min-width:900px"><thead><tr><th>Client</th><th>Document</th><th>Requested</th><th>Last Reminder</th><th>Pending (days)</th><th>Actions</th></tr></thead><tbody>`;
+  taskState.documents.forEach(d=>{
+    const pending=Math.floor((Date.now()-new Date(d.requested_date))/86400000);
+    h+=`<tr><td style="font-weight:600">${esc(d.client_name)}</td><td>${esc(d.document_name)}</td><td style="font-size:12px;color:var(--text-muted)">${fmtDate(d.requested_date)}</td><td style="font-size:12px;color:var(--text-muted)">${d.last_reminder_date?fmtDate(d.last_reminder_date):'—'}</td><td style="color:${pending>7?'var(--red)':'var(--text-muted)'}">${pending}</td><td><button class="btn btn-sm" data-doc-remind="${d.id}">Remind</button> <button class="btn btn-sm" data-doc-receive="${d.id}">Received</button></td></tr>`;
+  });
+  h+=`</tbody></table></div>`;
+  return h;
+}
+
+async function loadOps(){ try{ const j=await apiJSON('/api/manager/dashboard'); taskState.ops=j; render(); }catch(e){ console.error(e); } }
+function renderManagerDashboard(){
+  if(!taskState.ops){ setTimeout(loadOps,0); return `<div class="empty-state"><div class="empty-state-icon">📊</div><div class="empty-state-title">Loading manager dashboard…</div></div>`; }
+  const o=taskState.ops;
+  const card=(title,rows,emptyMsg)=>{
+    let inner=`<div class="card-title">${title} (${rows.length})</div>`;
+    if(!rows.length) return `<div class="card">${inner}<div style="padding:12px;color:var(--text-muted);font-size:12px">${emptyMsg||'Nothing here.'}</div></div>`;
+    inner+=`<div style="max-height:280px;overflow:auto"><table style="width:100%"><tbody>`;
+    rows.slice(0,12).forEach(t=>{ inner+=`<tr><td style="padding:4px 6px;font-weight:600">${esc(t.client_name)}</td><td style="padding:4px 6px;font-size:12px">${esc(t.task_type.replace(/_/g,' '))}</td><td style="padding:4px 6px">${statusBadge(t.status)}</td><td style="padding:4px 6px;font-size:12px;color:var(--text-muted)">${fmtDate(t.due_date)}</td></tr>`; });
+    inner+=`</tbody></table></div>`;
+    return `<div class="card">${inner}</div>`;
+  };
+  let h=`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(360px,1fr));gap:16px">`;
+  h+=card("🔥 Today's Critical Work", o.criticalToday, "Nothing critical today.");
+  h+=card("📅 Upcoming Deadlines (7d)", o.upcomingDeadlines);
+  h+=card("⚠ Overdue Tasks", o.overdue, "No overdue tasks.");
+  h+=card("⛔ Blocked / Escalated", o.blocked);
+  h+=card("👀 Awaiting Review", o.awaitingReview);
+  h+=`<div class="card"><div class="card-title">👥 Team Workload</div><table style="width:100%"><tbody>${o.workload.map(w=>`<tr><td style="padding:4px 6px;font-weight:600">${esc(w.user)}</td><td style="padding:4px 6px;text-align:right">${w.openTasks}</td></tr>`).join('')}</tbody></table></div>`;
+  h+=card("📎 Pending Documents", o.pendingDocuments.map(d=>({client_name:d.client_name,task_type:d.document_name,status:'waiting_documents',due_date:d.requested_date})), "No pending documents.");
+  h+=`</div>`;
+  return h;
+}
+
+// Action wiring for new tabs — additive, hooks into existing data-action dispatcher if present.
+document.addEventListener('click', async function(e){
+  const t=e.target.closest('[data-action]'); if(!t) return;
+  const action=t.dataset.action;
+  try{
+    if(action==='runGeneration'){ await apiJSON('/api/tasks/generate',{method:'POST'}); await loadTasks(); }
+    if(action==='openNewTask'){ await promptNewTask(); }
+    if(action==='openNewDoc'){ await promptNewDocument(); }
+  }catch(err){ alert(err.message); }
+});
+document.addEventListener('click', async function(e){
+  const r=e.target.closest('[data-doc-remind]'); const v=e.target.closest('[data-doc-receive]');
+  try{
+    if(r){ await apiJSON('/api/documents/'+r.dataset.docRemind+'/remind',{method:'POST'}); await loadDocuments(); }
+    if(v){ await apiJSON('/api/documents/'+v.dataset.docReceive+'/receive',{method:'POST'}); await loadDocuments(); }
+  }catch(err){ alert(err.message); }
+});
+document.addEventListener('click', async function(e){
+  const row=e.target.closest('[data-task]'); if(!row) return;
+  const id=row.dataset.task;
+  await openTaskDetail(id);
+});
+
+async function openTaskDetail(id){
+  try{
+    const j=await apiJSON('/api/tasks/'+id);
+    const t=j.task;
+    const opts=TASK_STATUSES.map(s=>`<option value="${s}" ${s===t.status?'selected':''}>${s.replace(/_/g,' ')}</option>`).join('');
+    const adminBtns=isAdmin()?`<button class="btn" data-task-review="approve">Approve Review</button> <button class="btn" data-task-review="reject">Reject</button> <button class="btn btn-primary" data-task-complete>Mark Completed</button>`:`<button class="btn btn-primary" data-task-submit>Submit for Review</button>`;
+    const html=`<div style="position:fixed;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:1000" id="taskModal"><div style="background:var(--bg-card);padding:24px;border-radius:8px;max-width:640px;width:90%;max-height:90vh;overflow:auto"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><h3>Task #${t.id}</h3><button class="btn btn-sm" id="taskModalClose">✕</button></div><div style="display:grid;gap:10px;font-size:13px"><div><b>Client:</b> ${esc(t.client_name)}</div><div><b>Type:</b> ${t.task_type.replace(/_/g,' ')}</div><div><b>Due:</b> ${fmtDate(t.due_date)} · <b>Deadline:</b> ${fmtDate(t.compliance_deadline)}</div><div><b>Owner:</b> ${esc(t.assigned_user_name||'Unassigned')}</div><div><b>Priority:</b> ${priorityPill(t.priority_score)}</div><div><b>Status:</b> <select id="taskStatusSel">${opts}</select></div><div><b>Review:</b> ${t.review_status}</div><div style="margin-top:8px"><b>Comments</b><div id="taskComments" style="max-height:200px;overflow:auto;background:var(--bg-deep);padding:8px;border-radius:6px;margin-top:6px">${(j.comments||[]).map(c=>`<div style="margin-bottom:6px"><b>${esc(c.user_name||'?')}</b> <span style="color:var(--text-muted);font-size:11px">${fmtDate(c.created_at)}</span><div>${esc(c.body)}</div></div>`).join('')||'<div style="color:var(--text-muted)">No comments</div>'}</div><div style="display:flex;gap:6px;margin-top:6px"><input id="newCommentBody" class="form-input" placeholder="Add a comment..." style="flex:1"><button class="btn" id="addCommentBtn">Add</button></div></div><div style="display:flex;gap:8px;margin-top:14px">${adminBtns}</div></div></div></div>`;
+    document.body.insertAdjacentHTML('beforeend', html);
+    document.getElementById('taskModalClose').onclick=()=>document.getElementById('taskModal').remove();
+    document.getElementById('taskStatusSel').onchange=async function(){
+      try{ await apiJSON('/api/tasks/'+t.id,{method:'PATCH',body:JSON.stringify({status:this.value})}); document.getElementById('taskModal').remove(); await loadTasks(); await loadPriorityQueue(); }
+      catch(err){ alert(err.message); }
+    };
+    document.getElementById('addCommentBtn').onclick=async function(){
+      const body=document.getElementById('newCommentBody').value.trim(); if(!body) return;
+      await apiJSON('/api/tasks/'+t.id+'/comments',{method:'POST',body:JSON.stringify({body})});
+      document.getElementById('taskModal').remove(); openTaskDetail(t.id);
+    };
+    const submitBtn=document.querySelector('[data-task-submit]'); if(submitBtn) submitBtn.onclick=async function(){ await apiJSON('/api/tasks/'+t.id+'/submit-review',{method:'POST'}); document.getElementById('taskModal').remove(); await loadTasks(); await loadPriorityQueue(); };
+    const completeBtn=document.querySelector('[data-task-complete]'); if(completeBtn) completeBtn.onclick=async function(){ await apiJSON('/api/tasks/'+t.id+'/complete',{method:'POST'}); document.getElementById('taskModal').remove(); await loadTasks(); };
+    document.querySelectorAll('[data-task-review]').forEach(b=>{ b.onclick=async function(){ await apiJSON('/api/tasks/'+t.id+'/review',{method:'POST',body:JSON.stringify({decision:this.dataset.taskReview})}); document.getElementById('taskModal').remove(); await loadTasks(); }; });
+  }catch(err){ alert(err.message); }
+}
+
+async function promptNewTask(){
+  const clientOpts=state.clients.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join('');
+  const typeOpts=TASK_TYPES.map(t=>`<option value="${t}">${t.replace(/_/g,' ')}</option>`).join('');
+  const userOpts=(state.teamMembers||[]).map(m=>`<option value="${esc(m.name||m)}">${esc(m.name||m)}</option>`).join('');
+  const html=`<div style="position:fixed;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:1000" id="nt"><div style="background:var(--bg-card);padding:24px;border-radius:8px;max-width:480px;width:90%"><h3>New Task</h3><div style="display:grid;gap:8px;margin-top:10px"><select id="ntClient" class="form-input">${clientOpts}</select><select id="ntType" class="form-input">${typeOpts}</select><input id="ntTitle" class="form-input" placeholder="Title (optional)"><input id="ntDue" type="date" class="form-input"><input id="ntDeadline" type="date" class="form-input" placeholder="Compliance deadline"><select id="ntOwner" class="form-input"><option value="">— Unassigned —</option>${userOpts}</select></div><div style="display:flex;gap:8px;margin-top:14px;justify-content:flex-end"><button class="btn" id="ntCancel">Cancel</button><button class="btn btn-primary" id="ntSave">Create</button></div></div></div>`;
+  document.body.insertAdjacentHTML('beforeend', html);
+  document.getElementById('ntCancel').onclick=()=>document.getElementById('nt').remove();
+  document.getElementById('ntSave').onclick=async function(){
+    try{
+      const body={ clientId:document.getElementById('ntClient').value, taskType:document.getElementById('ntType').value, title:document.getElementById('ntTitle').value, dueDate:document.getElementById('ntDue').value||null, complianceDeadline:document.getElementById('ntDeadline').value||null, assignedUserName:document.getElementById('ntOwner').value||null };
+      await apiJSON('/api/tasks',{method:'POST',body:JSON.stringify(body)});
+      document.getElementById('nt').remove(); await loadTasks();
+    }catch(err){ alert(err.message); }
+  };
+}
+
+async function promptNewDocument(){
+  const clientOpts=state.clients.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join('');
+  const html=`<div style="position:fixed;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:1000" id="nd"><div style="background:var(--bg-card);padding:24px;border-radius:8px;max-width:480px;width:90%"><h3>Request Document</h3><div style="display:grid;gap:8px;margin-top:10px"><select id="ndClient" class="form-input">${clientOpts}</select><input id="ndName" class="form-input" placeholder="Document name (e.g. Trade License copy)"><textarea id="ndNotes" class="form-input" placeholder="Notes (optional)"></textarea></div><div style="display:flex;gap:8px;margin-top:14px;justify-content:flex-end"><button class="btn" id="ndCancel">Cancel</button><button class="btn btn-primary" id="ndSave">Request</button></div></div></div>`;
+  document.body.insertAdjacentHTML('beforeend', html);
+  document.getElementById('ndCancel').onclick=()=>document.getElementById('nd').remove();
+  document.getElementById('ndSave').onclick=async function(){
+    try{
+      const body={ clientId:document.getElementById('ndClient').value, documentName:document.getElementById('ndName').value, notes:document.getElementById('ndNotes').value };
+      if(!body.documentName) throw new Error('Document name required');
+      await apiJSON('/api/documents',{method:'POST',body:JSON.stringify(body)});
+      document.getElementById('nd').remove(); await loadDocuments();
+    }catch(err){ alert(err.message); }
+  };
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -449,11 +2360,15 @@ function renderDashboard(){
 
   let h=`<div class="stat-grid cols-6">${[{l:"Total Clients",v:total,c:"var(--blue)"},{l:"Completed",v:completed,c:"var(--green)"},{l:"Blocked",v:blocked,c:"var(--red)"},{l:"Due ≤7 Days",v:urgent,c:"var(--amber)"},{l:"Overdue",v:overdue,c:"var(--red)"},{l:"Avg Completion",v:avgPct+"%",c:"var(--accent)"}].map(s=>`<div class="stat-card"><div class="stat-value" style="color:${s.c}">${s.v}</div><div class="stat-label">${s.l}</div></div>`).join("")}</div>`;
 
-  h+=`<div class="filter-bar"><input class="form-input search-input" placeholder="Search clients..." value="${esc(state.search)}" data-action="search">${selectHTML("fs",state.filterStatus,["All",...STATUSES],'data-action="filterStatus"')}${selectHTML("ft",state.filterTeam,["All",...getTeamOptions()],'data-action="filterTeam"')}</div>`;
+  // Readiness counts strip — clickable to filter, plus an "All" reset chip.
+  h+=renderReadinessCountsStrip();
+
+  h+=`<div class="filter-bar"><input class="form-input search-input" placeholder="Search clients..." value="${esc(state.search)}" data-action="search">${selectHTML("fs",state.filterStatus,["All",...STATUSES],'data-action="filterStatus"')}${selectHTML("ft",state.filterTeam,["All",...getTeamOptions()],'data-action="filterTeam"')}${renderReadinessFilterSelect()}${renderClientTierFilterSelect()}<button class="btn btn-sm ${state.sortByTier?'btn-primary':''}" data-action="toggleSortTier">Sort by Tier</button></div>`;
 
   const fl=getFilteredClients();
-  h+=`<div class="card" style="padding:0;overflow:auto"><table style="min-width:900px"><thead><tr><th>Client</th><th>Overall</th><th style="min-width:120px">Completion</th><th>Accounting</th><th>VAT</th><th>Corp Tax</th><th>Documents</th><th>Logins</th><th>Next Deadline</th><th>Owner</th></tr></thead><tbody>`;
-  fl.forEach(c=>{const m=metricsCache[c.id];const dl=m.deadlines[0];h+=`<tr style="cursor:pointer" data-client="${c.id}"><td style="font-weight:700;color:var(--text-primary);min-width:160px">${esc(c.name)}</td><td>${badgeHTML(m.overallStatus,1)}</td><td>${progressHTML(m.totalPct)}</td><td>${badgeHTML(m.acctStatus,1)}</td><td>${badgeHTML(m.vatStatus,1)}</td><td>${badgeHTML(m.ctStatus,1)}</td><td>${badgeHTML(m.docsStatus,1)}</td><td>${badgeHTML(m.loginsStatus,1)}</td><td style="font-size:12px;white-space:nowrap">${dl?`<span style="color:${dl.days<0?'var(--red)':dl.days<=7?'var(--amber)':'var(--text-muted)'}">${esc(dl.label)} · ${dl.days<0?Math.abs(dl.days)+'d overdue':dl.days+'d'}</span>`:'—'}</td><td style="font-size:12px;color:var(--text-muted)">${esc(c.assignedTeam)}</td></tr>`;});
+  h+=`<div class="card" style="padding:0;overflow:auto"><table style="min-width:1000px"><thead><tr><th>Client</th><th>Readiness</th><th>Overall</th><th style="min-width:120px">Completion</th><th>Accounting</th><th>VAT</th><th>Corp Tax</th><th>Documents</th><th>Logins</th><th>Next Deadline</th><th>Owner</th></tr></thead><tbody>`;
+  // Priority order in the client cell: name → readiness pill (in own column) → tier (compact, end of name).
+  fl.forEach(c=>{const m=metricsCache[c.id];const dl=m.deadlines[0];const r=readinessFor(c.id);const t=tierFor(c.id);h+=`<tr style="cursor:pointer" data-client="${c.id}"><td style="font-weight:700;color:var(--text-primary);min-width:160px"><span style="display:inline-flex;align-items:center;gap:6px">${esc(c.name)}${t?tierBadgeMini(t):''}</span></td><td>${r?readinessPill(r.state):'<span style="font-size:10px;color:var(--text-muted)">—</span>'}</td><td>${badgeHTML(m.overallStatus,1)}</td><td>${progressHTML(m.totalPct)}</td><td>${badgeHTML(m.acctStatus,1)}</td><td>${badgeHTML(m.vatStatus,1)}</td><td>${badgeHTML(m.ctStatus,1)}</td><td>${badgeHTML(m.docsStatus,1)}</td><td>${badgeHTML(m.loginsStatus,1)}</td><td style="font-size:12px;white-space:nowrap">${dl?`<span style="color:${dl.days<0?'var(--red)':dl.days<=7?'var(--amber)':'var(--text-muted)'}">${esc(dl.label)} · ${dl.days<0?Math.abs(dl.days)+'d overdue':dl.days+'d'}</span>`:'—'}</td><td style="font-size:12px;color:var(--text-muted)">${esc(c.assignedTeam)}</td></tr>`;});
   h+=`</tbody></table>`;if(!fl.length)h+=`<div style="padding:40px;text-align:center;color:var(--text-muted)">No clients match</div>`;h+=`</div>`;
 
   const aw=state.clients.flatMap(c=>(metricsCache[c.id]?.warnings||[]).map(w=>({client:c.name,warning:w})));
@@ -464,9 +2379,42 @@ function renderDashboard(){
 function renderClientsList(){
   if(!state.clients.length)return`<div class="empty-state"><div class="empty-state-icon">📁</div><div class="empty-state-title">No Clients</div><button class="btn btn-primary" data-action="openAddClient">+ Add Client</button></div>`;
   const fl=getFilteredClients();
-  let h=`<div class="filter-bar"><input class="form-input search-input" placeholder="Search..." value="${esc(state.search)}" data-action="search">${selectHTML("ft",state.filterTeam,["All",...getTeamOptions()],'data-action="filterTeam"')}</div><div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:16px">`;
-  fl.forEach(c=>{const m=metricsCache[c.id];h+=`<div class="card" data-client="${c.id}" style="cursor:pointer"><div style="display:flex;justify-content:space-between;margin-bottom:12px"><div><div style="font-weight:700;color:var(--text-primary)">${esc(c.name)}</div><div style="font-size:11px;color:var(--text-muted)">${esc(c.entityType)} · ${esc(c.assignedTeam)}</div></div>${badgeHTML(m.overallStatus,1)}</div>${progressHTML(m.totalPct)}</div>`;});
+  let h=renderReadinessCountsStrip();
+  h+=`<div class="filter-bar"><input class="form-input search-input" placeholder="Search..." value="${esc(state.search)}" data-action="search">${selectHTML("ft",state.filterTeam,["All",...getTeamOptions()],'data-action="filterTeam"')}${renderReadinessFilterSelect()}${renderClientTierFilterSelect()}<button class="btn btn-sm ${state.sortByTier?'btn-primary':''}" data-action="toggleSortTier">Sort by Tier</button></div><div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:16px">`;
+  fl.forEach(c=>{const m=metricsCache[c.id];const r=readinessFor(c.id);const t=tierFor(c.id);h+=`<div class="card" data-client="${c.id}" style="cursor:pointer"><div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px;gap:8px"><div style="flex:1;min-width:0"><div style="font-weight:700;color:var(--text-primary);display:inline-flex;align-items:center;gap:6px">${esc(c.name)}${t?tierBadgeMini(t):''}</div><div style="font-size:11px;color:var(--text-muted)">${esc(c.entityType)} · ${esc(c.assignedTeam)}</div></div>${badgeHTML(m.overallStatus,1)}</div><div style="margin-bottom:10px">${r?readinessPill(r.state):''}</div>${progressHTML(m.totalPct)}</div>`;});
   h+=`</div>`;return h;
+}
+
+// ----- Readiness UI helpers (counts strip + filter select) -----
+function renderReadinessCountsStrip(){
+  const data=state.clientReadiness;
+  if(!data){ setTimeout(ensureReadinessLoaded,0); return `<div style="padding:8px 0;font-size:12px;color:var(--text-muted)">Loading readiness…</div>`; }
+  const counts=data.counts||{};
+  // Order matches priority — most critical first.
+  const order=['high_risk','blocked','filing_due','awaiting_client_approval','awaiting_documents','awaiting_review','partially_ready','ready','idle'];
+  let h=`<div style="display:flex;gap:6px;flex-wrap:wrap;margin:8px 0 12px 0">`;
+  // "All" reset chip
+  const allActive=!state.filterReadiness||state.filterReadiness==='All';
+  h+=`<button class="btn btn-sm ${allActive?'btn-primary':''}" data-readiness="All">All (${(data.clients||[]).length})</button>`;
+  order.forEach(s=>{
+    const n=counts[s]||0;
+    if(!n) return; // hide empty buckets
+    const m=READINESS_STATE_META[s];
+    const active=state.filterReadiness===s;
+    h+=`<button class="btn btn-sm" data-readiness="${s}" style="border-left:3px solid ${m.color};${active?'background:var(--bg-elevated);font-weight:700':''}">${esc(m.label)}: ${n}</button>`;
+  });
+  h+=`</div>`;
+  setTimeout(()=>{ document.querySelectorAll('[data-readiness]').forEach(b=>{ b.onclick=()=>{ state.filterReadiness=b.dataset.readiness; render(); }; }); },0);
+  return h;
+}
+function renderReadinessFilterSelect(){
+  const opts=['All'].concat(['high_risk','blocked','filing_due','awaiting_client_approval','awaiting_documents','awaiting_review','partially_ready','ready','idle']);
+  const labels=Object.assign({All:'All Readiness'}, Object.fromEntries(Object.entries(READINESS_STATE_META).map(([k,v])=>[k,v.label])));
+  const cur=state.filterReadiness||'All';
+  let h=`<select class="form-input" data-action="filterReadiness" style="min-width:170px">`;
+  opts.forEach(o=>{ h+=`<option value="${o}" ${o===cur?'selected':''}>${esc(labels[o])}</option>`; });
+  h+=`</select>`;
+  return h;
 }
 
 function renderDeadlines(){
@@ -518,7 +2466,14 @@ function renderDetail(sc,scm){
 }
 
 function renderOverview(sc,scm){
-  let h=`<h2 style="font-size:18px;font-weight:800;margin-bottom:16px">${esc(sc.name)} — Overview</h2>`;
+  let h=`<h2 style="font-size:18px;font-weight:800;margin-bottom:8px;display:flex;align-items:center;gap:10px">${esc(sc.name)} <span id="cli-tier-${sc.id}"></span> <span style="font-size:13px;font-weight:400;color:var(--text-muted)">— Overview</span></h2>`;
+  // Phase 7: Service Governance card (tier, scores, risk profile, partner owner).
+  h+=`<div id="cli-portfolio-${sc.id}" style="margin-bottom:12px"></div>`;
+  // Phase 4/5: compliance lifecycle section — populated async, see loadClientLifecycle.
+  h+=`<div id="cli-lifecycle-${sc.id}" style="margin-bottom:16px"><div class="card" style="border-color:var(--accent-soft)"><div style="padding:8px;font-size:12px;color:var(--text-muted)">Loading compliance lifecycle…</div></div></div>`;
+  // Phase 7: client history timeline (collapsible)
+  h+=`<div id="cli-timeline-${sc.id}" style="margin-bottom:16px"></div>`;
+  setTimeout(function(){ loadClientLifecycle(sc.id); loadClientPortfolio(sc.id); loadClientTimeline(sc.id); }, 0);
   h+=`<div class="stat-grid" style="grid-template-columns:repeat(5,1fr)">${[{l:"Accounting",p:scm.acctPct,s:scm.acctStatus},{l:"VAT",p:scm.vatPct,s:scm.vatStatus},{l:"Corp Tax",p:scm.ctPct,s:scm.ctStatus},{l:"Documents",p:scm.docsPct,s:scm.docsStatus},{l:"Logins",p:scm.loginsPct,s:scm.loginsStatus}].map(i=>`<div class="stat-card"><div class="form-label" style="margin-bottom:6px">${i.l}</div><div class="stat-value" style="font-size:22px">${i.p}%</div><div style="margin-top:6px">${badgeHTML(i.s,1)}</div></div>`).join("")}</div>`;
   h+=`<div class="card"><div class="card-title">Client Details</div><div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px"><div><div class="form-label">Entity Type</div><div>${esc(sc.entityType)}</div></div><div><div class="form-label">Financial Year</div><div>FY ${esc(sc.accounting.financialYear)}</div></div><div><div class="form-label">Assigned To</div>${isAdmin()?selectHTML("at",sc.assignedTeam,getTeamOptions(),`data-client-field="${sc.id}"`):`<div style="font-weight:600">${esc(sc.assignedTeam)}</div>`}</div><div><div class="form-label">VAT Status</div>${isAdmin()?selectHTML("vs",sc.vatApplicable,VAT_OPTIONS,`data-client-vatapp="${sc.id}"`):`<div>${esc(sc.vatApplicable)}</div>`}</div><div><div class="form-label">CT Applicable</div><div style="color:${sc.ctApplicable?'var(--green)':'var(--red)'};font-weight:600">${sc.ctApplicable?"Yes":"No"}</div></div><div><div class="form-label">Last Updated</div><div style="font-size:12px;color:var(--text-muted)">${fmtDate(sc.lastUpdated)} ${sc.lastUpdatedBy?'by '+esc(sc.lastUpdatedBy):''}</div></div></div></div>`;
   if(scm.warnings.length)h+=`<div class="card" style="border-color:var(--red-border)"><div class="card-title" style="color:var(--red)">⚠ Warnings</div>${scm.warnings.map(w=>`<div style="padding:5px 0;font-size:13px;color:var(--amber);border-bottom:1px solid var(--border)">• ${esc(w)}</div>`).join("")}</div>`;
@@ -1190,12 +3145,32 @@ function renderAddCredentialModal(){
 }
 
 function getFilteredClients(){
-  return getVisibleClients().filter(c=>{
+  let list=getVisibleClients().filter(c=>{
     if(state.search&&!c.name.toLowerCase().includes(state.search.toLowerCase()))return false;
     if(state.filterTeam!=="All"&&c.assignedTeam!==state.filterTeam)return false;
     if(state.filterStatus!=="All"&&metricsCache[c.id]?.overallStatus!==state.filterStatus)return false;
+    if(state.filterReadiness&&state.filterReadiness!=="All"){
+      const r=readinessFor(c.id);
+      if(!r||r.state!==state.filterReadiness)return false;
+    }
+    if(state.filterClientTier&&state.filterClientTier!=="All"){
+      if((tierFor(c.id)||'B')!==state.filterClientTier)return false;
+    }
     return true;
   });
+  if(state.sortByTier){
+    list=list.slice().sort((a,b)=>tierOrder(tierFor(a.id))-tierOrder(tierFor(b.id)));
+  }
+  return list;
+}
+function renderClientTierFilterSelect(){
+  const cur=state.filterClientTier||'All';
+  const counts=(state.clientReadiness&&state.clientReadiness.tierCounts)||{A:0,B:0,C:0};
+  let h=`<select class="form-input" data-action="filterClientTier" style="min-width:130px">`;
+  h+=`<option value="All" ${cur==='All'?'selected':''}>All Tiers</option>`;
+  ['A','B','C'].forEach(t=>{ h+=`<option value="${t}" ${cur===t?'selected':''}>Tier ${t} (${counts[t]||0})</option>`; });
+  h+=`</select>`;
+  return h;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -1218,6 +3193,9 @@ function bindEvents(){
     if(a==="search")el.oninput=(e)=>{state.search=e.target.value;render();setTimeout(()=>{const i=document.querySelector('[data-action="search"]');if(i){i.focus();i.selectionStart=i.selectionEnd=state.search.length;}},0);};
     if(a==="filterStatus")el.onchange=(e)=>{state.filterStatus=e.target.value;render();};
     if(a==="filterTeam")el.onchange=(e)=>{state.filterTeam=e.target.value;render();};
+    if(a==="filterReadiness")el.onchange=(e)=>{state.filterReadiness=e.target.value;render();};
+    if(a==="filterClientTier")el.onchange=(e)=>{state.filterClientTier=e.target.value;render();};
+    if(a==="toggleSortTier")el.onclick=()=>{state.sortByTier=!state.sortByTier;render();};
     if(a==="removeClient")el.onclick=()=>{if(!confirm("Remove?"))return;state.clients=state.clients.filter(c=>c.id!==el.dataset.id);state.selectedClientId=null;updateAndSave();};
 
     // Bulk add
@@ -1359,7 +3337,7 @@ function bindEvents(){
 // KEYBOARD NAVIGATION
 // ═══════════════════════════════════════════════════════════════
 const DETAIL_TABS=["overview","accounting","vat","ct","documents","logins"];
-const HEADER_TABS=["dashboard","clients","deadlines","team"];
+const HEADER_TABS=["morning","priority","dashboard","calendar","clients","deadlines","tasks","documents","aiAssist","command","portfolio","reports","risk","analytics","health","exceptions","ops","team"];
 
 document.addEventListener("keydown",(e)=>{
   // Skip if user is typing in an input, select, or textarea

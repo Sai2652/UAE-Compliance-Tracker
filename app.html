@@ -2189,8 +2189,7 @@ function priorityPill(score){
   const c=score>=120?'var(--red)':score>=60?'var(--amber)':'var(--text-muted)';
   return `<span style="font-weight:700;color:${c}">${score||0}</span>`;
 }
-function fmtDate(d){ if(!d) return '—'; return new Date(d).toISOString().slice(0,10); }
-function daysUntil(d){ if(!d) return null; return Math.floor((new Date(d).setHours(0,0,0,0)-new Date().setHours(0,0,0,0))/86400000); }
+// fmtDate and daysUntil already defined at top of file — re-use globals.
 
 function taskRow(t){
   const du=daysUntil(t.due_date);

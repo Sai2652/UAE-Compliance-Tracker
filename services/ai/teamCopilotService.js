@@ -41,10 +41,7 @@ async function getMyNextBest(userId) {
     : [];
   const wfByObligation = {}; workflows.forEach(w => { if (w.obligation_id) wfByObligation[w.obligation_id] = w; });
 
-  const stepsByWorkflow = {};
-  await Promise.all(workflows.map(async w => {
-    stepsByWorkflow[w.id] = await repos.WorkflowStepsRepo.listForWorkflow(w.id);
-  }));
+  const stepsByWorkflow = await repos.WorkflowStepsRepo.listForWorkflows(workflows.map(w => w.id));
 
   const decorated = tasks.map(t => {
     const ctx = decorateTaskContext(t, settingsMap, readinessByClient, wfByObligation, stepsByWorkflow);

@@ -45,14 +45,15 @@ async function getTimeline(clientId, limit) {
     }
   }
 
-  // Workflows — confirmation steps (client confirmations history)
+  // Workflows — confirmation steps (client confirmations history) — batched fetch
   const wfs = await repos.WorkflowsRepo.list({ clientId: cid, limit: 200 });
-  await Promise.all(wfs.map(async wf => {
-    const steps = await repos.WorkflowStepsRepo.listForWorkflow(wf.id);
+  const stepsByWf = await repos.WorkflowStepsRepo.listForWorkflows(wfs.map(w => w.id));
+  wfs.forEach(wf => {
+    const steps = stepsByWf[wf.id] || [];
     steps.filter(s => s.completed_at).forEach(s => {
       events.push({ at: s.completed_at, kind: 'workflow_step', label: `${wf.workflow_type.replace(/_/g,' ')} ${wf.period_label||''} — ${s.step_label} done`, workflowId: wf.id });
     });
-  }));
+  });
 
   events.sort((a,b) => (b.at || '').localeCompare(a.at || ''));
   return { clientId: cid, total: events.length, events: events.slice(0, cap) };

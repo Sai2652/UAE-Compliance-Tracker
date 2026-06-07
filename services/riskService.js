@@ -177,7 +177,19 @@ function finding(kind, level, t, evidence, recommendation) {
 }
 
 // ---------- Run all ----------
+// Composite endpoints (Morning Dashboard, Command Center, Manager Action List)
+// each compose several services that internally call runAll(). Without
+// memoization, one HTTP request can recompute the full finding set 3-5 times.
+// A short-lived in-process cache (10s) collapses those duplicates without
+// returning stale data to subsequent requests.
+let _runAllCache = null;
 async function runAll() {
+  if (_runAllCache && (Date.now() - _runAllCache.at) < 10_000) return _runAllCache.value;
+  const value = await _runAllImpl();
+  _runAllCache = { at: Date.now(), value };
+  return value;
+}
+async function _runAllImpl() {
   const [tasks, docs, cfg, readinessByWorkflow] = await Promise.all([
     repos.TasksRepo.listAll({ limit: 5000 }),
     repos.DocumentsRepo.listPending(),

@@ -67,10 +67,11 @@ async function computeForAll() {
   const byClientDocs = {}; pendingDocs.forEach(d => { (byClientDocs[d.client_external_id] = byClientDocs[d.client_external_id] || []).push(d); });
   const byClientAllDocs = {}; (allDocs || []).forEach(d => { (byClientAllDocs[d.client_external_id] = byClientAllDocs[d.client_external_id] || []).push(d); });
 
-  // Stalled client-confirmation steps per client
+  // Stalled client-confirmation steps per client (batched fetch)
   const stalledByClient = {};
-  await Promise.all(workflows.map(async wf => {
-    const steps = await repos.WorkflowStepsRepo.listForWorkflow(wf.id);
+  const stepsByWf = await repos.WorkflowStepsRepo.listForWorkflows(workflows.map(w => w.id));
+  workflows.forEach(wf => {
+    const steps = stepsByWf[wf.id] || [];
     const confirm = steps.find(s => s.step_key === 'Client_Confirmation_Obtained');
     if (confirm && confirm.status === 'in_progress') {
       // Use last_status_change proxy via wf.updated_at; fall back to 0.
@@ -79,7 +80,7 @@ async function computeForAll() {
         (stalledByClient[wf.client_external_id] = stalledByClient[wf.client_external_id] || []).push({ workflowId: wf.id, days: inProgressDays });
       }
     }
-  }));
+  });
 
   const clients = repos.ClientsRepo.listAll();
   return clients.map(c => computeOne({

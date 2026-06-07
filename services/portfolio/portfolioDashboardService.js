@@ -27,6 +27,7 @@ async function getDashboard() {
 
   const byClientTasks = {}; tasks.forEach(t => { (byClientTasks[t.client_external_id] = byClientTasks[t.client_external_id] || []).push(t); });
   const byClientDocs = {}; pendingDocs.forEach(d => { (byClientDocs[d.client_external_id] = byClientDocs[d.client_external_id] || []).push(d); });
+  void byClientDocs; // used downstream
   const healthByClient = {}; healthAll.forEach(h => { healthByClient[String(h.clientId)] = h; });
   const readinessByClient = {}; (readiness.clients || []).forEach(r => { readinessByClient[String(r.clientId)] = r; });
   const respByClient = {}; resp.forEach(r => { respByClient[r.clientId] = r; });

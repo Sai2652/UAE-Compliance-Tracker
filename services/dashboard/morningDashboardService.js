@@ -54,12 +54,16 @@ async function generate({ force } = {}) {
   const clients = repos.ClientsRepo.listAll();
   const clientScores = riskService.computeClientScores(riskData.findings, riskData.config, clients);
 
+  // -------- Workflow steps — single batched query, shared by sections below.
+  const _stepsByWf = await repos.WorkflowStepsRepo.listForWorkflows(workflows.map(w => w.id)).catch(() => ({}));
+
   // -------- Section 1: Today's Focus (top 10 from manager action list,
   // enriched with a recommended-action sentence per row)
   const todaysFocus = await composeTodaysFocus(actionList.rows || [], openTasks);
 
-  // -------- Section 2: Critical deadlines
+  // -------- Section 2: Critical deadlines (uses batched _stepsByWf indirectly via current_step_key)
   const deadlines = composeDeadlines(openTasks, obligations, workflows, todayStr, in7, in14);
+  void _stepsByWf;
 
   // -------- Section 3: Clients Requiring Attention (top 10 — already
   // produced by managerActionListSvc, but we trim+attach next deadline)

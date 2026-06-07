@@ -95,12 +95,9 @@ async function getLifecycleSummary(clientId) {
     repos.WorkflowsRepo.list({ clientId: clientId, limit: 200 })
   ]);
 
-  // Steps per workflow (parallel)
+  // Steps per workflow (single batched query)
   const filingWorkflows = workflows.filter(w => (w.workflow_type === 'VAT_Filing' || w.workflow_type === 'CT_Filing') && w.status === 'active');
-  const stepsByWorkflow = {};
-  await Promise.all(filingWorkflows.map(async wf => {
-    stepsByWorkflow[wf.id] = await repos.WorkflowStepsRepo.listForWorkflow(wf.id);
-  }));
+  const stepsByWorkflow = await repos.WorkflowStepsRepo.listForWorkflows(filingWorkflows.map(w => w.id));
 
   const onboarding   = resolveOnboarding(client, allTasks);
   const vatReg       = resolveRegistration(allTasks, 'VAT_Registration');

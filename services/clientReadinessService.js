@@ -40,7 +40,16 @@ const STATE_LABELS = {
   idle: 'Active'
 };
 
+// Short-lived (10s) memo — many composite services call this in one HTTP
+// request. Without it the readiness sweep runs 3-5 times per page load.
+let _readinessCache = null;
 async function getAllClientReadiness() {
+  if (_readinessCache && (Date.now() - _readinessCache.at) < 10_000) return _readinessCache.value;
+  const value = await _getAllImpl();
+  _readinessCache = { at: Date.now(), value };
+  return value;
+}
+async function _getAllImpl() {
   // Single batched fetch — avoids N+1 across the fleet.
   const clients = repos.ClientsRepo.listAll();
   const [allTasks, pendingDocs, workflows, riskData, settingsMap] = await Promise.all([
@@ -59,12 +68,8 @@ async function getAllClientReadiness() {
   const wfByClient = {};
   workflows.forEach(w => { (wfByClient[w.client_external_id] = wfByClient[w.client_external_id] || []).push(w); });
 
-  // Steps per workflow — batched but still N round-trips. Acceptable in
-  // current scale; switch to a single SQL fetch when we hit AWS.
-  const stepsByWorkflow = {};
-  await Promise.all(workflows.map(async wf => {
-    stepsByWorkflow[wf.id] = await repos.WorkflowStepsRepo.listForWorkflow(wf.id);
-  }));
+  // Steps per workflow — single batched SQL query.
+  const stepsByWorkflow = await repos.WorkflowStepsRepo.listForWorkflows(workflows.map(w => w.id));
 
   const clientScores = riskService.computeClientScores(riskData.findings, riskData.config, clients);
   const escByClient = {};

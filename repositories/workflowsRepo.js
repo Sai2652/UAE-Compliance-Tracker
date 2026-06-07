@@ -44,6 +44,16 @@ const WorkflowStepsRepo = {
     if (error) throw error;
     return data || [];
   },
+  // Batched version — single SQL query for many workflows. Returns a map of
+  // workflowId → steps[]. Eliminates the classic N+1 over Promise.all.
+  async listForWorkflows(workflowIds) {
+    if (!workflowIds || !workflowIds.length) return {};
+    const { data, error } = await pg().from('compliance_workflow_steps').select('*').in('workflow_id', workflowIds).order('step_order', { ascending: true });
+    if (error) throw error;
+    const map = {};
+    (data || []).forEach(s => { (map[s.workflow_id] = map[s.workflow_id] || []).push(s); });
+    return map;
+  },
   async bulkInsert(rows) {
     if (!rows.length) return [];
     const { data, error } = await pg().from('compliance_workflow_steps').insert(rows).select('*');

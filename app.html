@@ -371,7 +371,7 @@ function calcMetrics(c){
 // ═══════════════════════════════════════════════════════════════
 // STATE
 // ═══════════════════════════════════════════════════════════════
-let state={clients:[],teamMembers:[],activeTab:"morning",selectedClientId:null,detailTab:"overview",search:"",filterStatus:"All",filterTeam:"All",filterReadiness:"All",filterClientTier:"All",sortByTier:false,showModal:null,bulkClients:[],clientReadiness:null,clientReadinessByClient:{},clientReadinessLoadedAt:0,morning:null,morningLoadedAt:0};
+let state={clients:[],teamMembers:[],activeTab:"morning",selectedClientId:null,detailTab:"overview",search:"",filterStatus:"All",filterTeam:"All",filterReadiness:"All",filterClientTier:"All",sortByTier:false,showModal:null,bulkClients:[],clientReadiness:null,clientReadinessByClient:{},clientReadinessLoadedAt:0,morning:null,morningLoadedAt:0,insightsMenuOpen:false};
 let metricsCache={};
 
 function refreshMetrics(){metricsCache={};state.clients.forEach(c=>{metricsCache[c.id]=calcMetrics(c);});}
@@ -418,20 +418,37 @@ function render(){
   }
 }
 
+// Insights menu — admin-only tabs grouped under a single dropdown to keep the
+// main nav clean. Each entry is [tabKey, label, icon].
+const INSIGHTS_TABS = [
+  ['portfolio',  'Portfolio',       '🗂️'],
+  ['risk',       'Risk Center',     '🛡️'],
+  ['reports',    'Reports / MIS',   '📊'],
+  ['analytics',  'Team Analytics',  '📈'],
+  ['health',     'Client Health',   '💚'],
+  ['exceptions', 'Exceptions',      '🚨'],
+  ['documents',  'Documents',       '📎']
+];
+function isInsightTab(k){ return INSIGHTS_TABS.some(t=>t[0]===k); }
+
 function renderHeader(){
   const tabs=[];
   if(isAdmin()) tabs.push(["morning","Morning Briefing"]);
   tabs.push(["priority","My Next Priority Work"]);
-  tabs.push(["dashboard","Clients Overview"]);
+  tabs.push(["dashboard","Clients"]);
   tabs.push(["calendar","Calendar"]);
-  tabs.push(["clients","Clients"]);
-  tabs.push(["deadlines","Deadlines"]);
   tabs.push(["tasks","Tasks"]);
-  tabs.push(["documents","Documents"]);
   tabs.push(["aiAssist","AI Assistant"]);
-  if(isAdmin()) { tabs.push(["command","Command Center"]); tabs.push(["portfolio","Portfolio"]); tabs.push(["reports","Reports"]); tabs.push(["risk","Risk Center"]); tabs.push(["analytics","Team Analytics"]); tabs.push(["health","Health"]); tabs.push(["exceptions","Exceptions"]); tabs.push(["ops","Manager Dashboard"]); tabs.push(["team","Team"]); }
+  if(isAdmin()) tabs.push(["team","Team"]);
   const adminBtns=isAdmin()?`<button class="btn" data-action="openManageTeam">👥 Team (${state.teamMembers.length})</button><button class="btn btn-primary" data-action="openAddClient">+ Add Client</button>`:'';
-  return`<div class="header"><div class="logo"><div class="logo-mark">CT</div><div><div class="logo-text">UAE Compliance Tracker</div><div class="logo-sub">Accounting &amp; Tax Ops</div></div></div><div class="nav">${tabs.map(([k,l])=>`<button class="nav-btn ${state.activeTab===k&&!state.selectedClientId?'active':''}" data-nav="${k}">${l}</button>`).join("")}</div><div class="header-actions">${adminBtns}${currentUser?`<div style="display:flex;align-items:center;gap:8px;margin-left:8px;padding-left:12px;border-left:1px solid var(--border)"><span style="font-size:12px;color:var(--text-muted)">${esc(currentUser.name)}</span><span style="font-size:9px;padding:2px 6px;border-radius:4px;background:${currentUser.role==='admin'?'var(--accent-soft)':'var(--bg-elevated)'};color:${currentUser.role==='admin'?'var(--accent)':'var(--text-muted)'};font-weight:700;text-transform:uppercase">${currentUser.role}</span>${currentUser.role==='admin'?'<a href="/admin" style="font-size:11px;color:var(--accent);text-decoration:none">⚙</a>':''}<button class="btn btn-sm" data-action="logout" style="font-size:11px">Logout</button></div>`:''}</div></div>`;
+  const insightsActive = isInsightTab(state.activeTab) && !state.selectedClientId;
+  const insightsBtn = isAdmin() ? `<div style="position:relative;display:inline-flex">
+    <button class="nav-btn ${insightsActive?'active':''}" data-action="toggleInsights">Insights ▾</button>
+    ${state.insightsMenuOpen?`<div id="insights-menu" style="position:absolute;top:calc(100% + 4px);left:0;background:var(--bg-card);border:1px solid var(--border);border-radius:8px;padding:4px;display:flex;flex-direction:column;gap:2px;z-index:200;min-width:180px;box-shadow:0 4px 16px rgba(0,0,0,0.3)">
+      ${INSIGHTS_TABS.map(([k,l,icon])=>`<button class="nav-btn ${state.activeTab===k?'active':''}" data-insight-nav="${k}" style="text-align:left;justify-content:flex-start">${icon} ${esc(l)}</button>`).join('')}
+    </div>`:''}
+  </div>`:'';
+  return`<div class="header"><div class="logo"><div class="logo-mark">CT</div><div><div class="logo-text">UAE Compliance Tracker</div><div class="logo-sub">Accounting &amp; Tax Ops</div></div></div><div class="nav">${tabs.map(([k,l])=>`<button class="nav-btn ${state.activeTab===k&&!state.selectedClientId?'active':''}" data-nav="${k}">${l}</button>`).join("")}${insightsBtn}</div><div class="header-actions">${adminBtns}${currentUser?`<div style="display:flex;align-items:center;gap:8px;margin-left:8px;padding-left:12px;border-left:1px solid var(--border)"><span style="font-size:12px;color:var(--text-muted)">${esc(currentUser.name)}</span><span style="font-size:9px;padding:2px 6px;border-radius:4px;background:${currentUser.role==='admin'?'var(--accent-soft)':'var(--bg-elevated)'};color:${currentUser.role==='admin'?'var(--accent)':'var(--text-muted)'};font-weight:700;text-transform:uppercase">${currentUser.role}</span>${currentUser.role==='admin'?'<a href="/admin" style="font-size:11px;color:var(--accent);text-decoration:none">⚙</a>':''}<button class="btn btn-sm" data-action="logout" style="font-size:11px">Logout</button></div>`:''}</div></div>`;
 }
 
 function renderMain(){
@@ -3178,7 +3195,21 @@ function renderClientTierFilterSelect(){
 // EVENT BINDING
 // ═══════════════════════════════════════════════════════════════
 function bindEvents(){
-  document.querySelectorAll("[data-nav]").forEach(el=>el.onclick=()=>{state.activeTab=el.dataset.nav;state.selectedClientId=null;render();});
+  document.querySelectorAll("[data-nav]").forEach(el=>el.onclick=()=>{state.activeTab=el.dataset.nav;state.selectedClientId=null;state.insightsMenuOpen=false;render();});
+  document.querySelectorAll("[data-insight-nav]").forEach(el=>el.onclick=(e)=>{e.stopPropagation();state.activeTab=el.dataset.insightNav;state.selectedClientId=null;state.insightsMenuOpen=false;render();});
+  // Close Insights dropdown when clicking outside it.
+  if(state.insightsMenuOpen){
+    setTimeout(()=>{
+      const closeOnOutside=(e)=>{
+        if(!e.target.closest('#insights-menu') && !e.target.closest('[data-action="toggleInsights"]')){
+          state.insightsMenuOpen=false;
+          document.removeEventListener('click', closeOnOutside);
+          render();
+        }
+      };
+      document.addEventListener('click', closeOnOutside);
+    },0);
+  }
   document.querySelectorAll("[data-client]").forEach(el=>el.onclick=(e)=>{if(e.target.closest("select,input,button,.tm-remove"))return;state.selectedClientId=el.dataset.client;state.detailTab=el.dataset.detail||"overview";render();});
   document.querySelectorAll("[data-detail-nav]").forEach(el=>el.onclick=()=>{state.detailTab=el.dataset.detailNav;render();});
 
@@ -3197,6 +3228,7 @@ function bindEvents(){
     if(a==="filterReadiness")el.onchange=(e)=>{state.filterReadiness=e.target.value;render();};
     if(a==="filterClientTier")el.onchange=(e)=>{state.filterClientTier=e.target.value;render();};
     if(a==="toggleSortTier")el.onclick=()=>{state.sortByTier=!state.sortByTier;render();};
+    if(a==="toggleInsights")el.onclick=(e)=>{e.stopPropagation();state.insightsMenuOpen=!state.insightsMenuOpen;render();};
     if(a==="removeClient")el.onclick=()=>{if(!confirm("Remove?"))return;state.clients=state.clients.filter(c=>c.id!==el.dataset.id);state.selectedClientId=null;updateAndSave();};
 
     // Bulk add
@@ -3338,7 +3370,8 @@ function bindEvents(){
 // KEYBOARD NAVIGATION
 // ═══════════════════════════════════════════════════════════════
 const DETAIL_TABS=["overview","accounting","vat","ct","documents","logins"];
-const HEADER_TABS=["morning","priority","dashboard","calendar","clients","deadlines","tasks","documents","aiAssist","command","portfolio","reports","risk","analytics","health","exceptions","ops","team"];
+// Visible top-level tabs only (Insights items + legacy routes still navigable, but not in keyboard cycle).
+const HEADER_TABS=["morning","priority","dashboard","calendar","tasks","aiAssist","team"];
 
 document.addEventListener("keydown",(e)=>{
   // Skip if user is typing in an input, select, or textarea

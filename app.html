@@ -5,6 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>UAE Compliance Tracker</title>
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<script>
+// Apply saved theme before any paint to avoid a dark-to-light flash on load.
+(function(){ try { if (localStorage.getItem('theme') === 'light') document.documentElement.classList.add('theme-light'); } catch(e){} })();
+</script>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :root{
@@ -23,6 +27,34 @@
 --mono:'IBM Plex Mono',monospace;
 --transition:0.2s cubic-bezier(0.4,0,0.2,1);
 }
+/* Light theme — variable overrides only, no structural changes. */
+html.theme-light{
+--bg-deep:#f4f6fb;--bg-base:#eef1f7;--bg-card:#ffffff;--bg-card-hover:#f4f6fb;
+--bg-elevated:#e8ecf4;--bg-input:#ffffff;
+--border:#dde3ee;--border-light:#c8d0dd;--border-focus:#2d6adc;
+--text-primary:#0c1018;--text-secondary:#3d4658;--text-muted:#6b7488;
+--accent:#2d6adc;--accent-soft:#3d7aed14;
+--green:#16a34a;--green-bg:#16a34a14;--green-border:#16a34a44;
+--amber:#c2410c;--amber-bg:#f59e0b18;--amber-border:#f59e0b55;
+--red:#dc2626;--red-bg:#ef444414;--red-border:#ef444455;
+--blue:#2d6adc;--blue-bg:#3d7aed12;
+--slate:#475569;--slate-bg:#64748b18;
+}
+html.theme-light ::-webkit-scrollbar-thumb{background:#c8d0dd}
+html.theme-light .modal{box-shadow:0 20px 60px rgba(15,23,42,0.18)}
+html.theme-light .modal-overlay{background:rgba(15,23,42,0.35)}
+html.theme-light .logo-mark{color:#ffffff}
+html.theme-light .btn-primary{color:#ffffff}
+/* Smoother tab-switch: color/background transitions on every interactive surface */
+html{color-scheme:dark}
+html.theme-light{color-scheme:light}
+body,.header,.nav,.nav-btn,.btn,.card,.stat-card,.form-input,.main,.sidebar,.modal,.deadline-item,.tm-item,.detail-nav-btn,.month-cell,.doc-toggle-btn,.cred-card{transition:background-color 0.18s ease,color 0.18s ease,border-color 0.18s ease}
+.nav-btn.active{transition:background-color 0.15s ease,color 0.15s ease}
+/* Skeleton loader — used while a tab's async data is loading. */
+.skeleton{background:linear-gradient(90deg,var(--bg-card) 0%,var(--bg-card-hover) 50%,var(--bg-card) 100%);background-size:200% 100%;animation:skeleton-shimmer 1.4s ease-in-out infinite;border-radius:var(--radius);border:1px solid var(--border)}
+@keyframes skeleton-shimmer{0%{background-position:200% 0}100%{background-position:-200% 0}}
+.skeleton-row{height:64px;margin-bottom:8px}
+.skeleton-card{height:120px;margin-bottom:12px}
 html{font-size:14px}
 body{font-family:var(--font);background:var(--bg-deep);color:var(--text-primary);min-height:100vh;overflow-x:hidden;line-height:1.5}
 input,select,textarea,button{font-family:inherit}
@@ -464,7 +496,7 @@ function renderHeader(){
       ${INSIGHTS_TABS.map(([k,l,icon])=>`<button class="nav-btn ${state.activeTab===k?'active':''}" data-insight-nav="${k}" style="text-align:left;justify-content:flex-start">${icon} ${esc(l)}</button>`).join('')}
     </div>`:''}
   </div>`:'';
-  return`<div class="header"><div class="logo"><div class="logo-mark">CT</div><div><div class="logo-text">UAE Compliance Tracker</div><div class="logo-sub">Accounting &amp; Tax Ops</div></div></div><div class="nav">${tabs.map(([k,l])=>`<button class="nav-btn ${state.activeTab===k&&!state.selectedClientId?'active':''}" data-nav="${k}">${l}</button>`).join("")}${insightsBtn}</div><div class="header-actions">${adminBtns}${currentUser?`<div style="display:flex;align-items:center;gap:8px;margin-left:8px;padding-left:12px;border-left:1px solid var(--border)"><span style="font-size:12px;color:var(--text-muted)">${esc(currentUser.name)}</span><span style="font-size:9px;padding:2px 6px;border-radius:4px;background:${currentUser.role==='admin'?'var(--accent-soft)':'var(--bg-elevated)'};color:${currentUser.role==='admin'?'var(--accent)':'var(--text-muted)'};font-weight:700;text-transform:uppercase">${currentUser.role}</span>${currentUser.role==='admin'?'<a href="/admin" style="font-size:11px;color:var(--accent);text-decoration:none">⚙</a>':''}<button class="btn btn-sm" data-action="logout" style="font-size:11px">Logout</button></div>`:''}</div></div>`;
+  return`<div class="header"><div class="logo"><div class="logo-mark">CT</div><div><div class="logo-text">UAE Compliance Tracker</div><div class="logo-sub">Accounting &amp; Tax Ops</div></div></div><div class="nav">${tabs.map(([k,l])=>`<button class="nav-btn ${state.activeTab===k&&!state.selectedClientId?'active':''}" data-nav="${k}">${l}</button>`).join("")}${insightsBtn}</div><div class="header-actions">${adminBtns}${currentUser?`<div style="display:flex;align-items:center;gap:8px;margin-left:8px;padding-left:12px;border-left:1px solid var(--border)"><span style="font-size:12px;color:var(--text-muted)">${esc(currentUser.name)}</span><span style="font-size:9px;padding:2px 6px;border-radius:4px;background:${currentUser.role==='admin'?'var(--accent-soft)':'var(--bg-elevated)'};color:${currentUser.role==='admin'?'var(--accent)':'var(--text-muted)'};font-weight:700;text-transform:uppercase">${currentUser.role}</span>${currentUser.role==='admin'?'<a href="/admin" style="font-size:11px;color:var(--accent);text-decoration:none">⚙</a>':''}<button class="btn btn-sm" data-action="toggleTheme" title="Toggle light/dark theme" style="font-size:13px;padding:4px 8px">${document.documentElement.classList.contains('theme-light')?'🌙':'☀️'}</button><button class="btn btn-sm" data-action="logout" style="font-size:11px">Logout</button></div>`:''}</div></div>`;
 }
 
 function renderMain(){
@@ -3224,8 +3256,19 @@ function renderClientTierFilterSelect(){
 // EVENT BINDING
 // ═══════════════════════════════════════════════════════════════
 function bindEvents(){
-  document.querySelectorAll("[data-nav]").forEach(el=>el.onclick=()=>{state.activeTab=el.dataset.nav;state.selectedClientId=null;state.insightsMenuOpen=false;render();});
-  document.querySelectorAll("[data-insight-nav]").forEach(el=>el.onclick=(e)=>{e.stopPropagation();state.activeTab=el.dataset.insightNav;state.selectedClientId=null;state.insightsMenuOpen=false;render();});
+  // Instant tab highlight — flip .active before the full re-render fires, so
+  // the click feels immediate even if the async data hasn't loaded yet.
+  document.querySelectorAll("[data-nav]").forEach(el=>el.onclick=()=>{
+    document.querySelectorAll('[data-nav]').forEach(b=>b.classList.remove('active'));
+    el.classList.add('active');
+    state.activeTab=el.dataset.nav;state.selectedClientId=null;state.insightsMenuOpen=false;
+    render();
+  });
+  document.querySelectorAll("[data-insight-nav]").forEach(el=>el.onclick=(e)=>{
+    e.stopPropagation();
+    state.activeTab=el.dataset.insightNav;state.selectedClientId=null;state.insightsMenuOpen=false;
+    render();
+  });
   // Close Insights dropdown when clicking outside it.
   if(state.insightsMenuOpen){
     setTimeout(()=>{
@@ -3251,7 +3294,22 @@ function bindEvents(){
     if(a==="closeModal")el.onclick=()=>{state.showModal=null;render();};
     if(a==="backToList")el.onclick=()=>{state.selectedClientId=null;render();};
     if(a==="logout")el.onclick=()=>{logout();};
-    if(a==="search")el.oninput=(e)=>{state.search=e.target.value;render();setTimeout(()=>{const i=document.querySelector('[data-action="search"]');if(i){i.focus();i.selectionStart=i.selectionEnd=state.search.length;}},0);};
+    if(a==="toggleTheme")el.onclick=()=>{
+      const isLight=document.documentElement.classList.toggle('theme-light');
+      try{ localStorage.setItem('theme', isLight?'light':'dark'); }catch(e){}
+      // Update the button icon inline — no full render needed for this.
+      el.textContent = isLight?'🌙':'☀️';
+    };
+    // Debounced search — was re-rendering on every keystroke (up to 60/sec).
+    // Now waits 150ms of quiet before re-rendering. Feels instant, cheap.
+    if(a==="search")el.oninput=(e)=>{
+      const v=e.target.value;
+      clearTimeout(window._searchDebounce);
+      window._searchDebounce=setTimeout(()=>{
+        state.search=v;render();
+        setTimeout(()=>{const i=document.querySelector('[data-action="search"]');if(i){i.focus();i.selectionStart=i.selectionEnd=v.length;}},0);
+      },150);
+    };
     if(a==="filterStatus")el.onchange=(e)=>{state.filterStatus=e.target.value;render();};
     if(a==="filterTeam")el.onchange=(e)=>{state.filterTeam=e.target.value;render();};
     if(a==="filterReadiness")el.onchange=(e)=>{state.filterReadiness=e.target.value;render();};

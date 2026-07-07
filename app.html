@@ -2273,7 +2273,7 @@ document.addEventListener('click', async function(e){
 // ═══════════════════════════════════════════════════════════════
 const TASK_STATUSES=["not_started","waiting_documents","documents_received","in_progress","ready_for_review","reviewed","completed","blocked","escalated"];
 const TASK_TYPES=["Accounting_Bookkeeping","VAT_Filing","VAT_Registration","VAT_Deregistration","CT_Filing","CT_Registration","CT_Deregistration","Audit","Document_Request","Client_Followup","Management_Report","Review","Amendment","Refund","Other"];
-const taskState={ priority:[], tasks:[], documents:[], ops:null, loading:false };
+const taskState={ priority:[], tasks:[], documents:[], ops:null, loading:false, priorityLoaded:false, tasksLoaded:false, documentsLoaded:false };
 
 async function apiJSON(url, opts){
   const r=await fetch(url, Object.assign({credentials:'include',headers:{'Content-Type':'application/json'}}, opts||{}));
@@ -2306,9 +2306,9 @@ function _once(key, fn){
   const p = Promise.resolve().then(fn).finally(()=>{ delete _inflight[key]; });
   _inflight[key] = p; return p;
 }
-async function loadPriorityQueue(){ return _once('priority', async()=>{ try{ const j=await apiJSON('/api/my/priority-queue'); taskState.priority=j.tasks||[]; render(); }catch(e){ console.error(e); } }); }
+async function loadPriorityQueue(){ return _once('priority', async()=>{ try{ const j=await apiJSON('/api/my/priority-queue'); taskState.priority=j.tasks||[]; taskState.priorityLoaded=true; render(); }catch(e){ console.error(e); taskState.priorityLoaded=true; render(); } }); }
 function renderPriorityQueue(){
-  if(!taskState.priority.length && !taskState.loading){ setTimeout(loadPriorityQueue,0); return `<div class="empty-state"><div class="empty-state-icon">⚡</div><div class="empty-state-title">Loading your priority work…</div></div>`; }
+  if(!taskState.priorityLoaded){ setTimeout(loadPriorityQueue,0); return `<div class="empty-state"><div class="empty-state-icon">⚡</div><div class="empty-state-title">Loading your priority work…</div></div>`; }
   if(!taskState.priority.length) return `<div class="empty-state"><div class="empty-state-icon">✅</div><div class="empty-state-title">All caught up</div><div class="empty-state-text">No open tasks assigned to you.</div></div>`;
   let h=`<div class="card-title" style="margin-bottom:12px">⚡ My Next Priority Work — ${taskState.priority.length} open</div>`;
   h+=`<div class="card" style="padding:0;overflow:auto"><table style="min-width:800px"><thead><tr><th style="width:60px">Priority</th><th>Client</th><th>Type</th><th>Status</th><th>Due</th><th>Owner</th></tr></thead><tbody>`;
@@ -2317,9 +2317,9 @@ function renderPriorityQueue(){
   return h;
 }
 
-async function loadTasks(){ return _once('tasks', async()=>{ try{ const j=await apiJSON('/api/tasks'); taskState.tasks=j.tasks||[]; render(); }catch(e){ console.error(e); } }); }
+async function loadTasks(){ return _once('tasks', async()=>{ try{ const j=await apiJSON('/api/tasks'); taskState.tasks=j.tasks||[]; taskState.tasksLoaded=true; render(); }catch(e){ console.error(e); taskState.tasksLoaded=true; render(); } }); }
 function renderTasksBoard(){
-  if(!taskState.tasks.length){ setTimeout(loadTasks,0); }
+  if(!taskState.tasksLoaded){ setTimeout(loadTasks,0); }
   const byStatus={};
   TASK_STATUSES.forEach(s=>byStatus[s]=[]);
   taskState.tasks.forEach(t=>{ (byStatus[t.status]||(byStatus[t.status]=[])).push(t); });
@@ -2332,9 +2332,9 @@ function renderTasksBoard(){
   return h;
 }
 
-async function loadDocuments(){ return _once('documents', async()=>{ try{ const j=await apiJSON('/api/documents?status=pending'); taskState.documents=j.documents||[]; render(); }catch(e){ console.error(e); } }); }
+async function loadDocuments(){ return _once('documents', async()=>{ try{ const j=await apiJSON('/api/documents?status=pending'); taskState.documents=j.documents||[]; taskState.documentsLoaded=true; render(); }catch(e){ console.error(e); taskState.documentsLoaded=true; render(); } }); }
 function renderDocumentsView(){
-  if(!taskState.documents.length){ setTimeout(loadDocuments,0); }
+  if(!taskState.documentsLoaded){ setTimeout(loadDocuments,0); }
   let h=`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><div class="card-title">📎 Missing Documents (${taskState.documents.length})</div><button class="btn btn-primary" data-action="openNewDoc">+ Request Document</button></div>`;
   if(!taskState.documents.length) return h+`<div class="empty-state"><div class="empty-state-icon">📎</div><div class="empty-state-title">No pending documents</div></div>`;
   h+=`<div class="card" style="padding:0;overflow:auto"><table style="min-width:900px"><thead><tr><th>Client</th><th>Document</th><th>Requested</th><th>Last Reminder</th><th>Pending (days)</th><th>Actions</th></tr></thead><tbody>`;

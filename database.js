@@ -1,98 +1,239 @@
-const bcrypt = require('bcryptjs');
+// In-memory cache backed by Supabase (write-through).
+//
+// Why the odd shape: every caller in the app (api.js, auth.js middleware, the
+// 3 background engines) reads/writes this synchronously. Rewriting all of them
+// to await Supabase is a ~60-site refactor with real regression risk. Instead
+// we hydrate `store` from Supabase on boot and fire-and-forget writes back on
+// every mutation. Sync read API preserved.
+//
+// Trade-off: two concurrent Lambda instances can briefly diverge on
+// tracker_state (last-write-wins). Acceptable for internal <10-user tool.
 
-// In-memory storage — no filesystem writes needed
+const bcrypt = require('bcryptjs');
+const { UsersDataRepo } = require('./repositories/usersRepo');
+const { TrackerStateRepo } = require('./repositories/trackerStateRepo');
+const { ActivityLogRepo } = require('./repositories/activityLogRepo');
+const { isReady } = require('./aws');
+
 const store = {
   users: [],
   trackerData: { clients: [], teamMembers: [] },
   activityLog: [],
-  nextUserId: 1
+  nextUserId: 1,
+  hydrated: false
 };
 
-function initDatabase() {
+function fireAndForget(p, label) {
+  Promise.resolve(p).catch(function(e) { console.warn('[db write-through ' + label + ']', e && e.message); });
+}
+
+async function hydrate() {
+  if (!isReady()) {
+    console.log('[db] AWS not configured — running fully in-memory (state will not persist)');
+    return;
+  }
+  try {
+    const [existingUsers, tracker, recentActivity] = await Promise.all([
+      UsersDataRepo.listAll(),
+      TrackerStateRepo.load(),
+      ActivityLogRepo.listRecent(200)
+    ]);
+    store.users = existingUsers.map(function(u) {
+      return {
+        id: Number(u.id),
+        email: u.email,
+        password: u.password,
+        name: u.name,
+        role: u.role,
+        active: u.active,
+        invite_token: u.invite_token,
+        invite_expires: u.invite_expires,
+        created_at: u.created_at,
+        last_login: u.last_login
+      };
+    });
+    store.trackerData = { clients: tracker.clients, teamMembers: tracker.teamMembers };
+    // Dynamo items don't carry the old integer id; derive one from position
+    // (newest gets highest — matches how activity.log() assigned ids before).
+    store.activityLog = recentActivity.map(function(r, i) {
+      return {
+        id: recentActivity.length - i,
+        user_id: r.user_id,
+        user_name: r.user_name,
+        action: r.action,
+        details: r.details || '',
+        created_at: r.created_at
+      };
+    });
+    store.nextUserId = store.users.reduce(function(m, u) { return u.id > m ? u.id : m; }, 0) + 1;
+    store.hydrated = true;
+    console.log('[db] hydrated from AWS: ' + store.users.length + ' user(s), '
+      + store.trackerData.clients.length + ' client(s), '
+      + store.activityLog.length + ' activity row(s)');
+  } catch (e) {
+    console.warn('[db] hydrate failed — continuing with empty store:', e.message);
+  }
+}
+
+async function seedAdmin() {
   const adminEmail = (process.env.ADMIN_EMAIL || 'admin@tracker.com').toLowerCase();
   const adminPass = process.env.ADMIN_PASSWORD || 'Admin123!';
   const adminName = process.env.ADMIN_NAME || 'Admin';
 
-  const existing = store.users.find(u => u.email === adminEmail);
-  if (!existing) {
-    store.users.push({
-      id: store.nextUserId++,
-      email: adminEmail,
-      password: bcrypt.hashSync(adminPass, 10),
-      name: adminName,
-      role: 'admin',
-      active: 1,
-      invite_token: null,
-      invite_expires: null,
-      created_at: new Date().toISOString(),
-      last_login: null
-    });
-    console.log('Admin created:', adminEmail);
-  }
-  console.log('Database ready (in-memory)');
+  const existing = store.users.find(function(u) { return u.email === adminEmail; });
+  if (existing) return;
+
+  const row = {
+    id: store.nextUserId++,
+    email: adminEmail,
+    password: bcrypt.hashSync(adminPass, 10),
+    name: adminName,
+    role: 'admin',
+    active: 1,
+    invite_token: null,
+    invite_expires: null,
+    created_at: new Date().toISOString(),
+    last_login: null
+  };
+  store.users.push(row);
+  await UsersDataRepo.upsert(row).catch(function(e) { console.warn('[db seedAdmin]', e.message); });
+  console.log('Admin created:', adminEmail);
 }
 
+// Public boot entry. Callers may await this; server.js does so before listen.
+async function initDatabase() {
+  await hydrate();
+  await seedAdmin();
+  console.log('Database ready (cache + DynamoDB/S3 write-through)');
+}
+
+// ---------- users ----------
 const users = {
   findByEmail(email) {
-    return store.users.find(u => u.email === email && u.active === 1) || null;
+    return store.users.find(function(u) { return u.email === email && u.active === 1; }) || null;
   },
   findById(id) {
-    const u = store.users.find(u => u.id === parseInt(id));
+    const u = store.users.find(function(u) { return u.id === parseInt(id); });
     if (!u) return null;
     return { id: u.id, email: u.email, name: u.name, role: u.role, active: u.active, created_at: u.created_at, last_login: u.last_login };
   },
   findByInviteToken(token) {
-    return store.users.find(u => u.invite_token === token && new Date(u.invite_expires) > new Date()) || null;
+    return store.users.find(function(u) { return u.invite_token === token && new Date(u.invite_expires) > new Date(); }) || null;
   },
   getAll() {
-    return store.users.map(u => ({ id: u.id, email: u.email, name: u.name, role: u.role, active: u.active, created_at: u.created_at, last_login: u.last_login }))
-      .sort((a, b) => (b.role === 'admin' ? 1 : 0) - (a.role === 'admin' ? 1 : 0) || a.name.localeCompare(b.name));
+    return store.users
+      .map(function(u) { return { id: u.id, email: u.email, name: u.name, role: u.role, active: u.active, created_at: u.created_at, last_login: u.last_login }; })
+      .sort(function(a, b) { return (b.role === 'admin' ? 1 : 0) - (a.role === 'admin' ? 1 : 0) || a.name.localeCompare(b.name); });
   },
   createInvite(email, name, token, expires) {
-    const existing = store.users.find(u => u.email === email);
+    const existing = store.users.find(function(u) { return u.email === email; });
     if (existing) {
       existing.invite_token = token;
       existing.invite_expires = expires;
       existing.name = name;
       existing.active = 0;
+      fireAndForget(UsersDataRepo.patch(existing.id, { invite_token: token, invite_expires: expires, name: name, active: 0 }), 'createInvite/existing');
       return existing;
     }
     const user = {
       id: store.nextUserId++,
-      email, password: bcrypt.hashSync(Math.random().toString(36), 10),
-      name, role: 'member', active: 0,
-      invite_token: token, invite_expires: expires,
-      created_at: new Date().toISOString(), last_login: null
+      email: email,
+      password: bcrypt.hashSync(Math.random().toString(36), 10),
+      name: name,
+      role: 'member',
+      active: 0,
+      invite_token: token,
+      invite_expires: expires,
+      created_at: new Date().toISOString(),
+      last_login: null
     };
     store.users.push(user);
+    fireAndForget(UsersDataRepo.upsert(user), 'createInvite/new');
     return user;
   },
   activateWithPassword(token, password) {
-    const u = store.users.find(u => u.invite_token === token);
-    if (u) { u.password = bcrypt.hashSync(password, 10); u.active = 1; u.invite_token = null; u.invite_expires = null; }
+    const u = store.users.find(function(u) { return u.invite_token === token; });
+    if (!u) return;
+    u.password = bcrypt.hashSync(password, 10);
+    u.active = 1;
+    u.invite_token = null;
+    u.invite_expires = null;
+    fireAndForget(UsersDataRepo.patch(u.id, { password: u.password, active: 1, invite_token: null, invite_expires: null }), 'activateWithPassword');
   },
   updateLastLogin(id) {
-    const u = store.users.find(u => u.id === parseInt(id));
-    if (u) u.last_login = new Date().toISOString();
+    const u = store.users.find(function(u) { return u.id === parseInt(id); });
+    if (!u) return;
+    u.last_login = new Date().toISOString();
+    fireAndForget(UsersDataRepo.patch(u.id, { last_login: u.last_login }), 'updateLastLogin');
   },
-  deactivate(id) { const u = store.users.find(u => u.id === parseInt(id)); if (u) u.active = 0; },
-  activate(id) { const u = store.users.find(u => u.id === parseInt(id)); if (u) u.active = 1; },
-  updateRole(id, role) { const u = store.users.find(u => u.id === parseInt(id)); if (u) u.role = role; },
-  updatePassword(id, password) { const u = store.users.find(u => u.id === parseInt(id)); if (u) u.password = bcrypt.hashSync(password, 10); },
-  setResetToken(id, token, expires) { const u = store.users.find(u => u.id === parseInt(id)); if (u) { u.invite_token = token; u.invite_expires = expires; } },
-  clearResetToken(id) { const u = store.users.find(u => u.id === parseInt(id)); if (u) { u.invite_token = null; u.invite_expires = null; } },
-  delete(id) { store.users = store.users.filter(u => u.id !== parseInt(id)); }
+  deactivate(id) {
+    const u = store.users.find(function(u) { return u.id === parseInt(id); });
+    if (!u) return;
+    u.active = 0;
+    fireAndForget(UsersDataRepo.patch(u.id, { active: 0 }), 'deactivate');
+  },
+  activate(id) {
+    const u = store.users.find(function(u) { return u.id === parseInt(id); });
+    if (!u) return;
+    u.active = 1;
+    fireAndForget(UsersDataRepo.patch(u.id, { active: 1 }), 'activate');
+  },
+  updateRole(id, role) {
+    const u = store.users.find(function(u) { return u.id === parseInt(id); });
+    if (!u) return;
+    u.role = role;
+    fireAndForget(UsersDataRepo.patch(u.id, { role: role }), 'updateRole');
+  },
+  updatePassword(id, password) {
+    const u = store.users.find(function(u) { return u.id === parseInt(id); });
+    if (!u) return;
+    u.password = bcrypt.hashSync(password, 10);
+    fireAndForget(UsersDataRepo.patch(u.id, { password: u.password }), 'updatePassword');
+  },
+  setResetToken(id, token, expires) {
+    const u = store.users.find(function(u) { return u.id === parseInt(id); });
+    if (!u) return;
+    u.invite_token = token;
+    u.invite_expires = expires;
+    fireAndForget(UsersDataRepo.patch(u.id, { invite_token: token, invite_expires: expires }), 'setResetToken');
+  },
+  clearResetToken(id) {
+    const u = store.users.find(function(u) { return u.id === parseInt(id); });
+    if (!u) return;
+    u.invite_token = null;
+    u.invite_expires = null;
+    fireAndForget(UsersDataRepo.patch(u.id, { invite_token: null, invite_expires: null }), 'clearResetToken');
+  },
+  delete(id) {
+    const nid = parseInt(id);
+    store.users = store.users.filter(function(u) { return u.id !== nid; });
+    fireAndForget(UsersDataRepo.remove(nid), 'delete');
+  }
 };
 
+// ---------- tracker (clients + team) ----------
 const tracker = {
   getData() { return { clients: store.trackerData.clients, teamMembers: store.trackerData.teamMembers }; },
-  saveData(clients, teamMembers, updatedBy) { store.trackerData = { clients, teamMembers, updatedAt: new Date().toISOString(), updatedBy }; }
+  saveData(clients, teamMembers, updatedBy) {
+    store.trackerData = { clients: clients, teamMembers: teamMembers, updatedAt: new Date().toISOString(), updatedBy: updatedBy };
+    fireAndForget(TrackerStateRepo.save(clients, teamMembers, updatedBy), 'saveData');
+  }
 };
 
+// ---------- activity log ----------
 const activity = {
   log(userId, userName, action, details) {
-    store.activityLog.unshift({ id: store.activityLog.length + 1, user_id: userId, user_name: userName, action, details: details || '', created_at: new Date().toISOString() });
+    const entry = {
+      id: store.activityLog.length + 1,
+      user_id: userId,
+      user_name: userName,
+      action: action,
+      details: details || '',
+      created_at: new Date().toISOString()
+    };
+    store.activityLog.unshift(entry);
     if (store.activityLog.length > 200) store.activityLog = store.activityLog.slice(0, 200);
+    fireAndForget(ActivityLogRepo.append(entry), 'activity.log');
   },
   getRecent(limit) { return store.activityLog.slice(0, limit || 50); }
 };

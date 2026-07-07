@@ -1,12 +1,10 @@
 // Unified history timeline for one client. Reads events from existing tables
 // and emits a single chronologically sorted stream.
 const repos = require('../../repositories');
-const { getClient } = require('../../supabase');
 
 async function getTimeline(clientId, limit) {
   const cap = limit || 200;
   const cid = String(clientId);
-  const sb = getClient();
 
   // Tasks (created + completed events)
   const tasks = await repos.TasksRepo.listByClient(cid, { limit: 1000 });
@@ -33,16 +31,15 @@ async function getTimeline(clientId, limit) {
     if (o.filing_deadline) events.push({ at: new Date(o.filing_deadline + 'T00:00:00Z').toISOString(), kind: 'obligation_due', label: `${o.obligation_type.replace(/_/g,' ')} ${o.period_label} deadline` });
   });
 
-  // Escalation events
-  if (sb) {
-    const taskIds = tasks.map(t => t.id);
-    if (taskIds.length) {
-      const { data: escs } = await sb.from('compliance_escalation_events').select('*').in('task_id', taskIds).order('triggered_at', { ascending: false }).limit(500);
-      (escs || []).forEach(e => events.push({ at: e.triggered_at, kind: 'escalation_triggered', label: 'Escalation: ' + (e.rule_name || ''), severity: e.severity, taskId: e.task_id }));
-      // Review events
-      const { data: revs } = await sb.from('compliance_review_events').select('*').in('task_id', taskIds).order('reviewed_at', { ascending: false }).limit(500);
-      (revs || []).forEach(r => events.push({ at: r.reviewed_at, kind: 'review_'+r.decision, label: 'Review ' + r.decision + ' by ' + (r.reviewer_user_name || ''), taskId: r.task_id }));
-    }
+  // Escalation events + Review events (per-task lookup via GSI, batched)
+  const taskIds = tasks.map(t => t.id);
+  if (taskIds.length) {
+    const [escs, revs] = await Promise.all([
+      repos.EscalationEventsRepo.listForTasks(taskIds),
+      repos.ReviewEventsRepo.listForTasks(taskIds)
+    ]);
+    escs.forEach(e => events.push({ at: e.triggered_at, kind: 'escalation_triggered', label: 'Escalation: ' + (e.rule_name || ''), severity: e.severity, taskId: e.task_id }));
+    revs.forEach(r => events.push({ at: r.reviewed_at, kind: 'review_'+r.decision, label: 'Review ' + r.decision + ' by ' + (r.reviewer_user_name || ''), taskId: r.task_id }));
   }
 
   // Workflows — confirmation steps (client confirmations history) — batched fetch

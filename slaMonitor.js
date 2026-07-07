@@ -1,17 +1,13 @@
-// SLA Monitor — derives sla_status on tasks. Persisted back to the row so the
-// existing list endpoints can filter on it cheaply.
-const { getClient } = require('./supabase');
+// SLA Monitor — derives sla_status on tasks. DynamoDB-backed as of Session 3.
 const compliance = require('./compliance');
+const { SlaPoliciesRepo } = require('./repositories');
 
 const DAY = 24 * 60 * 60 * 1000;
 function days(a, b) { return Math.floor((new Date(a).getTime() - new Date(b).getTime()) / DAY); }
 
 async function getPolicies() {
-  const c = getClient(); if (!c) return {};
-  const { data } = await c.from('compliance_sla_policies').select('*');
-  const map = {};
-  (data || []).forEach(p => { map[p.task_type] = p; });
-  return map;
+  try { return await SlaPoliciesRepo.getAll(); }
+  catch (e) { console.warn('[sla] getPolicies:', e.message); return {}; }
 }
 
 function statusFor(task, policy) {
@@ -30,7 +26,6 @@ function statusFor(task, policy) {
   const breach = (policy && policy.breach_threshold_days) || 0;
   const atRisk = (policy && policy.at_risk_threshold_days) || 7;
   if (daysLeft <= breach) return 'likely_breach';
-  // "likely_breach" = task not started or waiting and close to due
   if (daysLeft <= atRisk && ['not_started','waiting_documents','blocked'].includes(task.status)) return 'likely_breach';
   if (daysLeft <= atRisk) return 'at_risk';
   return 'on_track';
@@ -45,11 +40,11 @@ async function recomputeAll() {
     if (sla !== t.sla_status) updates.push({ id: t.id, sla_status: sla });
   }
   if (!updates.length) return { scanned: tasks.length, updated: 0 };
-  const c = getClient();
+  // Chunked parallel UpdateItems via compliance.tasks.update (goes through DDB).
   const chunks = [];
   for (let i = 0; i < updates.length; i += 100) chunks.push(updates.slice(i, i + 100));
   for (const ch of chunks) {
-    await Promise.all(ch.map(u => c.from('compliance_tasks').update({ sla_status: u.sla_status }).eq('id', u.id)));
+    await Promise.all(ch.map(u => compliance.tasks.update(u.id, { sla_status: u.sla_status })));
   }
   return { scanned: tasks.length, updated: updates.length };
 }

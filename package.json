@@ -1,12 +1,18 @@
 {
   "name": "uae-compliance-tracker",
   "version": "1.0.0",
-  "description": "UAE Compliance Tracker — Cloud Edition",
+  "description": "UAE Compliance Tracker — AWS Edition",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "bootstrap-aws": "node scripts/bootstrap-aws.js",
+    "migrate-data": "node scripts/migrate-supabase-to-aws.js"
   },
   "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.658.0",
+    "@aws-sdk/lib-dynamodb": "^3.658.0",
+    "@aws-sdk/client-s3": "^3.658.0",
+    "@vendia/serverless-express": "^4.12.6",
     "@supabase/supabase-js": "^2.45.0",
     "express": "^4.18.2",
     "bcryptjs": "^2.4.3",

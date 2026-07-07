@@ -1,0 +1,204 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: UAE Compliance Tracker — API Lambda + 4 EventBridge scheduled Lambdas
+
+# Deploy with:
+#   sam build
+#   sam deploy --guided     (first time)
+#   sam deploy              (subsequent)
+
+Parameters:
+  AdminEmail:
+    Type: String
+    Description: Initial admin email seeded on first boot
+  AdminPassword:
+    Type: String
+    NoEcho: true
+    Description: Initial admin password
+  AdminName:
+    Type: String
+    Default: Admin
+  JwtSecret:
+    Type: String
+    NoEcho: true
+    Description: JWT signing secret (any long random string)
+  S3Bucket:
+    Type: String
+    Description: Existing S3 bucket for tracker_state.json (create via npm run bootstrap-aws first)
+  DdbPrefix:
+    Type: String
+    Default: Uct
+  SmtpHost:
+    Type: String
+    Default: ''
+  SmtpPort:
+    Type: String
+    Default: '587'
+  SmtpUser:
+    Type: String
+    Default: ''
+  SmtpPass:
+    Type: String
+    NoEcho: true
+    Default: ''
+  AppUrl:
+    Type: String
+    Default: ''
+    Description: Public URL of the deployed API (fill in after first deploy)
+
+Globals:
+  Function:
+    Runtime: nodejs20.x
+    Timeout: 30
+    MemorySize: 512
+    Architectures: [arm64]
+    Environment:
+      Variables:
+        AWS_REGION_APP: !Ref AWS::Region
+        UCT_S3_BUCKET: !Ref S3Bucket
+        UCT_DDB_TABLE_PREFIX: !Ref DdbPrefix
+        JWT_SECRET: !Ref JwtSecret
+        ADMIN_EMAIL: !Ref AdminEmail
+        ADMIN_PASSWORD: !Ref AdminPassword
+        ADMIN_NAME: !Ref AdminName
+        SMTP_HOST: !Ref SmtpHost
+        SMTP_PORT: !Ref SmtpPort
+        SMTP_USER: !Ref SmtpUser
+        SMTP_PASS: !Ref SmtpPass
+        APP_URL: !Ref AppUrl
+        IS_LAMBDA: 'true'
+
+Resources:
+  # ---------- API Lambda (Express via serverless-express) ----------
+  ApiFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: .
+      Handler: lambda.handler
+      Timeout: 30
+      MemorySize: 1024
+      Policies:
+        - DynamoDBCrudPolicy: { TableName: !Sub '${DdbPrefix}Users' }
+        - DynamoDBCrudPolicy: { TableName: !Sub '${DdbPrefix}ActivityLog' }
+        - DynamoDBCrudPolicy: { TableName: !Sub '${DdbPrefix}Tasks' }
+        - DynamoDBCrudPolicy: { TableName: !Sub '${DdbPrefix}Obligations' }
+        - DynamoDBCrudPolicy: { TableName: !Sub '${DdbPrefix}Documents' }
+        - DynamoDBCrudPolicy: { TableName: !Sub '${DdbPrefix}TaskComments' }
+        - DynamoDBCrudPolicy: { TableName: !Sub '${DdbPrefix}TaskGenerationRules' }
+        - DynamoDBCrudPolicy: { TableName: !Sub '${DdbPrefix}ReviewEvents' }
+        - DynamoDBCrudPolicy: { TableName: !Sub '${DdbPrefix}EscalationEvents' }
+        - DynamoDBCrudPolicy: { TableName: !Sub '${DdbPrefix}EscalationRules' }
+        - DynamoDBCrudPolicy: { TableName: !Sub '${DdbPrefix}SlaPolicies' }
+        - DynamoDBCrudPolicy: { TableName: !Sub '${DdbPrefix}PriorityConfig' }
+        - DynamoDBCrudPolicy: { TableName: !Sub '${DdbPrefix}HealthWeights' }
+        - DynamoDBCrudPolicy: { TableName: !Sub '${DdbPrefix}WorkloadConfig' }
+        - DynamoDBCrudPolicy: { TableName: !Sub '${DdbPrefix}UserCapacity' }
+        - DynamoDBCrudPolicy: { TableName: !Sub '${DdbPrefix}Workflows' }
+        - DynamoDBCrudPolicy: { TableName: !Sub '${DdbPrefix}WorkflowSteps' }
+        - DynamoDBCrudPolicy: { TableName: !Sub '${DdbPrefix}ClientSettings' }
+        - S3CrudPolicy: { BucketName: !Ref S3Bucket }
+      Events:
+        Root:
+          Type: HttpApi
+          Properties:
+            Path: /
+            Method: ANY
+        Any:
+          Type: HttpApi
+          Properties:
+            Path: /{proxy+}
+            Method: ANY
+
+  # ---------- Scheduled Lambdas ----------
+  TaskCronFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: .
+      Handler: handlers/taskCron.handler
+      Timeout: 300
+      MemorySize: 1024
+      Policies:
+        - DynamoDBCrudPolicy: { TableName: !Sub '${DdbPrefix}Tasks' }
+        - DynamoDBCrudPolicy: { TableName: !Sub '${DdbPrefix}TaskGenerationRules' }
+        - DynamoDBCrudPolicy: { TableName: !Sub '${DdbPrefix}Users' }
+        - DynamoDBCrudPolicy: { TableName: !Sub '${DdbPrefix}ActivityLog' }
+        - S3ReadPolicy: { BucketName: !Ref S3Bucket }
+      Events:
+        Rescore:
+          Type: Schedule
+          Properties:
+            Schedule: rate(1 hour)
+            Input: '{"mode":"rescore"}'
+        Generate:
+          Type: Schedule
+          Properties:
+            Schedule: cron(0 2 * * ? *)   # daily 02:00 UTC (~05:30 in Mumbai/UAE)
+            Input: '{"mode":"generate"}'
+
+  ObligationCronFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: .
+      Handler: handlers/obligationCron.handler
+      Timeout: 300
+      MemorySize: 1024
+      Policies:
+        - DynamoDBCrudPolicy: { TableName: !Sub '${DdbPrefix}Obligations' }
+        - DynamoDBCrudPolicy: { TableName: !Sub '${DdbPrefix}Tasks' }
+        - DynamoDBCrudPolicy: { TableName: !Sub '${DdbPrefix}Users' }
+        - DynamoDBCrudPolicy: { TableName: !Sub '${DdbPrefix}ActivityLog' }
+        - S3ReadPolicy: { BucketName: !Ref S3Bucket }
+      Events:
+        Daily:
+          Type: Schedule
+          Properties:
+            Schedule: cron(30 2 * * ? *)  # daily 02:30 UTC
+
+  EscalationCronFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: .
+      Handler: handlers/escalationCron.handler
+      Timeout: 300
+      MemorySize: 1024
+      Policies:
+        - DynamoDBCrudPolicy: { TableName: !Sub '${DdbPrefix}Tasks' }
+        - DynamoDBCrudPolicy: { TableName: !Sub '${DdbPrefix}Documents' }
+        - DynamoDBCrudPolicy: { TableName: !Sub '${DdbPrefix}EscalationRules' }
+        - DynamoDBCrudPolicy: { TableName: !Sub '${DdbPrefix}EscalationEvents' }
+        - DynamoDBCrudPolicy: { TableName: !Sub '${DdbPrefix}Users' }
+        - DynamoDBCrudPolicy: { TableName: !Sub '${DdbPrefix}ActivityLog' }
+        - S3ReadPolicy: { BucketName: !Ref S3Bucket }
+      Events:
+        Hourly:
+          Type: Schedule
+          Properties:
+            Schedule: rate(1 hour)
+        DailyDigest:
+          Type: Schedule
+          Properties:
+            Schedule: cron(30 5 * * ? *)  # daily 05:30 UTC (~09:00 Mumbai/UAE)
+            Input: '{"mode":"digest"}'
+
+  SlaCronFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: .
+      Handler: handlers/slaCron.handler
+      Timeout: 300
+      MemorySize: 1024
+      Policies:
+        - DynamoDBCrudPolicy: { TableName: !Sub '${DdbPrefix}Tasks' }
+        - DynamoDBCrudPolicy: { TableName: !Sub '${DdbPrefix}SlaPolicies' }
+        - DynamoDBCrudPolicy: { TableName: !Sub '${DdbPrefix}Users' }
+        - S3ReadPolicy: { BucketName: !Ref S3Bucket }
+      Events:
+        Hourly:
+          Type: Schedule
+          Properties:
+            Schedule: rate(1 hour)
+
+Outputs:
+  ApiUrl:
+    Description: Public URL of the API (also serves the app HTML at /)
+    Value: !Sub 'https://${ServerlessHttpApi}.execute-api.${AWS::Region}.amazonaws.com'

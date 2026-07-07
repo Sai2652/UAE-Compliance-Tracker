@@ -3,19 +3,18 @@
 // compliance_escalation_events (dedupe per task+rule still open), bumps task
 // escalation_level / status, and dispatches notifications via email.js.
 
-const { getClient } = require('./supabase');
 const compliance = require('./compliance');
 const { store, users, activity } = require('./database');
 const email = require('./email');
+const { EscalationRulesRepo, EscalationEventsRepo } = require('./repositories');
 
 const DAY = 24 * 60 * 60 * 1000;
 function daysAgo(d) { return Math.floor((Date.now() - new Date(d).getTime()) / DAY); }
 function daysUntil(d) { return Math.floor((new Date(d).getTime() - Date.now()) / DAY); }
 
 async function loadRules() {
-  const c = getClient(); if (!c) return [];
-  const { data } = await c.from('compliance_escalation_rules').select('*').eq('active', true);
-  return data || [];
+  try { return await EscalationRulesRepo.listActive(); }
+  catch (e) { console.warn('[escalation] loadRules:', e.message); return []; }
 }
 
 function matches(rule, task, openDocsByClient) {
@@ -43,10 +42,8 @@ function matches(rule, task, openDocsByClient) {
 }
 
 async function hasOpenEventFor(taskId, ruleId) {
-  const c = getClient();
-  const { data } = await c.from('compliance_escalation_events').select('id')
-    .eq('task_id', taskId).eq('rule_id', ruleId).is('resolved_at', null).limit(1);
-  return (data || []).length > 0;
+  try { return await EscalationEventsRepo.hasOpenFor(taskId, ruleId); }
+  catch (e) { console.warn('[escalation] hasOpenEventFor:', e.message); return false; }
 }
 
 function findUserByName(name) {
@@ -58,7 +55,6 @@ function adminEmails() {
 }
 
 async function recordEvent(task, rule) {
-  const c = getClient();
   const notified = [];
   // owner notify
   if (rule.notify_owner && task.assigned_user_name) {
@@ -74,9 +70,9 @@ async function recordEvent(task, rule) {
       if (r && r.success) notified.push('admin:' + ae);
     }
   }
-  await c.from('compliance_escalation_events').insert({
+  await EscalationEventsRepo.create({
     task_id: task.id, rule_id: rule.id, rule_name: rule.name,
-    severity: rule.severity, notified
+    severity: rule.severity, notified: notified
   });
   // bump task escalation_level + maybe status
   const patch = { escalation_level: (task.escalation_level || 0) + 1, last_escalated_at: new Date().toISOString() };
@@ -108,8 +104,6 @@ async function runSweep() {
 
 // Independently notify on overdue tasks + blocked tasks (admin), once per day per task.
 async function dailyAdminDigests() {
-  const c = getClient(); if (!c) return;
-  const today = new Date().toISOString().slice(0,10);
   const todayStr = new Date().toISOString().slice(0,10);
   const overdue = await compliance.tasks.list({ overdue: true, limit: 200 });
   const blocked = await compliance.tasks.list({ status: ['blocked','escalated'], limit: 200 });

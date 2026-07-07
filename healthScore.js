@@ -1,20 +1,21 @@
 // Client Health Score (0-100). Pure function operating on already-loaded data.
 // Weights live in compliance_health_weights — caller fetches once and passes in.
 
-const { getClient } = require('./supabase');
 const compliance = require('./compliance');
 const { obligations } = require('./obligations');
+const { HealthWeightsRepo } = require('./repositories');
 
 const DAY = 24 * 60 * 60 * 1000;
 function daysAgo(d) { return Math.floor((Date.now() - new Date(d).getTime()) / DAY); }
 
 async function getWeights() {
-  const c = getClient(); if (!c) return defaults();
-  const { data, error } = await c.from('compliance_health_weights').select('*');
-  if (error || !data) return defaults();
-  const w = defaults();
-  data.forEach(r => { w[r.key] = Number(r.value); });
-  return w;
+  try {
+    const map = await HealthWeightsRepo.getAll();
+    return Object.assign(defaults(), map || {});
+  } catch (e) {
+    console.warn('[healthScore] getWeights:', e.message);
+    return defaults();
+  }
 }
 function defaults() {
   return {

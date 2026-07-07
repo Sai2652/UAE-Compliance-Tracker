@@ -94,10 +94,9 @@ async function computeForAll() {
 
 // Helper: pull all doc requests (not just pending) to detect recent responses.
 async function fetchAllDocs() {
-  const { getClient } = require('../../supabase');
-  const c = getClient(); if (!c) return [];
-  const { data } = await c.from('compliance_document_requests').select('*').limit(10000);
-  return data || [];
+  const compliance = require('../../compliance');
+  try { return await compliance.documents.list({ limit: 10000 }); }
+  catch (e) { console.warn('[responsivenessScore] fetchAllDocs:', e.message); return []; }
 }
 
 module.exports = { computeForAll, computeOne };

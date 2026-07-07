@@ -1,0 +1,9 @@
+# Copy to samconfig.toml and fill in. Never commit samconfig.toml.
+version = 0.1
+[default.deploy.parameters]
+stack_name = "uae-compliance-tracker"
+region = "ap-south-1"
+capabilities = "CAPABILITY_IAM"
+confirm_changeset = false
+resolve_s3 = true
+parameter_overrides = "AdminEmail=you@example.com AdminPassword=Change_This_1! AdminName=Admin JwtSecret=REPLACE-WITH-LONG-RANDOM-STRING S3Bucket=uct-tracker-state-your-suffix DdbPrefix=Uct SmtpHost= SmtpPort=587 SmtpUser= SmtpPass= AppUrl="

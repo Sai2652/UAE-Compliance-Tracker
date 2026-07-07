@@ -11,7 +11,6 @@ const obligationEngine = require('./obligationEngine');
 const healthScore = require('./healthScore');
 const slaMonitor = require('./slaMonitor');
 const escalationEngine = require('./escalationEngine');
-const { getClient: getSb } = require('./supabase');
 const repos = require('./repositories');
 const capacityService = require('./services/capacityService');
 const productivityService = require('./services/productivityService');
@@ -515,10 +514,9 @@ router.get('/health/weights', requireAuth, requireAdmin, asyncH(async function(r
   res.json({ weights: await healthScore.getWeights() });
 }));
 router.put('/health/weights', requireAuth, requireAdmin, asyncH(async function(req, res) {
-  var sb = getSb(); if (!sb) return res.status(500).json({ error: 'Supabase not configured' });
   var updates = req.body && req.body.weights || {};
   for (var k in updates) {
-    await sb.from('compliance_health_weights').upsert({ key: k, value: Number(updates[k]), updated_at: new Date().toISOString() }, { onConflict: 'key' });
+    await repos.HealthWeightsRepo.set(k, Number(updates[k]));
   }
   res.json({ weights: await healthScore.getWeights() });
 }));
@@ -528,11 +526,9 @@ router.get('/sla/policies', requireAuth, requireAdmin, asyncH(async function(req
   res.json({ policies: await slaMonitor.getPolicies() });
 }));
 router.put('/sla/policies', requireAuth, requireAdmin, asyncH(async function(req, res) {
-  var sb = getSb(); if (!sb) return res.status(500).json({ error: 'Supabase not configured' });
   var updates = req.body && req.body.policies || {};
   for (var taskType in updates) {
-    var row = Object.assign({ task_type: taskType, updated_at: new Date().toISOString() }, updates[taskType]);
-    await sb.from('compliance_sla_policies').upsert(row, { onConflict: 'task_type' });
+    await repos.SlaPoliciesRepo.upsert(taskType, updates[taskType]);
   }
   await slaMonitor.recomputeAll();
   res.json({ policies: await slaMonitor.getPolicies() });
@@ -543,27 +539,20 @@ router.post('/sla/recompute', requireAuth, requireAdmin, asyncH(async function(r
 
 // ---- Escalation ----
 router.get('/escalation/rules', requireAuth, requireAdmin, asyncH(async function(req, res) {
-  var sb = getSb(); if (!sb) return res.status(500).json({ error: 'Supabase not configured' });
-  var { data, error } = await sb.from('compliance_escalation_rules').select('*').order('id', { ascending: true });
-  if (error) throw error;
-  res.json({ rules: data || [] });
+  res.json({ rules: await repos.EscalationRulesRepo.listAll() });
 }));
 router.put('/escalation/rules/:id', requireAuth, requireAdmin, asyncH(async function(req, res) {
-  var sb = getSb();
   var allowed = ['name','condition_type','threshold_days','severity','notify_owner','notify_admin','active'];
   var patch = {};
   Object.keys(req.body || {}).forEach(function(k){ if (allowed.indexOf(k) >= 0) patch[k] = req.body[k]; });
-  var { data, error } = await sb.from('compliance_escalation_rules').update(patch).eq('id', req.params.id).select('*').single();
-  if (error) throw error;
-  res.json({ rule: data });
+  var rule = await repos.EscalationRulesRepo.update(req.params.id, patch);
+  res.json({ rule: rule });
 }));
 router.post('/escalation/run', requireAuth, requireAdmin, asyncH(async function(req, res) {
   res.json(await escalationEngine.runSweep());
 }));
 router.get('/escalation/events', requireAuth, requireAdmin, asyncH(async function(req, res) {
-  var sb = getSb();
-  var { data } = await sb.from('compliance_escalation_events').select('*').order('triggered_at', { ascending: false }).limit(parseInt(req.query.limit) || 100);
-  res.json({ events: data || [] });
+  res.json({ events: await repos.EscalationEventsRepo.listRecent(parseInt(req.query.limit) || 100) });
 }));
 
 // ---- Exceptions Dashboard ----

@@ -1,26 +1,44 @@
-// ClientSettingsRepo — admin-set per-client metadata (tier, partner owner, notes).
-const { getClient } = require('../supabase');
-function pg() { const c = getClient(); if (!c) throw new Error('Storage not configured'); return c; }
+// ClientSettingsRepo — DynamoDB-backed (migrated from Supabase in Session 3).
+// Table: UctClientSettings  PK: client_external_id
+
+const { getDdb, tableName } = require('../aws');
+const { GetCommand, PutCommand, ScanCommand } = require('@aws-sdk/lib-dynamodb');
+
+function ddb() { const c = getDdb(); if (!c) throw new Error('DynamoDB not configured'); return c; }
+function tbl() { return tableName('ClientSettings'); }
 
 const ClientSettingsRepo = {
   async getForClient(clientId) {
-    const { data } = await pg().from('compliance_client_settings').select('*').eq('client_external_id', String(clientId)).maybeSingle();
-    return data;
+    const out = await ddb().send(new GetCommand({
+      TableName: tbl(),
+      Key: { client_external_id: String(clientId) }
+    }));
+    return out.Item || null;
   },
+
   async getAll() {
-    const { data, error } = await pg().from('compliance_client_settings').select('*');
-    if (error) throw error;
-    return data || [];
+    const c = ddb();
+    const items = []; let ExclusiveStartKey;
+    do {
+      const out = await c.send(new ScanCommand({ TableName: tbl(), ExclusiveStartKey }));
+      if (out.Items) items.push.apply(items, out.Items);
+      ExclusiveStartKey = out.LastEvaluatedKey;
+    } while (ExclusiveStartKey);
+    return items;
   },
+
   async upsert(clientId, payload, actor) {
-    const row = Object.assign(
-      { client_external_id: String(clientId), updated_at: new Date().toISOString() },
-      payload || {}
+    const existing = await this.getForClient(clientId);
+    const item = Object.assign(
+      { client_external_id: String(clientId), tier: 'B' },
+      existing || {},
+      payload || {},
+      { updated_at: new Date().toISOString() }
     );
-    if (actor) { row.updated_by_id = actor.id; row.updated_by_name = actor.name; }
-    const { data, error } = await pg().from('compliance_client_settings').upsert(row, { onConflict: 'client_external_id' }).select('*').single();
-    if (error) throw error;
-    return data;
+    if (actor) { item.updated_by_id = actor.id; item.updated_by_name = actor.name; }
+    Object.keys(item).forEach(function(k) { if (item[k] == null) delete item[k]; });
+    await ddb().send(new PutCommand({ TableName: tbl(), Item: item }));
+    return item;
   }
 };
 

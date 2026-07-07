@@ -73,6 +73,16 @@ input,select,textarea,button{font-family:inherit}
 .nav-btn{padding:6px 12px;border-radius:6px;border:none;background:transparent;color:var(--text-muted);font-size:12px;font-weight:600;cursor:pointer;transition:var(--transition);white-space:nowrap;flex-shrink:0}
 .nav-btn:hover{color:var(--text-secondary)}
 .nav-btn.active{background:var(--bg-elevated);color:var(--text-primary)}
+/* Left main-nav sidebar — replaces the old top-of-header tabs. Big click targets. */
+.side-nav{width:236px;background:var(--bg-base);border-right:1px solid var(--border);display:flex;flex-direction:column;flex-shrink:0;overflow-y:auto;padding-bottom:8px}
+.side-nav-section{padding:14px 16px 6px;font-size:10px;font-weight:800;color:var(--text-muted);text-transform:uppercase;letter-spacing:1.2px}
+.side-nav-btn{display:flex;align-items:center;gap:11px;padding:11px 14px;margin:1px 8px;border-radius:8px;background:transparent;border:1px solid transparent;color:var(--text-secondary);font-size:13px;font-weight:600;cursor:pointer;text-align:left;width:calc(100% - 16px);transition:background-color 0.15s ease,color 0.15s ease,border-color 0.15s ease;font-family:inherit}
+.side-nav-btn:hover{background:var(--bg-card-hover);color:var(--text-primary)}
+.side-nav-btn.active{background:var(--bg-elevated);color:var(--text-primary);border-color:var(--border-light)}
+.side-nav-icon{font-size:16px;width:20px;text-align:center;flex-shrink:0;line-height:1}
+.side-nav-label{flex:1;line-height:1.2}
+.side-nav-footer{margin-top:auto;padding:10px 8px 4px;border-top:1px solid var(--border);display:flex;flex-direction:column;gap:4px}
+.side-nav-footer .side-nav-btn{margin:0 8px}
 .header-actions{margin-left:auto;display:flex;gap:8px;align-items:center}
 .body-wrap{display:flex;flex:1;overflow:hidden}
 .sidebar{width:260px;background:var(--bg-base);border-right:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden;flex-shrink:0}
@@ -447,7 +457,7 @@ function _renderImpl(){
     if(state.selectedClientId&&!sc)state.selectedClientId=null;
     let h=renderHeader();h+=`<div class="body-wrap">`;
     if(sc&&scm){h+=renderSidebar(sc,scm);h+=`<div class="main">${renderDetail(sc,scm)}</div>`;}
-    else h+=`<div class="main">${renderMain()}</div>`;
+    else {h+=renderMainNavSidebar();h+=`<div class="main">${renderMain()}</div>`;}
     h+=`</div>`;
     if(state.showModal==="addClient")h+=renderAddModal();
     if(state.showModal==="manageTeam")h+=renderTeamModal();
@@ -479,24 +489,42 @@ const INSIGHTS_TABS = [
 ];
 function isInsightTab(k){ return INSIGHTS_TABS.some(t=>t[0]===k); }
 
+// Main navigation lives in the left sidebar now (see renderMainNavSidebar).
+// The header keeps only branding + admin action buttons + user chip.
 function renderHeader(){
-  const tabs=[];
-  if(isAdmin()) tabs.push(["morning","Morning Briefing"]);
-  tabs.push(["priority","My Next Priority Work"]);
-  tabs.push(["dashboard","Clients"]);
-  tabs.push(["calendar","Calendar"]);
-  tabs.push(["tasks","Tasks"]);
-  tabs.push(["aiAssist","AI Assistant"]);
-  if(isAdmin()) tabs.push(["team","Team"]);
   const adminBtns=isAdmin()?`<button class="btn" data-action="openManageTeam">👥 Team (${state.teamMembers.length})</button><button class="btn btn-primary" data-action="openAddClient">+ Add Client</button>`:'';
-  const insightsActive = isInsightTab(state.activeTab) && !state.selectedClientId;
-  const insightsBtn = isAdmin() ? `<div style="position:relative;display:inline-flex">
-    <button class="nav-btn ${insightsActive?'active':''}" data-action="toggleInsights">Insights ▾</button>
-    ${state.insightsMenuOpen?`<div id="insights-menu" style="position:absolute;top:calc(100% + 4px);left:0;background:var(--bg-card);border:1px solid var(--border);border-radius:8px;padding:4px;display:flex;flex-direction:column;gap:2px;z-index:200;min-width:180px;box-shadow:0 4px 16px rgba(0,0,0,0.3)">
-      ${INSIGHTS_TABS.map(([k,l,icon])=>`<button class="nav-btn ${state.activeTab===k?'active':''}" data-insight-nav="${k}" style="text-align:left;justify-content:flex-start">${icon} ${esc(l)}</button>`).join('')}
-    </div>`:''}
-  </div>`:'';
-  return`<div class="header"><div class="logo"><div class="logo-mark">CT</div><div><div class="logo-text">UAE Compliance Tracker</div><div class="logo-sub">Accounting &amp; Tax Ops</div></div></div><div class="nav">${tabs.map(([k,l])=>`<button class="nav-btn ${state.activeTab===k&&!state.selectedClientId?'active':''}" data-nav="${k}">${l}</button>`).join("")}${insightsBtn}</div><div class="header-actions">${adminBtns}${currentUser?`<div style="display:flex;align-items:center;gap:8px;margin-left:8px;padding-left:12px;border-left:1px solid var(--border)"><span style="font-size:12px;color:var(--text-muted)">${esc(currentUser.name)}</span><span style="font-size:9px;padding:2px 6px;border-radius:4px;background:${currentUser.role==='admin'?'var(--accent-soft)':'var(--bg-elevated)'};color:${currentUser.role==='admin'?'var(--accent)':'var(--text-muted)'};font-weight:700;text-transform:uppercase">${currentUser.role}</span>${currentUser.role==='admin'?'<a href="/admin" style="font-size:11px;color:var(--accent);text-decoration:none">⚙</a>':''}<button class="btn btn-sm" data-action="toggleTheme" title="Toggle light/dark theme" style="font-size:13px;padding:4px 8px">${document.documentElement.classList.contains('theme-light')?'🌙':'☀️'}</button><button class="btn btn-sm" data-action="logout" style="font-size:11px">Logout</button></div>`:''}</div></div>`;
+  return`<div class="header"><div class="logo"><div class="logo-mark">CT</div><div><div class="logo-text">UAE Compliance Tracker</div><div class="logo-sub">Accounting &amp; Tax Ops</div></div></div><div class="header-actions">${adminBtns}${currentUser?`<div style="display:flex;align-items:center;gap:8px;margin-left:8px;padding-left:12px;border-left:1px solid var(--border)"><span style="font-size:12px;color:var(--text-muted)">${esc(currentUser.name)}</span><span style="font-size:9px;padding:2px 6px;border-radius:4px;background:${currentUser.role==='admin'?'var(--accent-soft)':'var(--bg-elevated)'};color:${currentUser.role==='admin'?'var(--accent)':'var(--text-muted)'};font-weight:700;text-transform:uppercase">${currentUser.role}</span>${currentUser.role==='admin'?'<a href="/admin" style="font-size:11px;color:var(--accent);text-decoration:none">⚙</a>':''}<button class="btn btn-sm" data-action="logout" style="font-size:11px">Logout</button></div>`:''}</div></div>`;
+}
+
+// Left sidebar — main navigation. Shown when no client is opened.
+// When a client is opened, the existing renderSidebar (client detail nav) takes over.
+function renderMainNavSidebar(){
+  const primary=[];
+  if(isAdmin()) primary.push(['morning','🌅','Morning Briefing']);
+  primary.push(['priority','⚡','My Next Priority']);
+  primary.push(['dashboard','🏢','Clients']);
+  primary.push(['calendar','📅','Calendar']);
+  primary.push(['tasks','✓','Tasks']);
+  primary.push(['aiAssist','🤖','AI Assistant']);
+  if(isAdmin()) primary.push(['team','👥','Team']);
+
+  const btn=(k,icon,label)=>`<button class="side-nav-btn ${state.activeTab===k?'active':''}" data-nav="${k}"><span class="side-nav-icon">${icon}</span><span class="side-nav-label">${label}</span></button>`;
+
+  let h=`<aside class="side-nav">
+    <div class="side-nav-section">Main</div>
+    ${primary.map(([k,i,l])=>btn(k,i,l)).join('')}`;
+  if(isAdmin()){
+    h+=`<div class="side-nav-section">Insights</div>
+      ${INSIGHTS_TABS.map(([k,l,icon])=>btn(k,icon,l)).join('')}`;
+  }
+  const isLight=document.documentElement.classList.contains('theme-light');
+  h+=`<div class="side-nav-footer">
+    <button class="side-nav-btn" data-action="toggleTheme" title="Toggle light/dark theme">
+      <span class="side-nav-icon">${isLight?'🌙':'☀️'}</span>
+      <span class="side-nav-label">${isLight?'Dark theme':'Light theme'}</span>
+    </button>
+  </div></aside>`;
+  return h;
 }
 
 function renderMain(){
@@ -3297,8 +3325,8 @@ function bindEvents(){
     if(a==="toggleTheme")el.onclick=()=>{
       const isLight=document.documentElement.classList.toggle('theme-light');
       try{ localStorage.setItem('theme', isLight?'light':'dark'); }catch(e){}
-      // Update the button icon inline — no full render needed for this.
-      el.textContent = isLight?'🌙':'☀️';
+      // Re-render so the sidebar label ("Light theme"/"Dark theme") updates.
+      render();
     };
     // Debounced search — was re-rendering on every keystroke (up to 60/sec).
     // Now waits 150ms of quiet before re-rendering. Feels instant, cheap.

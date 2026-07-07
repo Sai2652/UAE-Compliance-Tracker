@@ -1,0 +1,115 @@
+name: Deploy to AWS
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      full_stack:
+        description: 'Also update CloudFormation stack (template.yaml)? Set to "true" for infra changes.'
+        required: false
+        default: 'false'
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false  # don't cancel mid-deploy — could leave stack half-updated
+
+permissions:
+  id-token: write   # for AWS OIDC
+  contents: read
+
+env:
+  AWS_REGION: ap-south-1
+  STACK_NAME: uae-compliance-tracker
+  ARTIFACT_BUCKET: uct-tracker-state-333973504173
+  ARTIFACT_KEY: deploy/app.zip
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install prod dependencies
+        run: npm ci --omit=dev --omit=optional
+
+      - name: Package Lambda zip
+        run: |
+          zip -r app.zip . \
+            -x ".git/*" \
+            -x ".github/*" \
+            -x ".build/*" \
+            -x "db/*" \
+            -x "scripts/migrate-supabase-to-aws.js" \
+            -x ".env*" \
+            -x "samconfig.toml*" \
+            -x "*.md"
+          ls -lh app.zip
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::333973504173:role/gha-uct-deployer
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Upload artifact to S3
+        run: aws s3 cp app.zip s3://${{ env.ARTIFACT_BUCKET }}/${{ env.ARTIFACT_KEY }}
+
+      - name: Update Lambda code (fast path)
+        if: github.event.inputs.full_stack != 'true'
+        run: |
+          for FN in ApiFunction TaskCronFunction ObligationCronFunction EscalationCronFunction SlaCronFunction; do
+            FULL_NAME=$(aws cloudformation describe-stack-resource \
+              --stack-name ${{ env.STACK_NAME }} \
+              --logical-resource-id "$FN" \
+              --query 'StackResourceDetail.PhysicalResourceId' \
+              --output text)
+            echo "Updating $FULL_NAME"
+            aws lambda update-function-code \
+              --function-name "$FULL_NAME" \
+              --s3-bucket ${{ env.ARTIFACT_BUCKET }} \
+              --s3-key ${{ env.ARTIFACT_KEY }} \
+              --publish >/dev/null
+          done
+          echo "All 5 Lambdas updated."
+
+      - name: Full CloudFormation deploy (when template changes)
+        if: github.event.inputs.full_stack == 'true'
+        run: |
+          # Regenerate packaged template pointing at the uploaded artifact
+          sed "s|CodeUri: \.|CodeUri: s3://${{ env.ARTIFACT_BUCKET }}/${{ env.ARTIFACT_KEY }}|g" template.yaml > .build-template.yaml
+          aws cloudformation deploy \
+            --template-file .build-template.yaml \
+            --stack-name ${{ env.STACK_NAME }} \
+            --capabilities CAPABILITY_IAM CAPABILITY_AUTO_EXPAND \
+            --no-fail-on-empty-changeset \
+            --parameter-overrides \
+              AdminEmail=${{ secrets.ADMIN_EMAIL }} \
+              AdminPassword='${{ secrets.ADMIN_PASSWORD }}' \
+              AdminName='${{ secrets.ADMIN_NAME }}' \
+              JwtSecret='${{ secrets.JWT_SECRET }}' \
+              S3Bucket=${{ env.ARTIFACT_BUCKET }} \
+              DdbPrefix=Uct \
+              SmtpHost='${{ secrets.SMTP_HOST }}' \
+              SmtpPort='${{ secrets.SMTP_PORT }}' \
+              SmtpUser='${{ secrets.SMTP_USER }}' \
+              SmtpPass='${{ secrets.SMTP_PASS }}' \
+              AppUrl='${{ secrets.APP_URL }}'
+
+      - name: Smoke test
+        run: |
+          API_URL=$(aws cloudformation describe-stacks \
+            --stack-name ${{ env.STACK_NAME }} \
+            --query 'Stacks[0].Outputs[?OutputKey==`ApiUrl`].OutputValue' \
+            --output text)
+          echo "API URL: $API_URL"
+          # Wait a moment for Lambda to settle after code update
+          sleep 3
+          curl -fsS "$API_URL/health" && echo ""

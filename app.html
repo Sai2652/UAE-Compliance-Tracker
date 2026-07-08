@@ -539,14 +539,14 @@ function _renderImpl(){
 
 // Insights menu — admin-only tabs grouped under a single dropdown to keep the
 // main nav clean. Each entry is [tabKey, label, icon].
+// Client Health and Exceptions folded into Risk Center as sub-tabs; Documents
+// dropped from the sidebar (still reachable via /documents; Priority Queue
+// surfaces pending docs directly).
 const INSIGHTS_TABS = [
   ['portfolio',  'Portfolio',       '🗂️'],
   ['risk',       'Risk Center',     '🛡️'],
   ['reports',    'Reports / MIS',   '📊'],
-  ['analytics',  'Team Analytics',  '📈'],
-  ['health',     'Client Health',   '💚'],
-  ['exceptions', 'Exceptions',      '🚨'],
-  ['documents',  'Documents',       '📎']
+  ['analytics',  'Team Analytics',  '📈']
 ];
 function isInsightTab(k){ return INSIGHTS_TABS.some(t=>t[0]===k); }
 
@@ -560,13 +560,15 @@ function renderHeader(){
 // Left sidebar — main navigation. Shown when no client is opened.
 // When a client is opened, the existing renderSidebar (client detail nav) takes over.
 function renderMainNavSidebar(){
+  // Morning Briefing folded into Priority Queue (shows as a top card there
+  // when the user is admin). AI Assistant is rule-based — not an LLM — so
+  // it's labelled "Copilot" to avoid setting the wrong expectation.
   const primary=[];
-  if(isAdmin()) primary.push(['morning','🌅','Morning Briefing']);
-  primary.push(['priority','⚡','My Next Priority']);
+  primary.push(['priority','⚡',isAdmin()?'Today':'My Next Priority']);
   primary.push(['dashboard','🏢','Clients']);
   primary.push(['calendar','📅','Calendar']);
   primary.push(['tasks','✓','Tasks']);
-  primary.push(['aiAssist','🤖','AI Assistant']);
+  primary.push(['aiAssist','🧭','Copilot']);
   if(isAdmin()) primary.push(['team','👥','Team']);
 
   const btn=(k,icon,label)=>`<button class="side-nav-btn ${state.activeTab===k?'active':''}" data-nav="${k}"><span class="side-nav-icon">${icon}</span><span class="side-nav-label">${label}</span></button>`;
@@ -1534,15 +1536,20 @@ function readinessFor(clientId){
 function renderRiskCenter(){
   // Make sure readiness data is loaded — sub-tabs depend on it.
   if(!state.clientReadiness){ setTimeout(ensureReadinessLoaded,0); }
-  const tabs=[['dashboard','Dashboard'],['action','Action Center'],['bottlenecks','Bottlenecks'],['sla','SLA Prediction'],['briefing','Daily Briefing'],['followup','Follow-up'],['team','Team Accountability']];
+  // 'health' and 'exceptions' folded in from what used to be top-level Insights
+  // tabs — they surface the same "which clients need attention" question from
+  // different angles, so it's cleaner to keep them under Risk Center.
+  const tabs=[['dashboard','Dashboard'],['action','Action Center'],['health','Health'],['exceptions','Exceptions'],['bottlenecks','Bottlenecks'],['sla','SLA Prediction'],['briefing','Daily Briefing'],['followup','Follow-up'],['team','Team Accountability']];
   let h=`<div style="display:flex;gap:12px;align-items:center;margin-bottom:12px;flex-wrap:wrap"><div class="nav" style="margin:0">`;
   tabs.forEach(([k,l])=>{ h+=`<button class="nav-btn ${riskState.subTab===k?'active':''}" data-rs="${k}">${l}</button>`; });
   h+=`</div></div>`;
-  // Readiness filter strip — applies to all sub-tabs except Team Accountability.
-  if(riskState.subTab!=='team' && riskState.subTab!=='bottlenecks') h+=readinessFilterStrip();
+  // Readiness filter strip — applies to all sub-tabs except Team Accountability + Bottlenecks + Health + Exceptions.
+  if(riskState.subTab!=='team' && riskState.subTab!=='bottlenecks' && riskState.subTab!=='health' && riskState.subTab!=='exceptions') h+=readinessFilterStrip();
   switch(riskState.subTab){
     case 'dashboard':  h+=renderRiskDashboard(); break;
     case 'action':     h+=renderActionCenter(); break;
+    case 'health':     h+=renderHealthBoard(); break;
+    case 'exceptions': h+=renderExceptions(); break;
     case 'bottlenecks':h+=renderBottlenecks(); break;
     case 'sla':        h+=renderSlaPrediction(); break;
     case 'briefing':   h+=renderBriefing(); break;
@@ -2403,9 +2410,15 @@ function _once(key, fn){
 }
 async function loadPriorityQueue(){ return _once('priority', async()=>{ try{ const j=await apiJSON('/api/my/priority-queue'); taskState.priority=j.tasks||[]; taskState.priorityLoaded=true; render(); }catch(e){ console.error(e); taskState.priorityLoaded=true; render(); } }); }
 function renderPriorityQueue(){
-  if(!taskState.priorityLoaded){ setTimeout(loadPriorityQueue,0); return `<div class="empty-state"><div class="empty-state-icon">⚡</div><div class="empty-state-title">Loading your priority work…</div></div>`; }
-  if(!taskState.priority.length) return `<div class="empty-state"><div class="empty-state-icon">✅</div><div class="empty-state-title">All caught up</div><div class="empty-state-text">No open tasks assigned to you.</div></div>`;
-  let h=`<div class="card-title" style="margin-bottom:12px">⚡ My Next Priority Work — ${taskState.priority.length} open</div>`;
+  // Admins get the Morning Briefing rendered above their priority queue — it
+  // replaces the standalone "Morning" tab that used to duplicate this space.
+  // renderMorningDashboard handles its own loading + error states.
+  const morning = isAdmin() ? renderMorningDashboard() : '';
+  if(!taskState.priorityLoaded){ setTimeout(loadPriorityQueue,0); return morning + `<div class="empty-state"><div class="empty-state-icon">⚡</div><div class="empty-state-title">Loading your priority work…</div></div>`; }
+  if(!taskState.priority.length) return morning + `<div class="empty-state"><div class="empty-state-icon">✅</div><div class="empty-state-title">All caught up</div><div class="empty-state-text">No open tasks assigned to you.</div></div>`;
+  let h = morning;
+  if(morning) h+=`<div style="height:12px"></div><hr style="border:none;border-top:1px solid var(--border);margin:0 0 14px 0">`;
+  h+=`<div class="card-title" style="margin-bottom:12px">⚡ My Next Priority Work — ${taskState.priority.length} open</div>`;
   h+=`<div class="card" style="padding:0;overflow:auto"><table style="min-width:800px"><thead><tr><th style="width:60px">Priority</th><th>Client</th><th>Type</th><th>Status</th><th>Due</th><th>Owner</th></tr></thead><tbody>`;
   taskState.priority.forEach(t=>{ h+=taskRow(t); });
   h+=`</tbody></table></div>`;

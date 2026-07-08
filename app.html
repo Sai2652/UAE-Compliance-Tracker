@@ -494,6 +494,39 @@ function render(){
     try{ _renderImpl(); } finally { _renderInProgress=false; }
   });
 }
+// Capture the currently focused input/textarea/select so an incidental
+// render (loader finishing, metric refresh, etc.) doesn't yank the caret
+// out from under the user mid-typing. Restored after the innerHTML swap.
+function _captureFocus(app){
+  const el = document.activeElement;
+  if(!el || el === document.body || !app.contains(el)) return null;
+  const tag = el.tagName;
+  if(tag !== 'INPUT' && tag !== 'TEXTAREA' && tag !== 'SELECT') return null;
+  const info = { tag };
+  if(el.id) info.id = el.id;
+  if(el.dataset && el.dataset.action) info.action = el.dataset.action;
+  if(el.name) info.name = el.name;
+  if(!info.id && !info.action && !info.name) return null; // no way to find it again
+  try { info.selStart = el.selectionStart; info.selEnd = el.selectionEnd; } catch(_) {}
+  return info;
+}
+function _restoreFocus(app, info){
+  if(!info) return;
+  let sel;
+  if(info.id) sel = '#' + (window.CSS && CSS.escape ? CSS.escape(info.id) : info.id);
+  else if(info.action) sel = '[data-action="' + info.action + '"]';
+  else sel = info.tag + '[name="' + info.name + '"]';
+  const el = app.querySelector(sel);
+  if(!el) return;
+  try {
+    el.focus({preventScroll: true});
+    if(typeof info.selStart === 'number'){
+      el.selectionStart = info.selStart;
+      el.selectionEnd = (typeof info.selEnd === 'number') ? info.selEnd : info.selStart;
+    }
+  } catch(_){}
+}
+
 function _renderImpl(){
   try{
     refreshMetrics();
@@ -508,6 +541,7 @@ function _renderImpl(){
     const mainScroll=mainEl?mainEl.scrollTop:0;
     const sideNavScroll=sideNavEl?sideNavEl.scrollTop:0;
     const clientSidebarScroll=clientSidebarEl?clientSidebarEl.scrollTop:0;
+    const focusInfo=_captureFocus(app);
 
     const sc=state.selectedClientId?getClient(state.selectedClientId):null;
     const scm=sc?metricsCache[sc.id]:null;
@@ -548,6 +582,10 @@ function _renderImpl(){
       const newMainEl=app.querySelector(".main");
       if(newMainEl&&mainScroll>0)newMainEl.scrollTop=mainScroll;
     }
+    // Put the user's caret back where it was — this is what stops the search
+    // box (and other inputs) from losing focus after every keystroke when a
+    // background loader completes and triggers a render.
+    _restoreFocus(app, focusInfo);
     _lastRenderCtx=nextCtx;
 
   }catch(err){
@@ -3426,15 +3464,27 @@ function bindEvents(){
     render();
   });
   // Close Insights dropdown when clicking outside it.
+  // bindEvents runs on every render, so if we naively added a listener each
+  // time the menu was open, a new one would stack up on every background
+  // re-render and the click handler would fire N times on outside-click.
+  // Track the single listener at module scope, remove-then-add so we always
+  // have exactly one attached while the menu is open, and remove it as soon
+  // as the menu closes.
+  if(window._insightsOutsideHandler){
+    document.removeEventListener('click', window._insightsOutsideHandler);
+    window._insightsOutsideHandler=null;
+  }
   if(state.insightsMenuOpen){
     setTimeout(()=>{
       const closeOnOutside=(e)=>{
         if(!e.target.closest('#insights-menu') && !e.target.closest('[data-action="toggleInsights"]')){
           state.insightsMenuOpen=false;
           document.removeEventListener('click', closeOnOutside);
+          window._insightsOutsideHandler=null;
           render();
         }
       };
+      window._insightsOutsideHandler=closeOnOutside;
       document.addEventListener('click', closeOnOutside);
     },0);
   }
@@ -3456,15 +3506,17 @@ function bindEvents(){
       // Re-render so the sidebar label ("Light theme"/"Dark theme") updates.
       render();
     };
-    // Debounced search — was re-rendering on every keystroke (up to 60/sec).
-    // Now waits 150ms of quiet before re-rendering. Feels instant, cheap.
+    // Search input — updates state.search immediately on every keystroke, but
+    // only re-renders after 150ms of quiet. Two reasons for that split:
+    //   1. If a background loader triggers a render mid-typing, the input is
+    //      rebuilt from state.search — if state.search were stale, everything
+    //      the user just typed would be silently wiped.
+    //   2. Filtering the client list on every keystroke would be wasteful.
+    // Focus + caret position are preserved by _restoreFocus in the render loop.
     if(a==="search")el.oninput=(e)=>{
-      const v=e.target.value;
+      state.search = e.target.value;
       clearTimeout(window._searchDebounce);
-      window._searchDebounce=setTimeout(()=>{
-        state.search=v;render();
-        setTimeout(()=>{const i=document.querySelector('[data-action="search"]');if(i){i.focus();i.selectionStart=i.selectionEnd=v.length;}},0);
-      },150);
+      window._searchDebounce=setTimeout(render, 150);
     };
     if(a==="filterStatus")el.onchange=(e)=>{state.filterStatus=e.target.value;render();};
     if(a==="filterTeam")el.onchange=(e)=>{state.filterTeam=e.target.value;render();};

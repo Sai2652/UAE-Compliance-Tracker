@@ -432,7 +432,39 @@ function markUpdated(c){c.lastUpdated=nowISO().slice(0,10);c.lastUpdatedBy=curre
 // tick they used to rebuild the DOM twice in quick succession, which made
 // clicks miss their targets. We batch all render() calls within one animation
 // frame into a single rebuild.
+// ═══════════════════════════════════════════════════════════════
+// Async loader helpers
+// ═══════════════════════════════════════════════════════════════
+// Every async loader used to look like:
+//   try{ bucket.field = await apiJSON(url); render(); }catch(e){ console.error(e); }
+// which left bucket.field null on failure. The render function checks
+// `!bucket.field` to schedule the loader — so an API error meant the render
+// re-scheduled the loader forever, spinner locked. _load stamps a sentinel
+// error object on failure so the check flips false and the loop stops.
+async function _load(bucket, key, endpoint){
+  try{
+    bucket[key] = await apiJSON(endpoint);
+  }catch(e){
+    console.error('Load failed for', endpoint, e);
+    bucket[key] = {_error: (e && e.message) || 'Failed to load'};
+  }
+  render();
+}
+// Placeholder shown when a loader errored. Render sites call this after their
+// existing "Loading…" check so the error is visible instead of a spinner OR
+// a fatal render crash reading .rows/.scores off the error object.
+function _isLoadErr(v){ return v && typeof v==='object' && '_error' in v; }
+function renderLoaderError(v, icon, title){
+  const msg = (v && v._error) || 'Failed to load';
+  return `<div class="empty-state"><div class="empty-state-icon">${icon||'⚠️'}</div><div class="empty-state-title">${esc(title||'Failed to load')}</div><div class="empty-state-text">${esc(msg)}</div></div>`;
+}
+
 let _renderQueued=false, _renderInProgress=false;
+// Snapshot of the last-rendered navigation context. Lets us tell "same view,
+// just re-rendered from a state change" apart from "user switched tabs/clients".
+// Only same-view re-renders should restore the previous .main scroll offset;
+// otherwise a new tab inherits an unrelated Y and looks broken.
+let _lastRenderCtx={activeTab:null,selectedClientId:null,detailTab:null};
 function render(){
   if(_renderInProgress) return;
   if(_renderQueued) return;
@@ -448,13 +480,31 @@ function _renderImpl(){
     refreshMetrics();
     const app=document.getElementById("app");if(!app)return;
 
-    // Save scroll position of main content area before re-render
+    // Capture scroll positions of both the main content AND the left sidebar
+    // before we blow away #app.innerHTML. Restoring the sidebar prevents the
+    // "click a low tab, sidebar snaps back to top" bug.
     const mainEl=app.querySelector(".main");
-    const scrollTop=mainEl?mainEl.scrollTop:0;
+    const sideNavEl=app.querySelector(".side-nav");
+    const clientSidebarEl=app.querySelector(".sidebar");
+    const mainScroll=mainEl?mainEl.scrollTop:0;
+    const sideNavScroll=sideNavEl?sideNavEl.scrollTop:0;
+    const clientSidebarScroll=clientSidebarEl?clientSidebarEl.scrollTop:0;
 
     const sc=state.selectedClientId?getClient(state.selectedClientId):null;
     const scm=sc?metricsCache[sc.id]:null;
     if(state.selectedClientId&&!sc)state.selectedClientId=null;
+
+    const nextCtx={
+      activeTab:state.activeTab||null,
+      selectedClientId:sc?sc.id:null,
+      detailTab:sc?(state.detailTab||null):null
+    };
+    const sameView=(
+      _lastRenderCtx.activeTab===nextCtx.activeTab &&
+      _lastRenderCtx.selectedClientId===nextCtx.selectedClientId &&
+      _lastRenderCtx.detailTab===nextCtx.detailTab
+    );
+
     let h=renderHeader();h+=`<div class="body-wrap">`;
     if(sc&&scm){h+=renderSidebar(sc,scm);h+=`<div class="main">${renderDetail(sc,scm)}</div>`;}
     else {h+=renderMainNavSidebar();h+=`<div class="main">${renderMain()}</div>`;}
@@ -466,9 +516,20 @@ function _renderImpl(){
 
     app.innerHTML=h;bindEvents();
 
-    // Restore scroll position after re-render
-    const newMainEl=app.querySelector(".main");
-    if(newMainEl&&scrollTop>0)newMainEl.scrollTop=scrollTop;
+    // Restore scroll positions after re-render.
+    // .main is restored ONLY on same-view re-renders — a new tab/client
+    // shouldn't inherit the previous view's scroll offset.
+    // .side-nav and .sidebar are always restored so the user's place in the
+    // nav list is never lost, regardless of what they clicked.
+    const newSideNavEl=app.querySelector(".side-nav");
+    if(newSideNavEl&&sideNavScroll>0)newSideNavEl.scrollTop=sideNavScroll;
+    const newClientSidebarEl=app.querySelector(".sidebar");
+    if(newClientSidebarEl&&clientSidebarScroll>0)newClientSidebarEl.scrollTop=clientSidebarScroll;
+    if(sameView){
+      const newMainEl=app.querySelector(".main");
+      if(newMainEl&&mainScroll>0)newMainEl.scrollTop=mainScroll;
+    }
+    _lastRenderCtx=nextCtx;
 
   }catch(err){
     console.error(err);
@@ -556,8 +617,8 @@ function renderMain(){
 
 async function loadMorningDashboard(force){
   return _once('morning'+(force?'-force':''), async()=>{
-    try{ const j=await apiJSON('/api/dashboard/morning'+(force?'?refresh=1':'')); state.morning=j; state.morningLoadedAt=Date.now(); render(); }
-    catch(e){ console.error(e); state.morning={error:e.message||'Failed to load'}; render(); }
+    await _load(state, 'morning', '/api/dashboard/morning'+(force?'?refresh=1':''));
+    if(!_isLoadErr(state.morning)) state.morningLoadedAt=Date.now();
   });
 }
 
@@ -565,6 +626,7 @@ function renderMorningDashboard(){
   if(!isAdmin()) return renderPriorityQueue();
   if(!state.clientReadiness){ setTimeout(ensureReadinessLoaded,0); }
   if(!state.morning){ setTimeout(loadMorningDashboard,0); return `<div class="empty-state"><div class="empty-state-icon">☕</div><div class="empty-state-title">Composing morning briefing…</div></div>`; }
+  if(_isLoadErr(state.morning)) return renderLoaderError(state.morning, '⚠️', 'Failed to load morning briefing');
   const d=state.morning;
   const ageSec=Math.floor((Date.now()-new Date(d.generatedAt).getTime())/1000);
   let h=`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:8px">
@@ -790,9 +852,10 @@ function renderAIAssistant(){
   return h;
 }
 
-async function loadAIToday(){ try{ aiState.briefing=await apiJSON('/api/ai/today'); render(); }catch(e){console.error(e);} }
+async function loadAIToday(){ return _load(aiState, 'briefing', '/api/ai/today'); }
 function renderAIToday(){
   if(!aiState.briefing){ setTimeout(loadAIToday,0); return `<div class="empty-state"><div class="empty-state-icon">🌅</div><div class="empty-state-title">Composing Today's Focus…</div></div>`; }
+  if(_isLoadErr(aiState.briefing)) return renderLoaderError(aiState.briefing, '⚠️', "Failed to load Today's Focus");
   const b=aiState.briefing;
   let h=`<div class="card-title" style="margin-bottom:6px">🌅 Today's Focus</div><div style="font-size:11px;color:var(--text-muted);margin-bottom:14px">Generated ${new Date(b.generatedAt).toLocaleTimeString()} · Composed from existing operational data</div>`;
   (b.sections||[]).forEach(s=>{
@@ -811,10 +874,11 @@ function renderAIToday(){
   return h;
 }
 
-async function loadAICopilotQuestions(){ if(aiState.copilotQuestions) return; try{ const j=await apiJSON('/api/ai/copilot/questions'); aiState.copilotQuestions=j.questions; render(); }catch(e){console.error(e);} }
+async function loadAICopilotQuestions(){ if(aiState.copilotQuestions) return; try{ const j=await apiJSON('/api/ai/copilot/questions'); aiState.copilotQuestions=j.questions; render(); }catch(e){ console.error('Load failed for /api/ai/copilot/questions', e); aiState.copilotQuestions={_error:(e&&e.message)||'Failed to load'}; render(); } }
 async function askCopilot(k){ try{ aiState.copilotKey=k; aiState.copilotAnswer=null; render(); aiState.copilotAnswer=await apiJSON('/api/ai/copilot/'+k); render(); }catch(e){ alert(e.message); } }
 function renderAICopilot(){
   if(!aiState.copilotQuestions){ setTimeout(loadAICopilotQuestions,0); return `<div class="empty-state"><div class="empty-state-icon">🧭</div><div class="empty-state-title">Loading…</div></div>`; }
+  if(_isLoadErr(aiState.copilotQuestions)) return renderLoaderError(aiState.copilotQuestions, '⚠️', 'Failed to load copilot questions');
   let h=`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:10px;margin-bottom:14px">`;
   Object.entries(aiState.copilotQuestions).forEach(([k,q])=>{
     const active=aiState.copilotKey===k;
@@ -841,9 +905,10 @@ function renderAICopilot(){
   return h;
 }
 
-async function loadAIPriority(){ try{ aiState.priority=await apiJSON('/api/ai/priority'); render(); }catch(e){console.error(e);} }
+async function loadAIPriority(){ return _load(aiState, 'priority', '/api/ai/priority'); }
 function renderAIPriority(){
   if(!aiState.priority){ setTimeout(loadAIPriority,0); return `<div class="empty-state"><div class="empty-state-icon">🎯</div><div class="empty-state-title">Ranking…</div></div>`; }
+  if(_isLoadErr(aiState.priority)) return renderLoaderError(aiState.priority, '⚠️', 'Failed to load priority');
   const p=aiState.priority;
   const col=(title,rows,color)=>{
     let inner=`<div class="card-title" style="color:${color||'var(--text-primary)'}">${title} (${rows.length})</div>`;
@@ -863,9 +928,10 @@ function renderAIPriority(){
   return h;
 }
 
-async function loadAINextBest(){ try{ aiState.nextBest=await apiJSON('/api/ai/my/next-best'); render(); }catch(e){console.error(e);} }
+async function loadAINextBest(){ return _load(aiState, 'nextBest', '/api/ai/my/next-best'); }
 function renderAINextBest(){
   if(!aiState.nextBest){ setTimeout(loadAINextBest,0); return `<div class="empty-state"><div class="empty-state-icon">⚡</div><div class="empty-state-title">Building your next-best list…</div></div>`; }
+  if(_isLoadErr(aiState.nextBest)) return renderLoaderError(aiState.nextBest, '⚠️', 'Failed to load next-best list');
   const items=aiState.nextBest.tasks||[];
   if(!items.length) return `<div class="empty-state"><div class="empty-state-icon">✅</div><div class="empty-state-title">No open tasks. Enjoy.</div></div>`;
   let h=`<div class="card-title" style="margin-bottom:10px">⚡ My Next Best Tasks</div><div style="display:grid;gap:8px">`;
@@ -879,9 +945,10 @@ function renderAINextBest(){
   return h;
 }
 
-async function loadAIBottlenecks(){ try{ aiState.bottlenecks=await apiJSON('/api/ai/bottlenecks'); render(); }catch(e){console.error(e);} }
+async function loadAIBottlenecks(){ return _load(aiState, 'bottlenecks', '/api/ai/bottlenecks'); }
 function renderAIBottlenecks(){
   if(!aiState.bottlenecks){ setTimeout(loadAIBottlenecks,0); return `<div class="empty-state"><div class="empty-state-icon">🚧</div><div class="empty-state-title">Analyzing…</div></div>`; }
+  if(_isLoadErr(aiState.bottlenecks)) return renderLoaderError(aiState.bottlenecks, '⚠️', 'Failed to load bottlenecks');
   const b=aiState.bottlenecks;
   if(!b.bottlenecks.length) return `<div class="empty-state"><div class="empty-state-icon">✅</div><div class="empty-state-title">No bottlenecks detected.</div></div>`;
   let h=`<div class="card-title" style="margin-bottom:10px">🚧 Bottleneck Analysis</div><div style="display:grid;gap:10px">`;
@@ -894,13 +961,14 @@ function renderAIBottlenecks(){
 
 async function loadAIInsight(){
   if(!aiState.insightClientId) return;
-  try{ aiState.insight=await apiJSON('/api/ai/clients/'+aiState.insightClientId+'/insight'); render(); }catch(e){console.error(e);}
+  return _load(aiState, 'insight', '/api/ai/clients/'+aiState.insightClientId+'/insight');
 }
 function renderAIInsight(){
   const clientOpts=state.clients.map(c=>`<option value="${c.id}" ${String(c.id)===String(aiState.insightClientId)?'selected':''}>${esc(c.name)}</option>`).join('');
   let h=`<div style="display:flex;gap:8px;align-items:center;margin-bottom:12px"><label style="font-size:11px;color:var(--text-muted)">Client</label><select class="form-input" id="ai-insight-pick" style="min-width:260px"><option value="">— select —</option>${clientOpts}</select></div>`;
   if(!aiState.insightClientId){ h+=`<div class="empty-state"><div class="empty-state-icon">🔎</div><div class="empty-state-title">Pick a client to see the insight panel.</div></div>`; }
   else if(!aiState.insight){ setTimeout(loadAIInsight,0); h+=`<div class="empty-state"><div class="empty-state-icon">⏳</div><div class="empty-state-title">Composing insight…</div></div>`; }
+  else if(_isLoadErr(aiState.insight)){ h+=renderLoaderError(aiState.insight, '⚠️', 'Failed to load insight'); }
   else{
     const i=aiState.insight;
     h+=`<div class="card" style="margin-bottom:12px"><div class="card-title">${esc(i.client.name)} — Current Status</div>`;
@@ -967,9 +1035,10 @@ function portfolioExportUrl(){
   return null;
 }
 
-async function loadPortfolioDashboard(){ try{ portfolioState.dashboard=await apiJSON('/api/portfolio/dashboard'); render(); }catch(e){console.error(e);} }
+async function loadPortfolioDashboard(){ return _load(portfolioState, 'dashboard', '/api/portfolio/dashboard'); }
 function renderPortfolioDashboard(){
   if(!portfolioState.dashboard){ setTimeout(loadPortfolioDashboard,0); return `<div class="empty-state"><div class="empty-state-icon">🗂️</div><div class="empty-state-title">Loading portfolio…</div></div>`; }
+  if(_isLoadErr(portfolioState.dashboard)) return renderLoaderError(portfolioState.dashboard, '⚠️', 'Failed to load portfolio');
   const rows=(portfolioState.dashboard.rows||[]).slice();
   // Sortable columns
   const sb=portfolioState.sortBy; const dir=portfolioState.sortDir==='asc'?1:-1;
@@ -984,9 +1053,10 @@ function renderPortfolioDashboard(){
   return h;
 }
 
-async function loadPortfolioActionList(){ try{ portfolioState.actionList=await apiJSON('/api/portfolio/manager-action-list?limit=50'); render(); }catch(e){console.error(e);} }
+async function loadPortfolioActionList(){ return _load(portfolioState, 'actionList', '/api/portfolio/manager-action-list?limit=50'); }
 function renderPortfolioActionList(){
   if(!portfolioState.actionList){ setTimeout(loadPortfolioActionList,0); return `<div class="empty-state"><div class="empty-state-icon">📋</div><div class="empty-state-title">Loading manager action list…</div></div>`; }
+  if(_isLoadErr(portfolioState.actionList)) return renderLoaderError(portfolioState.actionList, '⚠️', 'Failed to load action list');
   const rows=portfolioState.actionList.rows||[];
   let h=`<div class="card-title" style="margin-bottom:10px">📋 Daily Portfolio Review — ${rows.length} clients requiring attention</div>`;
   if(!rows.length) return h+`<div class="empty-state"><div class="empty-state-icon">✅</div><div class="empty-state-title">No action required.</div></div>`;
@@ -1008,9 +1078,10 @@ function renderPortfolioActionList(){
   return h;
 }
 
-async function loadPortfolioInsights(){ try{ portfolioState.insights=await apiJSON('/api/portfolio/insights'); render(); }catch(e){console.error(e);} }
+async function loadPortfolioInsights(){ return _load(portfolioState, 'insights', '/api/portfolio/insights'); }
 function renderPortfolioInsights(){
   if(!portfolioState.insights){ setTimeout(loadPortfolioInsights,0); return `<div class="empty-state"><div class="empty-state-icon">💡</div><div class="empty-state-title">Loading insights…</div></div>`; }
+  if(_isLoadErr(portfolioState.insights)) return renderLoaderError(portfolioState.insights, '⚠️', 'Failed to load insights');
   const x=portfolioState.insights;
   const list=(title,rows,renderer)=>{
     let inner=`<div class="card-title">${title} (${rows.length})</div>`;
@@ -1034,9 +1105,10 @@ function renderPortfolioInsights(){
   return h;
 }
 
-async function loadPortfolioAlerts(){ try{ portfolioState.alerts=await apiJSON('/api/portfolio/alerts'); render(); }catch(e){console.error(e);} }
+async function loadPortfolioAlerts(){ return _load(portfolioState, 'alerts', '/api/portfolio/alerts'); }
 function renderPortfolioAlerts(){
   if(!portfolioState.alerts){ setTimeout(loadPortfolioAlerts,0); return `<div class="empty-state"><div class="empty-state-icon">⚠</div><div class="empty-state-title">Loading alerts…</div></div>`; }
+  if(_isLoadErr(portfolioState.alerts)) return renderLoaderError(portfolioState.alerts, '⚠️', 'Failed to load alerts');
   const alerts=portfolioState.alerts.alerts||[];
   let h=`<div class="card-title" style="margin-bottom:10px">⚠ Key Client Alerts (${alerts.length})</div>`;
   if(!alerts.length) return h+`<div class="empty-state"><div class="empty-state-icon">✅</div><div class="empty-state-title">No alerts.</div></div>`;
@@ -1070,12 +1142,13 @@ function reportsExportUrl(path){
 
 async function loadReportsOptions(){
   if(reportsState.options) return;
-  try{ reportsState.options=await apiJSON('/api/reports/period-options'); render(); }catch(e){ console.error(e);}
+  return _load(reportsState, 'options', '/api/reports/period-options');
 }
 function periodSelector(){
   loadReportsOptions();
   const opts=reportsState.options;
   if(!opts) return `<span style="font-size:12px;color:var(--text-muted)">Loading periods…</span>`;
+  if(_isLoadErr(opts)) return `<span style="font-size:12px;color:var(--red)">${esc(opts._error||'Failed to load periods')}</span>`;
   const map={month:opts.months, quarter:opts.quarters, year:opts.years};
   const values=map[reportsState.period]||[];
   if(!reportsState.value) reportsState.value = values[0];
@@ -1137,9 +1210,10 @@ function reportsExportPath(){
 // --- per-report renderers ---
 function periodQ(){ const q=new URLSearchParams(); if(reportsState.period) q.set('period',reportsState.period); if(reportsState.value) q.set('value',reportsState.value); return q.toString()?('?'+q.toString()):''; }
 
-async function loadReportSummary(){ try{ reportsState.summary=await apiJSON('/api/reports/management-summary'+(reportsState.value?'?month='+encodeURIComponent(reportsState.value):'')); render(); }catch(e){console.error(e);} }
+async function loadReportSummary(){ return _load(reportsState, 'summary', '/api/reports/management-summary'+(reportsState.value?'?month='+encodeURIComponent(reportsState.value):'')); }
 function renderReportSummary(){
   if(!reportsState.summary){ setTimeout(loadReportSummary,0); return `<div class="empty-state"><div class="empty-state-icon">📊</div><div class="empty-state-title">Loading summary…</div></div>`; }
+  if(_isLoadErr(reportsState.summary)) return renderLoaderError(reportsState.summary, '⚠️', 'Failed to load summary');
   const s=reportsState.summary; const k=s.headline;
   const tile=(label,val,suffix)=>`<div class="card"><div style="color:var(--text-muted);font-size:11px;text-transform:uppercase">${label}</div><div style="font-size:26px;font-weight:700;margin-top:2px">${val==null?'—':val}${suffix||''}</div></div>`;
   let h=`<div class="card-title" style="margin-bottom:12px">📊 ${esc(s.meta.label)} Monthly Summary</div>`;
@@ -1185,9 +1259,10 @@ function attentionTableHtml(rows){
   return h;
 }
 
-async function loadReportAttention(){ try{ reportsState.attention=await apiJSON('/api/reports/attention-required?limit=50'); render(); }catch(e){console.error(e);} }
+async function loadReportAttention(){ return _load(reportsState, 'attention', '/api/reports/attention-required?limit=50'); }
 function renderReportAttention(){
   if(!reportsState.attention){ setTimeout(loadReportAttention,0); return `<div class="empty-state"><div class="empty-state-icon">🎯</div><div class="empty-state-title">Loading…</div></div>`; }
+  if(_isLoadErr(reportsState.attention)) return renderLoaderError(reportsState.attention, '⚠️', 'Failed to load attention list');
   const rows=reportsState.attention.rows||[];
   let h=`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px"><div class="card-title">🎯 Top Attention Required Clients (${rows.length})</div><button class="btn btn-sm" onclick="window.location.href='${reportsExportUrl('/api/reports/attention-required?limit=50')}'">⬇ Export CSV</button></div>`;
   if(!rows.length) return h+`<div class="empty-state"><div class="empty-state-icon">✅</div><div class="empty-state-title">No clients require attention.</div></div>`;
@@ -1195,9 +1270,10 @@ function renderReportAttention(){
   return h;
 }
 
-async function loadReportEmployees(){ try{ reportsState.employees=await apiJSON('/api/reports/employees'+periodQ()); render(); }catch(e){console.error(e);} }
+async function loadReportEmployees(){ return _load(reportsState, 'employees', '/api/reports/employees'+periodQ()); }
 function renderReportEmployees(){
   if(!reportsState.employees){ setTimeout(loadReportEmployees,0); return `<div class="empty-state"><div class="empty-state-icon">👥</div><div class="empty-state-title">Loading…</div></div>`; }
+  if(_isLoadErr(reportsState.employees)) return renderLoaderError(reportsState.employees, '⚠️', 'Failed to load employees');
   const r=reportsState.employees; const rows=r.rows||[];
   let h=`<div class="card-title" style="margin-bottom:10px">Employee Performance · ${esc(r.meta.label)}</div><div class="card" style="padding:0;overflow:auto"><table style="min-width:1000px"><thead><tr><th>User</th><th>Clients</th><th>Open</th><th>Completed</th><th>Overdue</th><th>Done in Period</th><th>Avg Days</th><th>Reviews Pending</th><th>Escalations</th><th>SLA %</th></tr></thead><tbody>`;
   rows.forEach(u=>{ h+=`<tr><td style="font-weight:600">${esc(u.userName)}</td><td>${u.assignedClients}</td><td>${u.openTasks}</td><td>${u.completedTasks}</td><td style="color:${u.overdueTasks>0?'var(--red)':'var(--text-muted)'}">${u.overdueTasks}</td><td><b>${u.completedInPeriod}</b></td><td>${u.avgCompletionDays==null?'—':u.avgCompletionDays+'d'}</td><td>${u.pendingReviews}</td><td>${u.escalationsGenerated}</td><td>${u.slaAdherencePct==null?'—':u.slaAdherencePct+'%'}</td></tr>`; });
@@ -1205,9 +1281,10 @@ function renderReportEmployees(){
   return h;
 }
 
-async function loadReportClients(){ try{ reportsState.clients=await apiJSON('/api/reports/clients'+periodQ()); render(); }catch(e){console.error(e);} }
+async function loadReportClients(){ return _load(reportsState, 'clients', '/api/reports/clients'+periodQ()); }
 function renderReportClients(){
   if(!reportsState.clients){ setTimeout(loadReportClients,0); return `<div class="empty-state"><div class="empty-state-icon">🏢</div><div class="empty-state-title">Loading…</div></div>`; }
+  if(_isLoadErr(reportsState.clients)) return renderLoaderError(reportsState.clients, '⚠️', 'Failed to load clients');
   const r=reportsState.clients; const rows=r.rows||[];
   let h=`<div class="card-title" style="margin-bottom:10px">Client Performance · ${esc(r.meta.label)}</div><div class="card" style="padding:0;overflow:auto"><table style="min-width:1200px"><thead><tr><th>Client</th><th>Owner</th><th>Readiness</th><th>Completed</th><th>Overdue</th><th>Docs Pending</th><th>Escalations</th><th>Escalation Score</th><th>Filings Due</th><th>Filed</th><th>Timeliness</th><th>Flags</th></tr></thead><tbody>`;
   rows.forEach(c=>{
@@ -1218,9 +1295,10 @@ function renderReportClients(){
   return h;
 }
 
-async function loadReportDocuments(){ try{ reportsState.documents=await apiJSON('/api/reports/document-delays'+periodQ()); render(); }catch(e){console.error(e);} }
+async function loadReportDocuments(){ return _load(reportsState, 'documents', '/api/reports/document-delays'+periodQ()); }
 function renderReportDocuments(){
   if(!reportsState.documents){ setTimeout(loadReportDocuments,0); return `<div class="empty-state"><div class="empty-state-icon">📎</div><div class="empty-state-title">Loading…</div></div>`; }
+  if(_isLoadErr(reportsState.documents)) return renderLoaderError(reportsState.documents, '⚠️', 'Failed to load document delays');
   const r=reportsState.documents;
   let h=`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px;margin-bottom:12px">`;
   const tile=(label,val,color)=>`<div class="card"><div style="color:var(--text-muted);font-size:11px;text-transform:uppercase">${label}</div><div style="font-size:26px;font-weight:700;margin-top:2px;color:${color||'var(--text-primary)'}">${val==null?'—':val}</div></div>`;
@@ -1245,14 +1323,12 @@ function renderReportDocuments(){
 }
 
 async function loadReportCompliance(kind){
-  try{
-    const j=await apiJSON('/api/reports/'+kind+'-compliance'+periodQ());
-    reportsState[kind]=j; render();
-  }catch(e){console.error(e);}
+  return _load(reportsState, kind, '/api/reports/'+kind+'-compliance'+periodQ());
 }
 function renderReportCompliance(kind){
   const data=reportsState[kind];
   if(!data){ setTimeout(()=>loadReportCompliance(kind),0); return `<div class="empty-state"><div class="empty-state-icon">📅</div><div class="empty-state-title">Loading…</div></div>`; }
+  if(_isLoadErr(data)) return renderLoaderError(data, '⚠️', 'Failed to load '+kind.toUpperCase()+' compliance');
   const t=data.totals||{};
   let h=`<div class="card-title" style="margin-bottom:10px">${kind.toUpperCase()} Compliance · ${esc(data.meta.label)}</div>`;
   h+=`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px;margin-bottom:12px">`;
@@ -1269,9 +1345,10 @@ function renderReportCompliance(kind){
   return h;
 }
 
-async function loadReportEscalations(){ try{ reportsState.escalations=await apiJSON('/api/reports/escalations'+periodQ()); render(); }catch(e){console.error(e);} }
+async function loadReportEscalations(){ return _load(reportsState, 'escalations', '/api/reports/escalations'+periodQ()); }
 function renderReportEscalations(){
   if(!reportsState.escalations){ setTimeout(loadReportEscalations,0); return `<div class="empty-state"><div class="empty-state-icon">🚨</div><div class="empty-state-title">Loading…</div></div>`; }
+  if(_isLoadErr(reportsState.escalations)) return renderLoaderError(reportsState.escalations, '⚠️', 'Failed to load escalations');
   const r=reportsState.escalations; const t=r.totals||{};
   let h=`<div class="card-title" style="margin-bottom:10px">Escalations · ${esc(r.meta.label)}</div><div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:10px;margin-bottom:12px">`;
   const tile=(label,val,c)=>`<div class="card"><div style="color:var(--text-muted);font-size:11px;text-transform:uppercase">${label}</div><div style="font-size:26px;font-weight:700;color:${c||'var(--text-primary)'}">${val==null?'—':val}</div></div>`;
@@ -1290,9 +1367,10 @@ function renderReportEscalations(){
   return h;
 }
 
-async function loadReportWorkload(){ try{ reportsState.workload=await apiJSON('/api/reports/workload?slice='+(reportsState.workloadSlice||'user')); render(); }catch(e){console.error(e);} }
+async function loadReportWorkload(){ return _load(reportsState, 'workload', '/api/reports/workload?slice='+(reportsState.workloadSlice||'user')); }
 function renderReportWorkload(){
   if(!reportsState.workload){ setTimeout(loadReportWorkload,0); return `<div class="empty-state"><div class="empty-state-icon">⚖️</div><div class="empty-state-title">Loading…</div></div>`; }
+  if(_isLoadErr(reportsState.workload)) return renderLoaderError(reportsState.workload, '⚠️', 'Failed to load workload');
   const r=reportsState.workload;
   let h=`<div style="display:flex;gap:6px;align-items:center;margin-bottom:10px"><span style="font-size:11px;color:var(--text-muted)">Slice by</span>`;
   ['user','client','type'].forEach(s=>{ h+=`<button class="btn btn-sm ${r.slice===s?'btn-primary':''}" data-ws="${s}">${s}</button>`; });
@@ -1309,7 +1387,7 @@ function renderReportWorkload(){
   return h;
 }
 
-async function loadTrend(metric){ try{ reportsState.trends[metric]=await apiJSON('/api/reports/trends?metric='+metric); render(); }catch(e){console.error(e);} }
+async function loadTrend(metric){ return _load(reportsState.trends, metric, '/api/reports/trends?metric='+metric); }
 function renderReportTrends(){
   const want=['filing_completion','sla_compliance','escalations'];
   want.forEach(m=>{ if(!reportsState.trends[m]){ setTimeout(()=>loadTrend(m),0); } });
@@ -1324,6 +1402,7 @@ function renderReportTrends(){
 }
 function trendCard(title, data, key){
   if(!data){ return `<div class="card"><div class="card-title">${title}</div><div style="padding:8px;color:var(--text-muted);font-size:12px">Loading…</div></div>`; }
+  if(_isLoadErr(data)) return `<div class="card"><div class="card-title">${title}</div>${renderLoaderError(data, '⚠️', 'Failed to load trend')}</div>`;
   if(!data.available){ return `<div class="card"><div class="card-title">${title}</div><div style="padding:8px;color:var(--text-muted);font-size:12px">${esc(data.reason||'Unavailable')}</div></div>`; }
   const pts=data.points||[];
   const vals=pts.map(p=>p[key]).map(v=>v==null?0:v);
@@ -1481,10 +1560,11 @@ async function loadRiskFindings(){
     riskState.findings=j;
     const c=await apiJSON('/api/risk/clients'); riskState.clientScores=c;
     render();
-  }catch(e){ console.error(e);}
+  }catch(e){ console.error('Load failed for /api/risk/findings', e); riskState.findings={_error:(e&&e.message)||'Failed to load'}; render(); }
 }
 function renderRiskDashboard(){
   if(!riskState.findings){ setTimeout(loadRiskFindings,0); return `<div class="empty-state"><div class="empty-state-icon">🛡️</div><div class="empty-state-title">Loading risk findings…</div></div>`; }
+  if(_isLoadErr(riskState.findings)) return renderLoaderError(riskState.findings, '⚠️', 'Failed to load risk findings');
   const t=riskState.findings.totals;
   const tile=(lvl,n)=>{ const c={critical:'var(--red)',high:'var(--red)',medium:'var(--amber)',low:'var(--text-muted)'}[lvl]; return `<div class="card" style="border-color:${c}"><div style="color:var(--text-muted);font-size:11px;text-transform:uppercase">${lvl}</div><div style="font-size:28px;font-weight:700;color:${c}">${n}</div></div>`; };
   let h=`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px;margin-bottom:12px">`+tile('critical',t.critical)+tile('high',t.high)+tile('medium',t.medium)+tile('low',t.low)+`</div>`;
@@ -1531,9 +1611,10 @@ function renderRiskDashboard(){
   return h;
 }
 
-async function loadActionCenter(){ try{ riskState.action=await apiJSON('/api/risk/manager-action-center'); render(); }catch(e){ console.error(e);} }
+async function loadActionCenter(){ return _load(riskState, 'action', '/api/risk/manager-action-center'); }
 function renderActionCenter(){
   if(!riskState.action){ setTimeout(loadActionCenter,0); return `<div class="empty-state"><div class="empty-state-icon">🎯</div><div class="empty-state-title">Loading…</div></div>`; }
+  if(_isLoadErr(riskState.action)) return renderLoaderError(riskState.action, '⚠️', 'Failed to load action center');
   let items=(riskState.action.items||[]).filter(i=>i.clientId==null||riskReadinessMatches(i.clientId));
   items = riskSortByReadiness(items, i=>i.clientId);
   let h=`<div class="card-title" style="margin-bottom:12px">🎯 Requires Manager Attention (${items.length})</div>`;
@@ -1549,9 +1630,10 @@ function renderActionCenter(){
   return h;
 }
 
-async function loadBottlenecks(){ try{ riskState.bottlenecks=await apiJSON('/api/risk/bottlenecks'); render(); }catch(e){ console.error(e);} }
+async function loadBottlenecks(){ return _load(riskState, 'bottlenecks', '/api/risk/bottlenecks'); }
 function renderBottlenecks(){
   if(!riskState.bottlenecks){ setTimeout(loadBottlenecks,0); return `<div class="empty-state"><div class="empty-state-icon">🚧</div><div class="empty-state-title">Analyzing bottlenecks…</div></div>`; }
+  if(_isLoadErr(riskState.bottlenecks)) return renderLoaderError(riskState.bottlenecks, '⚠️', 'Failed to load bottlenecks');
   const b=riskState.bottlenecks;
   let h='';
   if(b.suggestedOwner){
@@ -1573,9 +1655,10 @@ function renderBottlenecks(){
   return h;
 }
 
-async function loadSla(){ try{ riskState.sla=await apiJSON('/api/risk/sla-prediction'); render(); }catch(e){ console.error(e);} }
+async function loadSla(){ return _load(riskState, 'sla', '/api/risk/sla-prediction'); }
 function renderSlaPrediction(){
   if(!riskState.sla){ setTimeout(loadSla,0); return `<div class="empty-state"><div class="empty-state-icon">🔮</div><div class="empty-state-title">Predicting breaches…</div></div>`; }
+  if(_isLoadErr(riskState.sla)) return renderLoaderError(riskState.sla, '⚠️', 'Failed to load SLA prediction');
   // SLA predictions don't carry clientId — match on clientName as fallback.
   const byName={}; (state.clientReadiness&&state.clientReadiness.clients||[]).forEach(r=>{ byName[r.clientName]=r; });
   const readinessForRow=p=>{ const byName2=byName[p.clientName]; if(byName2) return readinessFor(byName2.clientId); return null; };
@@ -1595,9 +1678,10 @@ function renderSlaPrediction(){
   return h;
 }
 
-async function loadBriefing(){ try{ riskState.briefing=await apiJSON('/api/risk/daily-briefing'); render(); }catch(e){ console.error(e);} }
+async function loadBriefing(){ return _load(riskState, 'briefing', '/api/risk/daily-briefing'); }
 function renderBriefing(){
   if(!riskState.briefing){ setTimeout(loadBriefing,0); return `<div class="empty-state"><div class="empty-state-icon">📋</div><div class="empty-state-title">Loading briefing…</div></div>`; }
+  if(_isLoadErr(riskState.briefing)) return renderLoaderError(riskState.briefing, '⚠️', 'Failed to load briefing');
   const b=riskState.briefing;
   let h=`<div class="card-title" style="margin-bottom:12px">📋 Today's Briefing</div>`;
   h+=`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px;margin-bottom:16px">`;
@@ -1621,9 +1705,10 @@ function renderBriefing(){
   return h;
 }
 
-async function loadFollowUp(){ try{ riskState.followUp=await apiJSON('/api/risk/follow-up'); render(); }catch(e){ console.error(e);} }
+async function loadFollowUp(){ return _load(riskState, 'followUp', '/api/risk/follow-up'); }
 function renderFollowUp(){
   if(!riskState.followUp){ setTimeout(loadFollowUp,0); return `<div class="empty-state"><div class="empty-state-icon">💬</div><div class="empty-state-title">Loading follow-up board…</div></div>`; }
+  if(_isLoadErr(riskState.followUp)) return renderLoaderError(riskState.followUp, '⚠️', 'Failed to load follow-up');
   let rows=(riskState.followUp.clients||[]).filter(r=>riskReadinessMatches(r.clientId));
   rows = riskSortByReadiness(rows, r=>r.clientId);
   let h=`<div class="card-title" style="margin-bottom:12px">💬 Client Follow-up (silent ≥ ${riskState.followUp.silenceThresholdDays}d)</div>`;
@@ -1638,9 +1723,10 @@ function renderFollowUp(){
   return h;
 }
 
-async function loadAccountability(){ try{ riskState.accountability=await apiJSON('/api/risk/team-accountability'); render(); }catch(e){ console.error(e);} }
+async function loadAccountability(){ return _load(riskState, 'accountability', '/api/risk/team-accountability'); }
 function renderAccountability(){
   if(!riskState.accountability){ setTimeout(loadAccountability,0); return `<div class="empty-state"><div class="empty-state-icon">👤</div><div class="empty-state-title">Loading…</div></div>`; }
+  if(_isLoadErr(riskState.accountability)) return renderLoaderError(riskState.accountability, '⚠️', 'Failed to load accountability');
   const rows=riskState.accountability.rows||[];
   let h=`<div class="card-title" style="margin-bottom:12px">👤 Team Accountability</div><div class="card" style="padding:0;overflow:auto"><table style="min-width:900px"><thead><tr><th>User</th><th>Band</th><th>Open</th><th>Overdue</th><th>Reviews Pending</th><th>Blocked</th><th>Escalations</th><th>SLA %</th><th>Critical</th><th>High</th></tr></thead><tbody>`;
   rows.forEach(r=>{ h+=`<tr><td style="font-weight:600">${esc(r.userName)}</td><td>${bandPill(r.workloadBand)}</td><td>${r.openTasks}/${r.capacity||'—'}</td><td style="color:${r.tasksOverdue>0?'var(--red)':'var(--text-muted)'}">${r.tasksOverdue}</td><td>${r.reviewsPending}</td><td>${r.blockedWork}</td><td>${r.escalationsGenerated}</td><td>${r.slaAdherencePct==null?'—':r.slaAdherencePct+'%'}</td><td style="color:var(--red)">${r.findings.critical}</td><td style="color:var(--red)">${r.findings.high}</td></tr>`; });
@@ -1937,9 +2023,10 @@ function bandPill(band){
 }
 
 // ----- Command Center -----
-async function loadCommand(){ try{ phase3.command=await apiJSON('/api/ops/command-center'); render(); }catch(e){ console.error(e);} }
+async function loadCommand(){ return _load(phase3, 'command', '/api/ops/command-center'); }
 function renderCommandCenter(){
   if(!phase3.command){ setTimeout(loadCommand,0); return `<div class="empty-state"><div class="empty-state-icon">⚡</div><div class="empty-state-title">Loading command center…</div></div>`; }
+  if(_isLoadErr(phase3.command)) return renderLoaderError(phase3.command, '⚠️', 'Failed to load command center');
   if(!state.clientReadiness){ setTimeout(ensureReadinessLoaded,0); }
   if(!reportsState.attention){ setTimeout(loadReportAttention,0); }
   const x=phase3.command;
@@ -2022,9 +2109,10 @@ function renderAnalytics(){
   return h;
 }
 
-async function loadCapacity(){ try{ phase3.capacity=await apiJSON('/api/team/capacity'); render(); }catch(e){ console.error(e);} }
+async function loadCapacity(){ return _load(phase3, 'capacity', '/api/team/capacity'); }
 function renderCapacityTab(){
   if(!phase3.capacity){ setTimeout(loadCapacity,0); return `<div class="empty-state"><div class="empty-state-icon">⏳</div><div class="empty-state-title">Loading capacity…</div></div>`; }
+  if(_isLoadErr(phase3.capacity)) return renderLoaderError(phase3.capacity, '⚠️', 'Failed to load capacity');
   const rows=phase3.capacity.rows||[];
   let h=`<div class="card" style="padding:0;overflow:auto"><table style="min-width:1100px"><thead><tr><th>User</th><th>Band</th><th>Clients</th><th>Open</th><th>Cap</th><th>Ratio</th><th>Overdue</th><th>Awaiting Review</th><th>Blocked</th><th>Due ≤7d</th><th>Completed</th><th>Avg Days</th><th>SLA %</th></tr></thead><tbody>`;
   rows.forEach(r=>{
@@ -2034,10 +2122,12 @@ function renderCapacityTab(){
   return h;
 }
 
-async function loadWorkloadRecs(){ try{ phase3.workloadRecs=await apiJSON('/api/team/workload/recommendations'); render(); }catch(e){ console.error(e);} }
+async function loadWorkloadRecs(){ return _load(phase3, 'workloadRecs', '/api/team/workload/recommendations'); }
 function renderWorkloadTab(){
   if(!phase3.capacity){ setTimeout(loadCapacity,0); return `<div class="empty-state"><div class="empty-state-icon">⏳</div><div class="empty-state-title">Loading…</div></div>`; }
+  if(_isLoadErr(phase3.capacity)) return renderLoaderError(phase3.capacity, '⚠️', 'Failed to load capacity');
   if(!phase3.workloadRecs){ setTimeout(loadWorkloadRecs,0); }
+  if(_isLoadErr(phase3.workloadRecs)) return renderLoaderError(phase3.workloadRecs, '⚠️', 'Failed to load workload recommendations');
   const rows=phase3.capacity.rows||[];
   let h=`<div class="card"><div class="card-title">Workload Distribution</div><div style="display:grid;gap:8px">`;
   rows.forEach(r=>{
@@ -2068,9 +2158,10 @@ function renderWorkloadTab(){
   return h;
 }
 
-async function loadProductivity(){ try{ phase3.productivity=await apiJSON('/api/team/productivity?range='+phase3.range); render(); }catch(e){ console.error(e);} }
+async function loadProductivity(){ return _load(phase3, 'productivity', '/api/team/productivity?range='+phase3.range); }
 function renderProductivityTab(){
   if(!phase3.productivity){ setTimeout(loadProductivity,0); return `<div class="empty-state"><div class="empty-state-icon">📈</div><div class="empty-state-title">Loading…</div></div>`; }
+  if(_isLoadErr(phase3.productivity)) return renderLoaderError(phase3.productivity, '⚠️', 'Failed to load productivity');
   const users=phase3.productivity.users||(phase3.productivity.user?[phase3.productivity.user]:[]);
   let h=`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:16px">`;
   users.forEach(u=>{
@@ -2081,9 +2172,10 @@ function renderProductivityTab(){
   return h;
 }
 
-async function loadKpis(){ try{ phase3.kpis=await apiJSON('/api/team/kpis?range='+phase3.range); render(); }catch(e){ console.error(e);} }
+async function loadKpis(){ return _load(phase3, 'kpis', '/api/team/kpis?range='+phase3.range); }
 function renderKpiTab(){
   if(!phase3.kpis){ setTimeout(loadKpis,0); return `<div class="empty-state"><div class="empty-state-icon">📊</div><div class="empty-state-title">Loading KPIs…</div></div>`; }
+  if(_isLoadErr(phase3.kpis)) return renderLoaderError(phase3.kpis, '⚠️', 'Failed to load KPIs');
   const k=phase3.kpis; const c=k.current; const t=k.trend;
   const tile=(label,val,delta,suffix)=>`<div class="card"><div style="color:var(--text-muted);font-size:11px;text-transform:uppercase;letter-spacing:0.05em">${label}</div><div style="font-size:28px;font-weight:700;margin-top:4px">${val==null?'—':val}${suffix||''}</div><div style="margin-top:6px">${trendArrow(delta)} <span style="font-size:11px;color:var(--text-muted)">vs previous ${k.range}d</span></div></div>`;
   let h=`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px;margin-bottom:12px">`;
@@ -2098,9 +2190,10 @@ function renderKpiTab(){
   return h;
 }
 
-async function loadForecast(){ try{ phase3.forecast=await apiJSON('/api/forecast?days=30'); render(); }catch(e){ console.error(e);} }
+async function loadForecast(){ return _load(phase3, 'forecast', '/api/forecast?days=30'); }
 function renderForecastTab(){
   if(!phase3.forecast){ setTimeout(loadForecast,0); return `<div class="empty-state"><div class="empty-state-icon">🔮</div><div class="empty-state-title">Computing forecast…</div></div>`; }
+  if(_isLoadErr(phase3.forecast)) return renderLoaderError(phase3.forecast, '⚠️', 'Failed to load forecast');
   const f=phase3.forecast;
   let h='';
   if(f.warnings && f.warnings.length){
@@ -2117,9 +2210,10 @@ function renderForecastTab(){
   return h;
 }
 
-async function loadReviewQueue(){ try{ phase3.reviewQueue=await apiJSON('/api/review-queue'); render(); }catch(e){ console.error(e);} }
+async function loadReviewQueue(){ return _load(phase3, 'reviewQueue', '/api/review-queue'); }
 function renderReviewQueueTab(){
   if(!phase3.reviewQueue){ setTimeout(loadReviewQueue,0); return `<div class="empty-state"><div class="empty-state-icon">👀</div><div class="empty-state-title">Loading review queue…</div></div>`; }
+  if(_isLoadErr(phase3.reviewQueue)) return renderLoaderError(phase3.reviewQueue, '⚠️', 'Failed to load review queue');
   const r=phase3.reviewQueue;
   let h=`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px;margin-bottom:12px">`;
   h+=`<div class="card"><div style="color:var(--text-muted);font-size:11px">QUEUE DEPTH</div><div style="font-size:28px;font-weight:700">${r.queueDepth}</div></div>`;
@@ -2140,9 +2234,10 @@ function renderReviewQueueTab(){
   return h;
 }
 
-async function loadCommunication(){ try{ phase3.communication=await apiJSON('/api/clients/communication'); render(); }catch(e){ console.error(e);} }
+async function loadCommunication(){ return _load(phase3, 'communication', '/api/clients/communication'); }
 function renderCommunicationTab(){
   if(!phase3.communication){ setTimeout(loadCommunication,0); return `<div class="empty-state"><div class="empty-state-icon">💬</div><div class="empty-state-title">Loading…</div></div>`; }
+  if(_isLoadErr(phase3.communication)) return renderLoaderError(phase3.communication, '⚠️', 'Failed to load communication');
   const rows=phase3.communication.clients||[];
   let h=`<div class="card-title" style="margin-bottom:12px">💬 Client Communication (silent threshold: ${phase3.communication.silenceThresholdDays}d)</div>`;
   h+=`<div class="card" style="padding:0;overflow:auto"><table style="min-width:900px"><thead><tr><th>Client</th><th>Owner</th><th>Last Contact</th><th>Silence (days)</th><th>Last Doc Req</th><th>Pending Docs</th><th>Reminders</th><th>Open Tasks</th></tr></thead><tbody>`;
@@ -2170,18 +2265,16 @@ function slaChip(s){
 }
 
 async function loadCalendar(){
-  try{
-    const today=new Date(); const to=new Date(today.getTime()+90*86400000);
-    const from=phase2.calFilter.from||today.toISOString().slice(0,10);
-    const toStr=phase2.calFilter.to||to.toISOString().slice(0,10);
-    const params=new URLSearchParams({from,to:toStr});
-    if(phase2.calFilter.type) params.set('types',phase2.calFilter.type);
-    const j=await apiJSON('/api/calendar?'+params.toString());
-    phase2.calendar=j; render();
-  }catch(e){ console.error(e); }
+  const today=new Date(); const to=new Date(today.getTime()+90*86400000);
+  const from=phase2.calFilter.from||today.toISOString().slice(0,10);
+  const toStr=phase2.calFilter.to||to.toISOString().slice(0,10);
+  const params=new URLSearchParams({from,to:toStr});
+  if(phase2.calFilter.type) params.set('types',phase2.calFilter.type);
+  return _load(phase2, 'calendar', '/api/calendar?'+params.toString());
 }
 function renderCalendar(){
   if(!phase2.calendar){ setTimeout(loadCalendar,0); return `<div class="empty-state"><div class="empty-state-icon">📅</div><div class="empty-state-title">Loading calendar…</div></div>`; }
+  if(_isLoadErr(phase2.calendar)) return renderLoaderError(phase2.calendar, '⚠️', 'Failed to load calendar');
   const ev=phase2.calendar.events||[];
   // Group by month
   const groups={};
@@ -2204,9 +2297,10 @@ function renderCalendar(){
   return h;
 }
 
-async function loadExceptions(){ try{ phase2.exceptions=await apiJSON('/api/exceptions'); render(); }catch(e){ console.error(e); } }
+async function loadExceptions(){ return _load(phase2, 'exceptions', '/api/exceptions'); }
 function renderExceptions(){
   if(!phase2.exceptions){ setTimeout(loadExceptions,0); return `<div class="empty-state"><div class="empty-state-icon">🚨</div><div class="empty-state-title">Loading exceptions…</div></div>`; }
+  if(_isLoadErr(phase2.exceptions)) return renderLoaderError(phase2.exceptions, '⚠️', 'Failed to load exceptions');
   const x=phase2.exceptions;
   const card=(title,rows,renderer,color)=>{
     let inner=`<div class="card-title" style="color:${color||'var(--text-primary)'}">${title} (${rows.length})</div>`;
@@ -2227,9 +2321,10 @@ function renderExceptions(){
   return h;
 }
 
-async function loadHealth(){ try{ phase2.health=await apiJSON('/api/health/summary'); render(); }catch(e){ console.error(e); } }
+async function loadHealth(){ return _load(phase2, 'health', '/api/health/summary'); }
 function renderHealthBoard(){
   if(!phase2.health){ setTimeout(loadHealth,0); return `<div class="empty-state"><div class="empty-state-icon">💚</div><div class="empty-state-title">Computing client health…</div></div>`; }
+  if(_isLoadErr(phase2.health)) return renderLoaderError(phase2.health, '⚠️', 'Failed to load client health');
   const rows=phase2.health.scores||[];
   let h=`<div class="card-title" style="margin-bottom:12px">💚 Client Health (${rows.length})</div>`;
   h+=`<div class="card" style="padding:0;overflow:auto"><table style="min-width:700px"><thead><tr><th>Client</th><th>Score</th><th>Band</th><th>Top Factors</th></tr></thead><tbody>`;
@@ -2346,9 +2441,10 @@ function renderDocumentsView(){
   return h;
 }
 
-async function loadOps(){ return _once('ops', async()=>{ try{ const j=await apiJSON('/api/manager/dashboard'); taskState.ops=j; render(); }catch(e){ console.error(e); } }); }
+async function loadOps(){ return _once('ops', ()=>_load(taskState,'ops','/api/manager/dashboard')); }
 function renderManagerDashboard(){
   if(!taskState.ops){ setTimeout(loadOps,0); return `<div class="empty-state"><div class="empty-state-icon">📊</div><div class="empty-state-title">Loading manager dashboard…</div></div>`; }
+  if(_isLoadErr(taskState.ops)) return renderLoaderError(taskState.ops, '⚠️', 'Failed to load manager dashboard');
   const o=taskState.ops;
   const card=(title,rows,emptyMsg)=>{
     let inner=`<div class="card-title">${title} (${rows.length})</div>`;

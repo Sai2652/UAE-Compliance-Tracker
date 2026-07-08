@@ -136,23 +136,35 @@ router.put('/users/:id/reset-password', requireAuth, requireAdmin, function(req,
 var COMPLIANCE_FIELDS = ['vatRegistrationDate','vatFrequency','vatCertificate','ctRegistrationDate','financialYearEnd','incorporationDate','ctCertificate','assignedTeam'];
 function complianceFingerprint(c) { if (!c) return ''; return COMPLIANCE_FIELDS.map(function(k){ return k + '=' + (c[k] == null ? '' : c[k]); }).join('|'); }
 
-router.get('/tracker', requireAuth, function(req, res) { res.json(tracker.getData()); });
-router.put('/tracker', requireAuth, function(req, res) {
+// GET /tracker — members only see clients assigned to them. Without this
+// filter, any authenticated member could hit /api/tracker directly and read
+// the full client roster; the frontend's getVisibleClients() masked the leak
+// but didn't close it.
+router.get('/tracker', requireAuth, function(req, res) {
+  var data = tracker.getData();
+  if (req.user.role !== 'admin') {
+    var mine = (data.clients || []).filter(function(c) { return c.assignedTeam === req.user.name; });
+    return res.json({ clients: mine, teamMembers: data.teamMembers });
+  }
+  res.json(data);
+});
+router.put('/tracker', requireAuth, asyncH(async function(req, res) {
   var clients = req.body.clients; var teamMembers = req.body.teamMembers; var user = req.user;
   var existing = tracker.getData();
+  var savePromise;
   if (user.role === 'member') {
-    var merged = existing.clients.map(function(ec) { 
-      var updated = clients.find(function(c) { return c.id === ec.id; }); 
+    var merged = existing.clients.map(function(ec) {
+      var updated = clients.find(function(c) { return c.id === ec.id; });
       if (updated && ec.assignedTeam === user.name) {
         // Log specific changes
         if (JSON.stringify(ec) !== JSON.stringify(updated)) {
           activity.log(user.id, user.name, 'client_updated', 'Updated: ' + ec.name);
         }
-        return updated; 
+        return updated;
       }
-      return ec; 
+      return ec;
     });
-    tracker.saveData(merged, existing.teamMembers, user.name);
+    savePromise = tracker.saveData(merged, existing.teamMembers, user.name);
     activity.log(user.id, user.name, 'data_save', 'Member saved assigned clients');
   } else {
     // Log new/removed clients
@@ -167,8 +179,12 @@ router.put('/tracker', requireAuth, function(req, res) {
         activity.log(user.id, user.name, 'client_updated', c.name);
       }
     });
-    tracker.saveData(clients || [], teamMembers || [], user.name);
+    savePromise = tracker.saveData(clients || [], teamMembers || [], user.name);
   }
+  // Await the S3 write BEFORE responding. If it throws, asyncH catches it
+  // and returns a 500 — the frontend can then surface the failure instead
+  // of showing a success and losing the data on the next cold start.
+  await savePromise;
   // Phase 2: regenerate obligations for any client whose compliance settings changed.
   try {
     var after = tracker.getData().clients || [];
@@ -184,7 +200,7 @@ router.put('/tracker', requireAuth, function(req, res) {
     }
   } catch (e) { console.error('[obligationEngine] hook error:', e.message); }
   res.json({ ok: true });
-});
+}));
 
 router.get('/activity', requireAuth, function(req, res) { 
   var all = activity.getRecent(parseInt(req.query.limit) || 50);

@@ -214,9 +214,21 @@ const users = {
 // ---------- tracker (clients + team) ----------
 const tracker = {
   getData() { return { clients: store.trackerData.clients, teamMembers: store.trackerData.teamMembers }; },
+  // Returns a Promise now so callers can await the S3 write and surface a
+  // real error to the client. The in-memory update is still synchronous —
+  // reads immediately after this call see the new data — but the promise
+  // only resolves once tracker_state.json has actually been written to S3.
+  //
+  // Why: the previous fire-and-forget version returned {ok:true} the moment
+  // it mutated in-memory state, before the S3 PUT completed. If the S3
+  // write failed (throttle, perms, network), only a console.warn was
+  // emitted; the frontend thought the save succeeded. On the next Lambda
+  // cold start, hydrate() reloaded the OLD blob from S3 and the user's
+  // import silently vanished. Awaiting it here means the PUT /api/tracker
+  // handler can 500 on write failure and the UI can retry / alert.
   saveData(clients, teamMembers, updatedBy) {
     store.trackerData = { clients: clients, teamMembers: teamMembers, updatedAt: new Date().toISOString(), updatedBy: updatedBy };
-    fireAndForget(TrackerStateRepo.save(clients, teamMembers, updatedBy), 'saveData');
+    return TrackerStateRepo.save(clients, teamMembers, updatedBy);
   }
 };
 

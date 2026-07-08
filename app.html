@@ -230,14 +230,33 @@ async function loadData(){
   return null;
 }
 
+// Serialize saves so a fast sequence of state mutations (e.g. bulk-import
+// finish + a follow-up edit) can't race and clobber each other's blobs.
+let _savePending = Promise.resolve();
 async function saveData(d){
-  try {
-    await fetch('/api/tracker', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(d)
-    });
-  } catch(e) { console.warn('Save error:', e); }
+  const attempt = _savePending.then(async ()=>{
+    let r;
+    try {
+      r = await fetch('/api/tracker', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(d)
+      });
+    } catch(networkErr){
+      console.error('Save network error:', networkErr);
+      alert('Could not reach the server to save your changes. Your data has NOT been saved. Check your connection and try again.');
+      throw networkErr;
+    }
+    if(!r.ok){
+      let msg = 'HTTP ' + r.status;
+      try { const j = await r.json(); if(j && j.error) msg = j.error; } catch(_){}
+      console.error('Save failed:', msg);
+      alert('Save failed: ' + msg + '\n\nYour changes are NOT saved. Please retry or refresh — the previous version is still safely stored.');
+      throw new Error(msg);
+    }
+  });
+  _savePending = attempt.catch(()=>{}); // don't let a rejection poison the chain
+  return attempt;
 }
 
 function persistState(){ saveData({ clients: state.clients, teamMembers: state.teamMembers }); }

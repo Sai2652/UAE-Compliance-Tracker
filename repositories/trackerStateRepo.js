@@ -45,23 +45,23 @@ const TrackerStateRepo = {
     const c = getS3();
     const bucket = bucketName();
     if (!c || !bucket) return;
-    try {
-      const { PutObjectCommand } = require('@aws-sdk/client-s3');
-      const body = JSON.stringify({
-        clients: clients || [],
-        teamMembers: teamMembers || [],
-        updatedAt: new Date().toISOString(),
-        updatedBy: updatedBy || null
-      });
-      await c.send(new PutObjectCommand({
-        Bucket: bucket,
-        Key: KEY,
-        Body: body,
-        ContentType: 'application/json'
-      }));
-    } catch (e) {
-      console.warn('[trackerStateRepo] save:', e.message);
-    }
+    // No try/catch: let the S3 error propagate so the PUT /api/tracker
+    // handler can 500 and the frontend can surface the failure. Silent
+    // swallowing here was the reason imported clients could vanish on
+    // the next cold start.
+    const { PutObjectCommand } = require('@aws-sdk/client-s3');
+    const body = JSON.stringify({
+      clients: clients || [],
+      teamMembers: teamMembers || [],
+      updatedAt: new Date().toISOString(),
+      updatedBy: updatedBy || null
+    });
+    await c.send(new PutObjectCommand({
+      Bucket: bucket,
+      Key: KEY,
+      Body: body,
+      ContentType: 'application/json'
+    }));
   }
 };
 

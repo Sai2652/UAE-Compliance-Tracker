@@ -116,6 +116,28 @@ function periodTagFor(date, recurrence) {
   return `${y}-${String(d.getUTCMonth()+1).padStart(2,'0')}-${String(d.getUTCDate()).padStart(2,'0')}`;
 }
 
+// Read a namespaced field out of a nested client bag: ('ct', 'ctDueDate')
+// resolves client.ct.dueDate. The UI writes camelCase keys inside client.vat /
+// client.ct, while the generation rules name their triggers with the namespace
+// prefixed ('ctDueDate'), so strip the prefix and restore camelCase to match.
+//
+// The previous version lowercased the whole remainder ('duedate') and then
+// indexed with the unstripped field name — two separate bugs, so this fallback
+// could never fire even though every client has client.ct.dueDate set.
+function readNested(client, ns, field) {
+  const bag = client[ns];
+  if (!bag || typeof bag !== 'object') return null;
+  const prefix = new RegExp('^' + ns, 'i');
+  if (!prefix.test(field)) return null;
+  const rest = field.replace(prefix, '');
+  if (!rest) return null;
+  const key = rest.charAt(0).toLowerCase() + rest.slice(1);
+  const val = bag[key] !== undefined ? bag[key] : bag[rest];
+  // Only scalars are dates. client.vat.periods / returnDates are arrays and
+  // must not leak into new Date().
+  return (typeof val === 'string' || typeof val === 'number') ? val : null;
+}
+
 // Gather candidate compliance deadlines from a client object. We look at the
 // trigger_field defined per rule plus a few common fallback fields so the
 // generator works against the existing client schema without requiring it to
@@ -125,8 +147,8 @@ function readDeadline(client, field) {
   // direct match
   if (client[field]) return client[field];
   // some clients store under nested vat/ct objects
-  if (client.vat && field.toLowerCase().includes('vat') && client.vat[field.replace(/^vat/i,'').toLowerCase()]) return client.vat[field];
-  if (client.ct && field.toLowerCase().includes('ct') && client.ct[field.replace(/^ct/i,'').toLowerCase()]) return client.ct[field];
+  const nested = readNested(client, 'vat', field) || readNested(client, 'ct', field);
+  if (nested) return nested;
   // generic fallbacks
   const fallback = {
     vatDueDate:   client.vatReturnDue || client.vatDue || null,

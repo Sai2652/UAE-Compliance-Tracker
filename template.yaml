@@ -122,6 +122,11 @@ Resources:
         - DynamoDBCrudPolicy: { TableName: !Sub '${DdbPrefix}TaskGenerationRules' }
         - DynamoDBCrudPolicy: { TableName: !Sub '${DdbPrefix}Users' }
         - DynamoDBCrudPolicy: { TableName: !Sub '${DdbPrefix}ActivityLog' }
+        # recomputeAllPriorities() reads both of these on every rescore:
+        # config.getAll() scans PriorityConfig, documents.list() scans Documents.
+        # Neither was granted, so every hourly run died on AccessDeniedException.
+        - DynamoDBCrudPolicy: { TableName: !Sub '${DdbPrefix}PriorityConfig' }
+        - DynamoDBCrudPolicy: { TableName: !Sub '${DdbPrefix}Documents' }
         - S3ReadPolicy: { BucketName: !Ref S3Bucket }
       Events:
         Rescore:

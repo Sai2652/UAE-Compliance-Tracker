@@ -143,6 +143,25 @@ function vatMonthsPerPeriod(vat, rows) {
   return 3;
 }
 
+// Recover the tax period end from a stored VAT due date.
+//
+// Do NOT do this by subtracting 28 days. The UI generates due dates as the 28th
+// of the month following the period end and then pushes them to the next UAE
+// business day (app.html nextBusinessDay), so a stored due date can sit on the
+// 29th, 30th, 1st or 2nd. Subtracting 28 from those lands mid-month and shifts
+// the whole period — measured against generated data, roughly a third of rows.
+//
+// The 28th is the real anchor, so recover it: it's the latest 28th at or before
+// the stored due date. The period then ends on the last day of the month before.
+function vatPeriodEndFromDue(due) {
+  const d = toDate(due);
+  if (!d) return null;
+  const y = d.getUTCFullYear(), m = d.getUTCMonth();
+  let anchor = new Date(Date.UTC(y, m, 28));
+  if (anchor > d) anchor = new Date(Date.UTC(y, m - 1, 28));
+  return lastDayOfMonth(anchor.getUTCFullYear(), anchor.getUTCMonth() - 1);
+}
+
 function vatObligations(client, opts) {
   opts = opts || {};
   if (!client || !isApplicable(client.vatApplicable)) return [];
@@ -155,8 +174,11 @@ function vatObligations(client, opts) {
   for (const r of rows) {
     const due = toDate(r.dueDate);
     if (!due) continue;
-    const periodEnd = addDays(due, -VAT_FILING_LAG_DAYS);
-    const periodStart = addDays(shiftMonths(periodEnd, -months), 1);
+    // Rows written by the certificate reader carry the exact period. Older rows
+    // and hand-entered ones don't, so fall back to recovering it from the due date.
+    const periodEnd = toDate(r.periodEnd) || vatPeriodEndFromDue(due);
+    if (!periodEnd) continue;
+    const periodStart = toDate(r.periodStart) || addDays(shiftMonths(periodEnd, -months), 1);
     const filed = r.filingStatus === 'Completed';
     out.push({
       obligationType: 'VAT_Return',
@@ -168,7 +190,7 @@ function vatObligations(client, opts) {
       paymentDeadline: iso(due),
       status: filed ? 'filed' : 'pending',
       metadata: {
-        derivedFrom: 'vat.returnDates',
+        derivedFrom: r.periodEnd ? 'vat.returnDates (explicit period)' : 'vat.returnDates (period recovered from due date)',
         monthsPerPeriod: months,
         filingStatus: r.filingStatus || null,
         paymentStatus: r.paymentStatus || null,
@@ -204,5 +226,6 @@ module.exports = {
   // exported for tests
   _shiftMonths: shiftMonths,
   _vatMonthsPerPeriod: vatMonthsPerPeriod,
+  _vatPeriodEndFromDue: vatPeriodEndFromDue,
   _iso: iso
 };

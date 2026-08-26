@@ -3001,6 +3001,10 @@ function loadPdfJs(){
 
 function parseDMY(s){if(!s)return null;const m=s.match(/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/);if(!m)return null;return`${m[3]}-${m[2].padStart(2,'0')}-${m[1].padStart(2,'0')}`;}
 
+// Format a Date built with new Date(y,m,d) — i.e. local midnight. toISOString()
+// would convert to UTC first and, at UTC+4, hand back the previous day.
+function fmtLocalDate(d){if(!d)return null;return`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;}
+
 function parseDateRange(s){if(!s)return null;const parts=s.split(/\s*[-–]\s*/);if(parts.length===2)return{from:parseDMY(parts[0].trim()),to:parseDMY(parts[1].trim())};return null;}
 
 function parseTaxPeriods(text){
@@ -3057,12 +3061,17 @@ function generateReturnDates(taxPeriods, regDate, yearsAhead=2){
   taxPeriods.forEach(tp=>{
     for(let yr=regD.getFullYear();yr<=endDate.getFullYear();yr++){
       let ed=tp.endDay;
-      // Handle Feb end day
-      if(tp.endMonth===2&&ed>28)ed=new Date(yr,1,29).getDate()===29?29:28;
 
       // For cross-year periods (Dec-Feb), end year is next year
       let endYr=yr;
       if(tp.endMonth<tp.startMonth) endYr=yr+1;
+
+      // A February-ending tax period ends on the last day of February — the
+      // 29th in a leap year. Certificates state the recurring pattern as "28th
+      // February" whatever the year, so normalise instead of taking it
+      // literally. Checked against endYr, not yr: a Dec-Feb period starting
+      // Dec 2027 ends in Feb 2028, and it's 2028 that decides the leap year.
+      if(tp.endMonth===2&&ed>=28)ed=new Date(endYr,1,29).getDate()===29?29:28;
 
       const pEnd=new Date(endYr,tp.endMonth-1,ed);
       const pStart=new Date(yr,tp.startMonth-1,1);
@@ -3087,6 +3096,12 @@ function generateReturnDates(taxPeriods, regDate, yearsAhead=2){
 
       results.push({
         period:label,
+        // Store the period explicitly. The due date alone isn't enough to work
+        // back from: it's the 28th pushed to the next business day, so it can
+        // land on the 29th, 30th, 1st or 2nd, and the server would otherwise
+        // have to guess the period from it.
+        periodStart:fmtLocalDate(pStart),
+        periodEnd:fmtLocalDate(pEnd),
         dueDate:actualDue,
         fy:fy,
         filingStatus:"Not Started",
@@ -3157,7 +3172,7 @@ async function extractCertificateData(file,type,clientId){
       if(taxPeriods.length>0&&regDate){
         const rds=generateReturnDates(taxPeriods,regDate,2);
         let added=0;
-        rds.forEach(rd=>{if(!sc.vat.returnDates.some(e=>e.period===rd.period)){sc.vat.returnDates.push({id:uid(),period:rd.period,dueDate:rd.dueDate,fy:rd.fy||"",filingStatus:"Not Started",paymentStatus:"Not Started"});added++;}});
+        rds.forEach(rd=>{if(!sc.vat.returnDates.some(e=>e.period===rd.period)){sc.vat.returnDates.push({id:uid(),period:rd.period,periodStart:rd.periodStart,periodEnd:rd.periodEnd,dueDate:rd.dueDate,fy:rd.fy||"",filingStatus:"Not Started",paymentStatus:"Not Started"});added++;}});
         sc.vat.returnDates.sort((a,b)=>a.dueDate.localeCompare(b.dueDate));
         markUpdated(sc);
         let msg=`✅ Extracted <b>${added}</b> VAT return period${added!==1?'s':''}`;
@@ -3168,7 +3183,9 @@ async function extractCertificateData(file,type,clientId){
         updateUI();
       }else if(firstDue&&firstPeriod){
         const lbl=`First Return (${fmtDate(firstPeriod.from)} - ${fmtDate(firstPeriod.to)})`;
-        if(!sc.vat.returnDates.some(e=>e.dueDate===firstDue)){sc.vat.returnDates.push({id:uid(),period:lbl,dueDate:firstDue,filingStatus:"Not Started",paymentStatus:"Not Started"});sc.vat.returnDates.sort((a,b)=>a.dueDate.localeCompare(b.dueDate));markUpdated(sc);}
+        // A first VAT return period is frequently not a standard length, so the
+        // explicit dates matter here more than anywhere — they can't be inferred.
+        if(!sc.vat.returnDates.some(e=>e.dueDate===firstDue)){sc.vat.returnDates.push({id:uid(),period:lbl,periodStart:firstPeriod.from,periodEnd:firstPeriod.to,dueDate:firstDue,filingStatus:"Not Started",paymentStatus:"Not Started"});sc.vat.returnDates.sort((a,b)=>a.dueDate.localeCompare(b.dueDate));markUpdated(sc);}
         let msg=`✅ First VAT return extracted · Due: <b>${fmtDate(firstDue)}</b>`;
         if(trn)msg+=` · TRN: <b>${esc(trn)}</b>`;
         msg+=`<br><span style="font-size:11px;color:var(--amber)">⚠ Could not parse full period pattern — add remaining periods manually.</span>`;

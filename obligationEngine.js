@@ -2,17 +2,21 @@
 // settings and synchronizes them into compliance_obligations + compliance_tasks.
 //
 // Design:
-//   • Pure period math lives in intelligence.js.
-//   • This module does the I/O: read clients (in-memory tracker), compute
-//     periods forward N months, upsert into compliance_obligations
-//     (deduped by source_key), then ensure a compliance_task exists per
-//     obligation that is within its lead-time window.
+//   • Period derivation lives in services/clientShape.js, which translates the
+//     nested client record the UI maintains into concrete obligations. It used
+//     to read flat fields (client.vatRegistrationDate, client.financialYearEnd)
+//     that no client has ever had, so every sweep returned zero.
+//   • This module does the I/O: read clients (in-memory tracker), upsert into
+//     compliance_obligations (deduped by source_key), then ensure a
+//     compliance_task exists per obligation inside its lead-time window —
+//     adopting a task the rule-based generator already made rather than
+//     creating a second copy of it.
 //   • Idempotent. Safe to run repeatedly. Re-running with changed client
 //     settings overwrites future obligations via deleteForClient() + upsert.
 
-const intelligence = require('./intelligence');
 const { obligations } = require('./obligations');
 const compliance = require('./compliance');
+const shape = require('./services/clientShape');
 const { tracker, activity, store } = require('./database');
 // Lazy require to avoid circular deps at module-load.
 function workflowService() { return require('./services/workflowService'); }
@@ -60,62 +64,61 @@ function leadDaysFor(obligationType) {
 
 async function syncObligationsForClient(client, opts = {}) {
   if (!client) return { upserted: 0 };
-  const today = new Date();
-  const toDate = new Date(today.getTime() + FORWARD_MONTHS * 30 * DAY);
   const out = [];
 
-  // VAT
-  if (client.vatRegistrationDate) {
-    const periods = intelligence.vatPeriodsBetween(
-      client.vatRegistrationDate,
-      client.vatFrequency || 'Quarterly',
-      today, toDate
-    );
-    for (const p of periods) {
-      const sourceKey = buildSourceKey(client.id, 'VAT_Return', p.period_label);
-      const row = await obligations.upsert({
-        clientId: client.id, clientName: client.name,
-        obligationType: 'VAT_Return',
-        periodLabel: p.period_label,
-        periodStart: p.period_start, periodEnd: p.period_end,
-        filingDeadline: p.filing_deadline,
-        paymentDeadline: p.payment_deadline,
-        sourceKey,
-        metadata: { frequency: client.vatFrequency || 'Quarterly' }
-      });
-      out.push(row);
-    }
-  }
+  // Derive the client's real obligations from the record the UI maintains.
+  // See services/clientShape.js for why this goes through an adapter instead of
+  // reading client.vatRegistrationDate / client.financialYearEnd directly —
+  // those fields don't exist on any client and never did.
+  const derived = shape.allObligations(client, {
+    today: opts.today || new Date(),
+    forwardMonths: FORWARD_MONTHS
+  });
 
-  // CT
-  if (client.ctRegistrationDate || client.incorporationDate || client.financialYearEnd) {
-    const periods = intelligence.ctPeriodsBetween(
-      client.incorporationDate || client.ctRegistrationDate || null,
-      client.financialYearEnd || '12-31',
-      today, toDate
-    );
-    for (const p of periods) {
-      const sourceKey = buildSourceKey(client.id, 'CT_Return', p.period_label);
-      const row = await obligations.upsert({
-        clientId: client.id, clientName: client.name,
-        obligationType: 'CT_Return',
-        periodLabel: p.period_label,
-        periodStart: p.period_start, periodEnd: p.period_end,
-        filingDeadline: p.filing_deadline,
-        paymentDeadline: p.payment_deadline,
-        sourceKey,
-        metadata: Object.assign({ fyEnd: client.financialYearEnd || '12-31' }, p.metadata || {})
-      });
-      out.push(row);
-    }
+  for (const p of derived) {
+    const sourceKey = buildSourceKey(client.id, p.obligationType, p.periodLabel);
+    const row = await obligations.upsert({
+      clientId: client.id, clientName: client.name,
+      obligationType: p.obligationType,
+      periodLabel: p.periodLabel,
+      periodStart: p.periodStart, periodEnd: p.periodEnd,
+      filingDeadline: p.filingDeadline,
+      paymentDeadline: p.paymentDeadline,
+      status: p.status,
+      sourceKey,
+      metadata: p.metadata || {}
+    });
+    out.push(row);
   }
 
   return { upserted: out.length, obligations: out };
 }
 
 // Walk obligations within their lead window and ensure a task exists for each.
+//
+// Tasks can arrive from two places: the rule-based generator in taskEngine
+// (source 'generator', key 'gen:<client>:<type>:<period>') and from here
+// (source 'obligation', key 'task:obl:<id>'). The two key schemes can't see
+// each other, so without a guard the first obligation sweep would create a
+// second copy of every task the generator already made. Match on what actually
+// identifies the work — same client, same task type, same statutory deadline —
+// and adopt the existing task instead of duplicating it.
 async function ensureTasksForObligations(client, obligationRows) {
-  let created = 0;
+  let created = 0, adopted = 0;
+
+  // One query per client, reused across that client's obligations.
+  let existingForClient = null;
+  async function openTasksForClient() {
+    if (existingForClient) return existingForClient;
+    try {
+      existingForClient = await compliance.tasks.list({ clientId: client.id, limit: 1000 }) || [];
+    } catch (e) {
+      console.error('[obligationEngine] task lookup:', e.message);
+      existingForClient = [];
+    }
+    return existingForClient;
+  }
+
   for (const o of obligationRows) {
     const lead = leadDaysFor(o.obligation_type);
     const deadline = new Date(o.filing_deadline);
@@ -126,13 +129,45 @@ async function ensureTasksForObligations(client, obligationRows) {
     const existing = await compliance.tasks.findBySourceKey(sourceKey);
     if (existing) continue;
 
+    // Already covered by a task from the other source? Link it to this
+    // obligation so the period label and target dates aren't lost, then move on.
+    const wantType = taskTypeFor(o.obligation_type);
+    const dupe = (await openTasksForClient()).find(t =>
+      t.task_type === wantType &&
+      t.compliance_deadline === o.filing_deadline &&
+      t.status !== 'completed'
+    );
+    if (dupe) {
+      if (!dupe.obligation_id) {
+        try {
+          await compliance.tasks.update(dupe.id, {
+            obligation_id: o.id,
+            metadata: Object.assign({}, dupe.metadata || {}, {
+              obligation_id: o.id, period_label: o.period_label, adopted: true
+            })
+          });
+        } catch (e) { console.error('[obligationEngine] adopt:', e.message); }
+      }
+      adopted++;
+      continue;
+    }
+
     const assignee = resolveAssignee(client.assignedTeam);
     const dueDate = new Date(deadline.getTime() - 1 * DAY).toISOString().slice(0, 10);
+
+    // Keep the in-sweep cache honest so two obligations sharing a deadline
+    // (same type, e.g. a corrected period) can't both create a task.
+    if (existingForClient) {
+      existingForClient.push({
+        task_type: wantType, compliance_deadline: o.filing_deadline,
+        status: 'not_started', obligation_id: o.id
+      });
+    }
 
     await compliance.tasks.create({
       clientId: client.id,
       clientName: client.name,
-      taskType: taskTypeFor(o.obligation_type),
+      taskType: wantType,
       title: o.obligation_type.replace(/_/g, ' ') + ' ' + o.period_label,
       assignedUserId: assignee.id,
       assignedUserName: assignee.name,
@@ -167,7 +202,7 @@ async function ensureTasksForObligations(client, obligationRows) {
     }
     created++;
   }
-  return created;
+  return { created, adopted };
 }
 
 async function regenerateForClient(clientId) {
@@ -177,23 +212,29 @@ async function regenerateForClient(clientId) {
   // Drop future, non-filed obligations so changes to settings take effect.
   await obligations.deleteForClient(client.id, new Date().toISOString().slice(0, 10));
   const { obligations: rows } = await syncObligationsForClient(client);
-  const created = await ensureTasksForObligations(client, rows);
-  return { obligations: rows.length, tasksCreated: created };
+  const { created, adopted } = await ensureTasksForObligations(client, rows);
+  return { obligations: rows.length, tasksCreated: created, tasksAdopted: adopted };
 }
 
 async function runFullSweep() {
   const { clients } = tracker.getData();
-  let oblCount = 0, taskCount = 0;
+  let oblCount = 0, taskCount = 0, adoptCount = 0;
   for (const c of (clients || [])) {
     const { obligations: rows } = await syncObligationsForClient(c);
     oblCount += rows.length;
-    taskCount += await ensureTasksForObligations(c, rows);
+    const r = await ensureTasksForObligations(c, rows);
+    taskCount += r.created;
+    adoptCount += r.adopted;
   }
-  if (oblCount || taskCount) {
-    activity.log(0, 'system', 'obligations_synced',
-      `Synced ${oblCount} obligations, created ${taskCount} task(s) across ${(clients || []).length} client(s)`);
-  }
-  return { obligations: oblCount, tasksCreated: taskCount, clients: (clients || []).length };
+  // Log every sweep, including the empty ones. The silent zero-result sweep is
+  // exactly what hid this engine being broken for seven weeks.
+  activity.log(0, 'system', 'obligations_synced',
+    `Synced ${oblCount} obligation(s), created ${taskCount} task(s), linked ${adoptCount} existing across ${(clients || []).length} client(s)`);
+  console.log(`[obligationEngine] sweep: ${oblCount} obligations, ${taskCount} tasks created, ${adoptCount} adopted, ${(clients || []).length} clients`);
+  return {
+    obligations: oblCount, tasksCreated: taskCount,
+    tasksAdopted: adoptCount, clients: (clients || []).length
+  };
 }
 
 function startScheduler() {

@@ -1,5 +1,11 @@
 <!DOCTYPE html>
-<html lang="en">
+<!-- data-anyah-dashboard must be in the static markup, not set from script.
+     The Anyah Companion extension's bridge.js and bridge-main.js both run at
+     document_start and return immediately unless this attribute is already on
+     the root element. An inline script runs too late, so setting it there means
+     the extension has already given up and Launch and fill silently degrades to
+     just opening the tab. -->
+<html lang="en" data-anyah-dashboard="uae-compliance-tracker">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -218,7 +224,10 @@ const DEFAULT_PORTALS=["FTA Portal","Zoho Books"];
 // Starting URLs for the portals we ship by default. Each credential stores its
 // own editable url, so these are only a first guess — FTA in particular moves
 // its login page around, and the field is there to be corrected.
-const PORTAL_URLS={"FTA Portal":"https://eservices.tax.gov.ae/","Zoho Books":"https://books.zoho.com/"};
+// EmaraTax lands on #/Logon, which offers UAE PASS and a "Login here" link.
+// The email/password form mounts in place when that link is clicked and the FTA
+// gives it no URL of its own, so this is as close as a link can get.
+const PORTAL_URLS={"FTA Portal":"https://eservices.tax.gov.ae/#/Logon","Zoho Books":"https://books.zoho.com/"};
 function portalUrlFor(lg){return (lg&&lg.url)||PORTAL_URLS[lg&&lg.name]||"";}
 
 // ---- Launch & fill -------------------------------------------------------
@@ -235,7 +244,11 @@ function portalUrlFor(lg){return (lg&&lg.url)||PORTAL_URLS[lg&&lg.name]||"";}
 //
 // The extension fills the fields and stops. It does not press Login — the FTA
 // portal has a captcha, and Anyah made the same call for the same reason.
-document.documentElement.setAttribute('data-anyah-dashboard','uae-compliance-tracker');
+//
+// The data-anyah-dashboard marker the extension looks for is declared on the
+// <html> tag in the static markup above — it cannot be set from here, because
+// the extension's content scripts read it at document_start, before any inline
+// script has run.
 function extensionPresent(){return !!window.__ANYAH_EXT__;}
 
 function launchPortal(cid,idx){
@@ -257,7 +270,16 @@ function launchPortal(cid,idx){
   }
 
   window.postMessage({source:'anyah-dashboard',type:'ANYAH_LAUNCH',payload:{url:url,username:lg.username||'',password:lg.password||''}},window.location.origin);
-  say(`Opening <b>${esc(lg.name)}</b> and filling the credentials. Solve the captcha and press Login yourself.`);
+
+  // EmaraTax opens on a UAE PASS screen that has no email/password fields at
+  // all — they only mount after "Login here" is clicked, and the FTA gives that
+  // view no URL of its own, so we can't land on it directly. The extension
+  // watches the page for five minutes, so the fields fill the moment they
+  // appear; the user just needs to know to click through first.
+  const isEmaraTax=/tax\.gov\.ae/i.test(url);
+  say(isEmaraTax
+    ? `Opening <b>${esc(lg.name)}</b>. On the FTA page click <b>“Login here”</b> under “Non UAE PASS users may” — the email and password fill themselves as soon as that form appears. Then enter the security code and press Login.`
+    : `Opening <b>${esc(lg.name)}</b> and filling the credentials. Solve any captcha and press Login yourself.`);
 }
 
 const STORAGE_KEY="uae_compliance_v4";
@@ -3075,7 +3097,7 @@ function renderLogins(sc,scm){
       h+=`<div style="margin-top:8px"><div class="form-label" style="font-size:9px">Portal URL</div><input class="form-input" style="font-size:12px;padding:5px 8px" value="${esc(purl)}" placeholder="https://..." data-login-field="url" data-login-idx="${i}" data-cid="${sc.id}"></div>`;
       h+=`<div style="margin-top:8px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
         <button class="btn btn-sm btn-primary" data-action="launchPortal" data-idx="${i}" data-cid="${sc.id}"${purl&&lg.username?'':' disabled title="Needs a portal URL and a username"'}>🚀 Launch &amp; fill</button>
-        <span style="font-size:10px;color:var(--text-muted)">Opens the portal and fills these credentials. You still solve the captcha and press Login.</span>
+        <span style="font-size:10px;color:var(--text-muted)">Opens the portal and fills these credentials. You still solve the captcha and press Login.${/tax\.gov\.ae/i.test(purl)?' On EmaraTax, click “Login here” first.':''}</span>
       </div>`;
       h+=`<div id="launchNote_${sc.id}_${i}" style="display:none;margin-top:6px"></div>`;
       if(lg.createdAt)h+=`<div class="cred-meta">Created: ${fmtDateTime(lg.createdAt)}${lg.lastModified&&lg.lastModified!==lg.createdAt?` · Modified: ${fmtDateTime(lg.lastModified)}`:''}</div>`;

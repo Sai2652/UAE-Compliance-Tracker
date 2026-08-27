@@ -1318,6 +1318,13 @@ function periodSelector(){
   h+=`<select class="form-input" id="rp-value" style="min-width:130px">`;
   values.forEach(v=>{ h+=`<option value="${v}" ${v===reportsState.value?'selected':''}>${v}</option>`; });
   h+=`</select>`;
+  // This wrapper used to be left open. The caller's two closing tags then
+  // landed one level too shallow, so the reports header flex row never closed
+  // and every section of the report below it became a flex item inside it —
+  // the tile grid collapsed to its 170px minimum and stacked into a narrow
+  // column, leaving the page looking blank. It broke all seven report tabs
+  // that show this selector.
+  h+=`</div>`;
   return h;
 }
 

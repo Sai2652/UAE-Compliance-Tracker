@@ -251,16 +251,32 @@ const EscalationEventsRepo = {
   },
 
   async hasOpenFor(taskId, ruleId) {
-    const out = await ddb().send(new QueryCommand({
-      TableName: tbl('EscalationEvents'),
-      IndexName: 'task-index',
-      KeyConditionExpression: '#t = :t',
-      FilterExpression: 'attribute_exists(open_partition) AND #r = :r',
-      ExpressionAttributeNames: { '#t': 'task_id', '#r': 'rule_id' },
-      ExpressionAttributeValues: { ':t': Number(taskId), ':r': Number(ruleId) },
-      Limit: 1
-    }));
-    return (out.Items || []).length > 0;
+    // No Limit here, deliberately. DynamoDB applies Limit to the items it READS
+    // and only then runs the FilterExpression, so Limit:1 read a single event
+    // for the task and discarded it whenever it belonged to a different rule —
+    // reporting "no open event" while one existed further down the partition.
+    // The escalation sweep then re-escalated the same task every hour: 39 tasks
+    // reached escalation_level 17 and logged 663 events for what should have
+    // been 2 each.
+    //
+    // A task's event count is bounded by the number of rules, so paging the
+    // whole partition is cheap and correct.
+    const c = ddb();
+    let ExclusiveStartKey;
+    do {
+      const out = await c.send(new QueryCommand({
+        TableName: tbl('EscalationEvents'),
+        IndexName: 'task-index',
+        KeyConditionExpression: '#t = :t',
+        FilterExpression: 'attribute_exists(open_partition) AND #r = :r',
+        ExpressionAttributeNames: { '#t': 'task_id', '#r': 'rule_id' },
+        ExpressionAttributeValues: { ':t': Number(taskId), ':r': Number(ruleId) },
+        ExclusiveStartKey
+      }));
+      if ((out.Items || []).length) return true;
+      ExclusiveStartKey = out.LastEvaluatedKey;
+    } while (ExclusiveStartKey);
+    return false;
   }
 };
 

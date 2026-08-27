@@ -191,7 +191,10 @@ const MONTHS=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov",
 const ENTITY_TYPES=["FZCO (Free Zone)","FZE (Free Zone)","FZ-LLC (Free Zone)","Mainland LLC"];
 const VAT_OPTIONS=["Yes","No","Pending - Documents Awaited","Pending - Registration in Progress"];
 const FY_OPTIONS=["2023","2024","2025","2026","2027"];
-const ACCT_STATUSES=["Not Started","In Progress","Completed","Blocked"];
+// "Not Applicable" covers months outside our scope of service. calcMetrics
+// already excludes it from both the total and the pending list, so an
+// out-of-scope month never counts against a client's completion.
+const ACCT_STATUSES=["Not Started","In Progress","Completed","Blocked","Not Applicable"];
 
 // 1) NEW Document list with mandatory flags
 const DOCS_LIST=[
@@ -212,6 +215,50 @@ const DOCS_LIST=[
 
 // 3) Default login portals — only FTA & Zoho, rest are custom
 const DEFAULT_PORTALS=["FTA Portal","Zoho Books"];
+// Starting URLs for the portals we ship by default. Each credential stores its
+// own editable url, so these are only a first guess — FTA in particular moves
+// its login page around, and the field is there to be corrected.
+const PORTAL_URLS={"FTA Portal":"https://eservices.tax.gov.ae/","Zoho Books":"https://books.zoho.com/"};
+function portalUrlFor(lg){return (lg&&lg.url)||PORTAL_URLS[lg&&lg.name]||"";}
+
+// ---- Launch & fill -------------------------------------------------------
+// A web page can't type into a form on another origin, so this hands the job to
+// the "Anyah Companion" browser extension the team already has installed for
+// the Anyah Client Dashboard: we post a message, its content script forwards it
+// to the extension's service worker, which opens the tab and fills the fields.
+//
+// We deliberately reuse Anyah's marker attribute and message name rather than
+// inventing our own. The extension's bridge only listens on pages carrying
+// data-anyah-dashboard, so a new name would mean editing the extension and
+// every user reloading it from chrome://extensions. This works with what's
+// already on their machines.
+//
+// The extension fills the fields and stops. It does not press Login — the FTA
+// portal has a captcha, and Anyah made the same call for the same reason.
+document.documentElement.setAttribute('data-anyah-dashboard','uae-compliance-tracker');
+function extensionPresent(){return !!window.__ANYAH_EXT__;}
+
+function launchPortal(cid,idx){
+  const sc=getClient(cid); if(!sc) return;
+  const lg=sc.logins&&sc.logins[idx]; if(!lg) return;
+  const url=portalUrlFor(lg);
+  const note=document.getElementById(`launchNote_${cid}_${idx}`);
+  const say=(html,kind)=>{if(!note)return;note.style.display='block';note.innerHTML=`<div class="alert ${kind||''}" style="margin:0;font-size:11px">${html}</div>`;};
+
+  if(!url){say('Add the portal URL first.','alert-warning');return;}
+  if(!/^https?:\/\//i.test(url)){say('The portal URL needs to start with https://','alert-warning');return;}
+
+  if(!extensionPresent()){
+    // Without the extension we can still open the portal — just not fill it.
+    // Say so plainly rather than opening a tab and looking broken.
+    window.open(url,'_blank','noopener');
+    say('Opened the portal, but the credentials were not filled — the <b>Anyah Companion</b> extension isn\'t installed in this browser. Install it from the Anyah Client Dashboard and the fields will fill automatically.','alert-warning');
+    return;
+  }
+
+  window.postMessage({source:'anyah-dashboard',type:'ANYAH_LAUNCH',payload:{url:url,username:lg.username||'',password:lg.password||''}},window.location.origin);
+  say(`Opening <b>${esc(lg.name)}</b> and filling the credentials. Solve the captcha and press Login yourself.`);
+}
 
 const STORAGE_KEY="uae_compliance_v4";
 
@@ -323,15 +370,48 @@ function getVatPeriodMonths(periodLabel){
   return months;
 }
 
+// Is this 'YYYY-MM' month earlier than the client's engagement start?
+// Both are zero-padded 'YYYY-MM', so a string compare is a date compare.
+function isBeforeScope(client,monthKey){
+  const s=client&&client.scopeStart;
+  if(!s)return false;
+  return monthKey<s;
+}
+
+// The engagement-start selector needs a label ("Apr 2025") different from its
+// stored value ("2025-04"), which the shared selectHTML can't do — it uses the
+// option's own text as the value.
+function scopeStartSelectHTML(sc,fy){
+  const y=parseInt(fy);
+  const cur=sc.scopeStart||"";
+  let opts=`<option value=""${cur===""?" selected":""}>— not set —</option>`;
+  for(let i=0;i<12;i++){
+    const key=`${y}-${String(i+1).padStart(2,'0')}`;
+    opts+=`<option value="${key}"${key===cur?" selected":""}>${MONTHS[i]} ${y}</option>`;
+  }
+  return`<select class="form-input" data-action="changeScopeStart" data-cid="${sc.id}" style="padding:5px 8px;font-size:12px;max-width:200px">${opts}</select>`;
+}
+
+// Note there is deliberately no "apply" step that writes "Not Applicable" into
+// the months before the start. scopeStart is the single source of truth and the
+// stored month statuses are never touched, so setting the date is completely
+// reversible: pick the wrong month, correct it, and every status is still there.
+// An earlier version did overwrite them, which silently destroyed a "Completed"
+// month and could not put it back. Display, completion % and the VAT readiness
+// check all read through isBeforeScope() instead.
+
 function checkPeriodAccounting(client, periodLabel){
   const keys=getVatPeriodMonths(periodLabel);
   if(!keys.length)return{complete:false,pending:[],total:0};
   const pending=[];
-  keys.forEach(k=>{
-    const status=client.accounting.monthlyStatus[k];
-    if(status!=="Completed")pending.push(k);
+  // A month outside our scope, or explicitly Not Applicable, is not something
+  // we owe — so it must not hold a VAT return open. Only months we're actually
+  // responsible for count toward the period being ready.
+  const inScope=keys.filter(k=>!isBeforeScope(client,k)&&client.accounting.monthlyStatus[k]!=="Not Applicable");
+  inScope.forEach(k=>{
+    if(client.accounting.monthlyStatus[k]!=="Completed")pending.push(k);
   });
-  return{complete:pending.length===0,pending,total:keys.length,done:keys.length-pending.length};
+  return{complete:pending.length===0,pending,total:inScope.length,done:inScope.length-pending.length};
 }
 
 function formatMonthKey(k){
@@ -358,6 +438,10 @@ function createBlankClient(ov={}){
     assignedTeam:ov.assignedTeam||"Unassigned",
     vatApplicable:vatVal,
     ctApplicable:ov.ctApplicable!==undefined?ov.ctApplicable:true,
+    // When our engagement actually begins, as 'YYYY-MM'. Months before this are
+    // not our work and are held at "Not Applicable" so they never show up as
+    // pending. Blank means "no start recorded" — every month stays selectable.
+    scopeStart:ov.scopeStart||"",
     // 4) Accounting with FY
     accounting:{financialYear:fy,monthlyStatus:MONTHS.reduce((a,m,i)=>{a[`${fy}-${String(i+1).padStart(2,'0')}`]="Not Started";return a},{})},
     // 5) VAT with custom return dates
@@ -367,7 +451,7 @@ function createBlankClient(ov={}){
     // 1) Documents with new list
     documents:DOCS_LIST.reduce((a,d)=>{a[d.name]=d.name==="VAT Registration"&&vatVal==="No"?"N/A":"Pending";return a},{}),
     // 3) Logins — FTA, Zoho + custom
-    logins:DEFAULT_PORTALS.map(p=>({id:uid(),name:p,enabled:false,username:"",password:"",createdAt:"",lastModified:""})),
+    logins:DEFAULT_PORTALS.map(p=>({id:uid(),name:p,url:PORTAL_URLS[p]||"",enabled:false,username:"",password:"",createdAt:"",lastModified:""})),
     blockedReasons:{},lastUpdated:nowISO().slice(0,10),lastUpdatedBy:ov.assignedTeam||"System"
   };
 }
@@ -376,12 +460,15 @@ function createBlankClient(ov={}){
 // METRICS
 // ═══════════════════════════════════════════════════════════════
 function calcMetrics(c){
-  const ms=Object.values(c.accounting.monthlyStatus);
-  const acctDone=ms.filter(s=>s==="Completed").length;
-  const acctTotal=ms.filter(s=>s!=="Not Applicable").length||12;
-  const acctPct=Math.round(acctDone/acctTotal*100);
-  const acctPending=Object.entries(c.accounting.monthlyStatus).filter(([,v])=>v!=="Completed"&&v!=="Not Applicable").map(([k])=>{const p=k.split("-");return MONTHS[parseInt(p[1])-1]+" "+p[0];});
-  const acctBlocked=ms.some(s=>s==="Blocked");
+  // Only months we're actually engaged for count: skip anything before the
+  // client's scope start, and anything explicitly marked Not Applicable.
+  const acctEntries=Object.entries(c.accounting.monthlyStatus).filter(([k,v])=>!isBeforeScope(c,k)&&v!=="Not Applicable");
+  const acctDone=acctEntries.filter(([,v])=>v==="Completed").length;
+  // No months in scope means nothing is outstanding, so 100% — which is what
+  // keeps the figure consistent with an empty pending list.
+  const acctPct=acctEntries.length?Math.round(acctDone/acctEntries.length*100):100;
+  const acctPending=acctEntries.filter(([,v])=>v!=="Completed").map(([k])=>{const p=k.split("-");return MONTHS[parseInt(p[1])-1]+" "+p[0];});
+  const acctBlocked=acctEntries.some(([,v])=>v==="Blocked");
 
   const mandDocs=DOCS_LIST.filter(d=>d.mandatory).map(d=>d.name);
   const docsRecv=mandDocs.filter(n=>c.documents[n]==="Received"||c.documents[n]==="N/A").length;
@@ -2722,7 +2809,9 @@ function renderTeamView(){
 // DETAIL VIEWS
 // ═══════════════════════════════════════════════════════════════
 function renderSidebar(sc,scm){
-  const nav=[["overview","Overview"],["accounting","Accounting"],["vat","VAT Returns"],["ct","Corporate Tax"],["documents","Documents / KYC"],["logins","Login Credentials"]];
+  // Keep in step with DETAIL_TABS — the arrow-key order and the visible order
+  // must match or ↑/↓ navigation jumps around.
+  const nav=[["overview","Overview"],["documents","Documents / KYC"],["accounting","Accounting"],["vat","VAT Returns"],["ct","Corporate Tax"],["logins","Login Credentials"]];
   return`<div class="sidebar"><div class="sidebar-header"><button class="btn" style="width:100%;margin-bottom:12px" data-action="backToList">← Back</button><div style="font-weight:700;font-size:15px;color:var(--text-primary);margin-bottom:3px">${esc(sc.name)}</div><div style="font-size:11px;color:var(--text-muted);margin-bottom:8px">${esc(sc.entityType)} · ${esc(sc.assignedTeam)}</div>${badgeHTML(scm.overallStatus)}<div style="margin-top:10px">${progressHTML(scm.totalPct,8)}</div></div><div class="detail-nav">${nav.map(([k,l])=>`<button class="detail-nav-btn ${state.detailTab===k?'active':''}" data-detail-nav="${k}">${l}</button>`).join("")}<div style="padding:8px 12px;margin-top:8px;font-size:10px;color:var(--text-muted);border-top:1px solid var(--border)">⌨ Use <kbd style="background:var(--bg-elevated);padding:1px 5px;border-radius:3px;font-size:10px;border:1px solid var(--border)">↑</kbd> <kbd style="background:var(--bg-elevated);padding:1px 5px;border-radius:3px;font-size:10px;border:1px solid var(--border)">↓</kbd> to switch tabs · <kbd style="background:var(--bg-elevated);padding:1px 5px;border-radius:3px;font-size:10px;border:1px solid var(--border)">Esc</kbd> to go back</div></div><div class="sidebar-footer">${isAdmin()?`<button class="btn btn-danger" style="width:100%;font-size:11px" data-action="removeClient" data-id="${sc.id}">Remove Client</button>`:''}</div></div>`;
 }
 
@@ -2799,15 +2888,23 @@ function renderOverview(sc,scm){
 function renderAccounting(sc,scm){
   const fy=sc.accounting.financialYear;
   let h=`<h2 style="font-size:18px;font-weight:800;margin-bottom:16px">Accounting — FY ${esc(fy)}</h2>`;
-  h+=`<div class="card"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><div><span style="color:var(--text-muted)">Financial Year: </span>${selectHTML("fy",fy,FY_OPTIONS,`data-action="changeFY" data-cid="${sc.id}"`)}</div><div><span style="color:var(--text-muted)">Completion: </span><span style="font-weight:700;font-family:var(--mono)">${scm.acctPct}%</span></div></div>${progressHTML(scm.acctPct,10)}</div>`;
+  h+=`<div class="card"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;gap:16px;flex-wrap:wrap"><div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap"><div><span style="color:var(--text-muted)">Financial Year: </span>${selectHTML("fy",fy,FY_OPTIONS,`data-action="changeFY" data-cid="${sc.id}"`)}</div><div><span style="color:var(--text-muted)">Our scope starts: </span>${scopeStartSelectHTML(sc,fy)}</div></div><div><span style="color:var(--text-muted)">Completion: </span><span style="font-weight:700;font-family:var(--mono)">${scm.acctPct}%</span></div></div>${progressHTML(scm.acctPct,10)}
+    <div style="font-size:11px;color:var(--text-muted);margin-top:8px">Months before the engagement start are marked N/A and left out of completion. Set this once per client during onboarding.</div></div>`;
 
   const months=getFYMonths(fy);
   h+=`<div class="month-grid">`;
   months.forEach(m=>{
-    const s=sc.accounting.monthlyStatus[m.key]||"Not Started";
+    const out=isBeforeScope(sc,m.key);
+    const s=out?"Not Applicable":(sc.accounting.monthlyStatus[m.key]||"Not Started");
     const br=(sc.blockedReasons||{})[`acct_${m.key}`]||"";
     const bc=s==="Completed"?"var(--green-border)":s==="Blocked"?"var(--red-border)":s==="In Progress"?"var(--accent-soft)":"var(--border)";
-    h+=`<div class="month-cell" style="border-color:${bc}"><div class="month-name">${m.label}</div>${badgeHTML(s,1)}<div style="margin-top:8px">${selectHTML(`a_${m.key}`,s,ACCT_STATUSES,`data-acct-key="${m.key}" data-cid="${sc.id}"`)}</div>${s==="Blocked"?`<input class="form-input" style="margin-top:6px;font-size:11px;padding:4px 8px;border-color:var(--red-border)" value="${esc(br)}" placeholder="Reason..." data-blocked-reason="acct_${m.key}" data-cid="${sc.id}">`:''}</div>`;
+    if(out){
+      // Out of scope: no dropdown at all. Showing a disabled one just invites
+      // clicking; the scope-start selector above is the single control.
+      h+=`<div class="month-cell" style="border-color:var(--border);opacity:0.5"><div class="month-name">${m.label}</div><span class="badge">N/A</span><div style="margin-top:8px;font-size:10px;color:var(--text-muted)">Before our scope</div></div>`;
+    }else{
+      h+=`<div class="month-cell" style="border-color:${bc}"><div class="month-name">${m.label}</div>${badgeHTML(s,1)}<div style="margin-top:8px">${selectHTML(`a_${m.key}`,s,ACCT_STATUSES,`data-acct-key="${m.key}" data-cid="${sc.id}"`)}</div>${s==="Blocked"?`<input class="form-input" style="margin-top:6px;font-size:11px;padding:4px 8px;border-color:var(--red-border)" value="${esc(br)}" placeholder="Reason..." data-blocked-reason="acct_${m.key}" data-cid="${sc.id}">`:''}</div>`;
+    }
   });
   h+=`</div>`;
   if(scm.acctPending.length)h+=`<div class="card" style="margin-top:12px"><div class="form-label">Pending Months</div><div style="color:var(--amber);font-size:13px">${scm.acctPending.join(", ")}</div></div>`;
@@ -2974,6 +3071,13 @@ function renderLogins(sc,scm){
     h+=`<div class="cred-card"><div class="cred-header"><div class="cred-title">${esc(lg.name)}</div><div style="display:flex;align-items:center;gap:8px">${toggleHTML(`login_${i}_${sc.id}`,lg.enabled)}<button class="tm-remove" data-action="removeCredential" data-idx="${i}" data-cid="${sc.id}" title="Remove" ${DEFAULT_PORTALS.includes(lg.name)?'style="opacity:0.3;pointer-events:none" title="Default portal"':''}>✕</button></div></div>`;
     if(lg.enabled){
       h+=`<div class="cred-fields"><div><div class="form-label" style="font-size:9px">Username / Email</div><input class="form-input" style="font-size:12px;padding:5px 8px" value="${esc(lg.username)}" data-login-field="username" data-login-idx="${i}" data-cid="${sc.id}"></div><div class="pwd-field"><div class="form-label" style="font-size:9px">Password</div><input type="password" class="form-input" style="font-size:12px;padding:5px 8px;padding-right:30px" value="${esc(lg.password)}" data-login-field="password" data-login-idx="${i}" data-cid="${sc.id}"><button class="pwd-toggle" data-action="togglePwd" data-idx="${i}">👁</button></div></div>`;
+      const purl=portalUrlFor(lg);
+      h+=`<div style="margin-top:8px"><div class="form-label" style="font-size:9px">Portal URL</div><input class="form-input" style="font-size:12px;padding:5px 8px" value="${esc(purl)}" placeholder="https://..." data-login-field="url" data-login-idx="${i}" data-cid="${sc.id}"></div>`;
+      h+=`<div style="margin-top:8px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <button class="btn btn-sm btn-primary" data-action="launchPortal" data-idx="${i}" data-cid="${sc.id}"${purl&&lg.username?'':' disabled title="Needs a portal URL and a username"'}>🚀 Launch &amp; fill</button>
+        <span style="font-size:10px;color:var(--text-muted)">Opens the portal and fills these credentials. You still solve the captcha and press Login.</span>
+      </div>`;
+      h+=`<div id="launchNote_${sc.id}_${i}" style="display:none;margin-top:6px"></div>`;
       if(lg.createdAt)h+=`<div class="cred-meta">Created: ${fmtDateTime(lg.createdAt)}${lg.lastModified&&lg.lastModified!==lg.createdAt?` · Modified: ${fmtDateTime(lg.lastModified)}`:''}</div>`;
     }
     h+=`</div>`;
@@ -3592,6 +3696,13 @@ function bindEvents(){
       const newMS={};MONTHS.forEach((m,i)=>{const key=`${newFY}-${String(i+1).padStart(2,'0')}`;newMS[key]=sc.accounting.monthlyStatus[key]||"Not Started";});
       sc.accounting.monthlyStatus=newMS;markUpdated(sc);updateAndSave();
     };
+    if(a==="changeScopeStart")el.onchange=(e)=>{
+      const sc=getClient(el.dataset.cid);if(!sc)return;
+      // Just record the date. Nothing else to do — every derived view reads
+      // through isBeforeScope(), so this is fully reversible.
+      sc.scopeStart=e.target.value;
+      markUpdated(sc);updateAndSave();
+    };
 
     // VAT FY switcher — syncs with accounting FY
     if(a==="changeVatFY")el.onchange=(e)=>{
@@ -3603,6 +3714,7 @@ function bindEvents(){
 
     // Password toggle
     if(a==="togglePwd")el.onclick=()=>{const idx=el.dataset.idx;const inp=document.querySelector(`[data-login-field="password"][data-login-idx="${idx}"]`);if(inp)inp.type=inp.type==="password"?"text":"password";};
+    if(a==="launchPortal")el.onclick=()=>launchPortal(el.dataset.cid,parseInt(el.dataset.idx));
   });
 
   // Enter keys
@@ -3671,8 +3783,12 @@ function bindEvents(){
     const idx=parseInt(el.dataset.loginIdx);const f=el.dataset.loginField;
     if(c.logins[idx]){
       c.logins[idx][f]=e.target.value;
-      c.logins[idx].lastModified=nowISO();
-      if(!c.logins[idx].createdAt)c.logins[idx].createdAt=nowISO();
+      // Created/Modified track the credential itself, so that a rotation is
+      // visible. Correcting a portal address isn't a credential change.
+      if(f!=="url"){
+        c.logins[idx].lastModified=nowISO();
+        if(!c.logins[idx].createdAt)c.logins[idx].createdAt=nowISO();
+      }
       markUpdated(c);updateAndSave();
     }
   };});
@@ -3681,7 +3797,10 @@ function bindEvents(){
 // ═══════════════════════════════════════════════════════════════
 // KEYBOARD NAVIGATION
 // ═══════════════════════════════════════════════════════════════
-const DETAIL_TABS=["overview","accounting","vat","ct","documents","logins"];
+// Ordered to follow the real client lifecycle: you onboard (KYC docs) before you
+// can do any bookkeeping, and you close books before you can file VAT or CT.
+// Login credentials sit last — a reference you dip into, not a step in the flow.
+const DETAIL_TABS=["overview","documents","accounting","vat","ct","logins"];
 // Visible top-level tabs only (Insights items + legacy routes still navigable, but not in keyboard cycle).
 const HEADER_TABS=["morning","priority","dashboard","calendar","tasks","aiAssist","team"];
 

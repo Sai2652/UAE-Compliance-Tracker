@@ -206,11 +206,21 @@ function vatObligations(client, opts) {
 // Months the team has NOT yet closed, oldest first. Used to explain why a VAT
 // return can't proceed — the UI already blocks filing on this, and the engines
 // should be able to say the same thing.
+//
+// Months before the engagement start (client.scopeStart, 'YYYY-MM') and months
+// explicitly marked Not Applicable are excluded: they aren't our work, so they
+// must never appear as pending or hold a return open. Both the key and
+// scopeStart are zero-padded 'YYYY-MM', so a string compare is a date compare.
 function openAccountingMonths(client) {
   const acct = (client && client.accounting) || {};
   const ms = acct.monthlyStatus || {};
+  const scopeStart = (client && client.scopeStart) || '';
   return Object.keys(ms)
-    .filter(k => String(ms[k] || '') !== 'Completed')
+    .filter(k => !(scopeStart && k < scopeStart))
+    .filter(k => {
+      const s = String(ms[k] || '');
+      return s !== 'Completed' && s !== 'Not Applicable';
+    })
     .sort();
 }
 

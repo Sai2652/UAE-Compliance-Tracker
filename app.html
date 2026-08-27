@@ -1,11 +1,10 @@
 <!DOCTYPE html>
-<!-- data-anyah-dashboard must be in the static markup, not set from script.
-     The Anyah Companion extension's bridge.js and bridge-main.js both run at
-     document_start and return immediately unless this attribute is already on
-     the root element. An inline script runs too late, so setting it there means
-     the extension has already given up and Launch and fill silently degrades to
-     just opening the tab. -->
-<html lang="en" data-anyah-dashboard="uae-compliance-tracker">
+<!-- data-bcl-tracker is how the BCL Compliance Companion extension (see
+     extension/) recognises this app. It MUST stay in the static markup: the
+     extension's bridge scripts read it at document_start and return immediately
+     if it's absent, which is before any inline script has run. Set it from
+     JavaScript and Launch and fill silently degrades to just opening the tab. -->
+<html lang="en" data-bcl-tracker="uae-compliance-tracker">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -231,25 +230,19 @@ const PORTAL_URLS={"FTA Portal":"https://eservices.tax.gov.ae/#/Logon","Zoho Boo
 function portalUrlFor(lg){return (lg&&lg.url)||PORTAL_URLS[lg&&lg.name]||"";}
 
 // ---- Launch & fill -------------------------------------------------------
-// A web page can't type into a form on another origin, so this hands the job to
-// the "Anyah Companion" browser extension the team already has installed for
-// the Anyah Client Dashboard: we post a message, its content script forwards it
-// to the extension's service worker, which opens the tab and fills the fields.
+// A web page can't type into a form on another origin — that rule is what stops
+// any site reading your bank login — so this hands the job to our own browser
+// extension, the BCL Compliance Companion in extension/. We post a message, its
+// bridge forwards it to the extension's service worker, and that opens the tab
+// and fills the fields.
 //
-// We deliberately reuse Anyah's marker attribute and message name rather than
-// inventing our own. The extension's bridge only listens on pages carrying
-// data-anyah-dashboard, so a new name would mean editing the extension and
-// every user reloading it from chrome://extensions. This works with what's
-// already on their machines.
+// The extension fills the fields and stops. It does not press Login: UAE portals
+// put a captcha or security code beside the password, so submitting stays with
+// the user.
 //
-// The extension fills the fields and stops. It does not press Login — the FTA
-// portal has a captcha, and Anyah made the same call for the same reason.
-//
-// The data-anyah-dashboard marker the extension looks for is declared on the
-// <html> tag in the static markup above — it cannot be set from here, because
-// the extension's content scripts read it at document_start, before any inline
-// script has run.
-function extensionPresent(){return !!window.__ANYAH_EXT__;}
+// The data-bcl-tracker marker the extension looks for is on the root element in
+// the static markup above, and has to stay there — see the comment on it.
+function extensionPresent(){return !!window.__BCL_TRACKER_EXT__;}
 
 function launchPortal(cid,idx){
   const sc=getClient(cid); if(!sc) return;
@@ -265,11 +258,11 @@ function launchPortal(cid,idx){
     // Without the extension we can still open the portal — just not fill it.
     // Say so plainly rather than opening a tab and looking broken.
     window.open(url,'_blank','noopener');
-    say('Opened the portal, but the credentials were not filled — the <b>Anyah Companion</b> extension isn\'t installed in this browser. Install it from the Anyah Client Dashboard and the fields will fill automatically.','alert-warning');
+    say('Opened the portal, but nothing was filled — the <b>BCL Compliance Companion</b> extension isn\'t loaded in this browser. Install it once from the <code>extension</code> folder of this repo (chrome://extensions → Developer mode → Load unpacked), reload this page, and the fields will fill themselves.','alert-warning');
     return;
   }
 
-  window.postMessage({source:'anyah-dashboard',type:'ANYAH_LAUNCH',payload:{url:url,username:lg.username||'',password:lg.password||''}},window.location.origin);
+  window.postMessage({source:'bcl-compliance-tracker',type:'BCL_LAUNCH',payload:{url:url,username:lg.username||'',password:lg.password||''}},window.location.origin);
 
   // EmaraTax opens on a UAE PASS screen that has no email/password fields at
   // all — they only mount after "Login here" is clicked, and the FTA gives that

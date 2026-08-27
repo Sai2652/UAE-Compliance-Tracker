@@ -47,6 +47,7 @@ jobs:
             -x ".github/*" \
             -x ".build/*" \
             -x "db/*" \
+            -x "extension/*" \
             -x "scripts/migrate-supabase-to-aws.js" \
             -x ".env*" \
             -x "samconfig.toml*" \

@@ -1,0 +1,28 @@
+{
+  "manifest_version": 3,
+  "name": "BCL Compliance Companion",
+  "version": "1.0.0",
+  "description": "One-click launch and credential autofill for portals saved in the UAE Compliance Tracker.",
+  "permissions": ["storage", "tabs", "scripting"],
+  "host_permissions": ["<all_urls>"],
+  "background": { "service_worker": "background.js" },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["bridge-main.js"],
+      "run_at": "document_start",
+      "world": "MAIN",
+      "all_frames": false
+    },
+    {
+      "matches": ["<all_urls>"],
+      "js": ["bridge.js"],
+      "run_at": "document_start",
+      "all_frames": false
+    }
+  ],
+  "action": {
+    "default_title": "BCL Compliance Companion",
+    "default_popup": "popup.html"
+  }
+}

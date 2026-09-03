@@ -201,6 +201,118 @@ function vatObligations(client, opts) {
   return out;
 }
 
+// ------------------------------------------- Monthly books closure and MIS
+//
+// These are the firm's own deadlines, not the FTA's, and they're the bulk of
+// what a team actually does each month. Unlike VAT and CT they aren't derived
+// from a certificate — every month simply falls due, so they're generated from
+// the calendar. That's what makes a new month produce its own work without
+// anybody opening the tool.
+//
+// Both default to a day-of-the-following-month deadline, overridable per
+// deployment. Books first, then the MIS that reports on them.
+const BOOKS_CLOSE_DAY = clampDay(process.env.BOOKS_CLOSE_DAY, 10);
+const MIS_ISSUE_DAY   = clampDay(process.env.MIS_ISSUE_DAY, 15);
+// How far back to keep raising unclosed months. Without a bound, a client
+// onboarded years ago generates an obligation for every month since.
+const MONTHLY_LOOKBACK = clampInt(process.env.MONTHLY_LOOKBACK_MONTHS, 6, 1, 60);
+
+function clampDay(v, dflt) {
+  const n = parseInt(v, 10);
+  return (n >= 1 && n <= 28) ? n : dflt;
+}
+function clampInt(v, dflt, lo, hi) {
+  const n = parseInt(v, 10);
+  return (n >= lo && n <= hi) ? n : dflt;
+}
+function monthKey(d) { return d.getUTCFullYear() + '-' + String(d.getUTCMonth() + 1).padStart(2, '0'); }
+const MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+function monthLabel(d) { return MONTH_NAMES[d.getUTCMonth()] + ' ' + d.getUTCFullYear(); }
+
+// The months we should be raising work for: from the engagement start, bounded
+// by the lookback, through the current month.
+//
+// The current month is already the forward-looking one — its books close next
+// month — so there's nothing to gain by going further. Raising the month after
+// this one just puts work on a list that can't be started for another six
+// weeks.
+function monthsInPlay(client, today) {
+  const now = toDate(today) || new Date();
+  const last = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+  const earliestAllowed = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - MONTHLY_LOOKBACK, 1));
+
+  let start = earliestAllowed;
+  const scope = (client && client.scopeStart) || '';
+  if (scope) {
+    const parts = scope.split('-');
+    const scopeDate = new Date(Date.UTC(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, 1));
+    if (!isNaN(scopeDate) && scopeDate > start) start = scopeDate;
+  }
+
+  const out = [];
+  let cur = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), 1));
+  while (cur <= last && out.length < MONTHLY_LOOKBACK + 2) {
+    out.push(new Date(cur));
+    cur = new Date(Date.UTC(cur.getUTCFullYear(), cur.getUTCMonth() + 1, 1));
+  }
+  return out;
+}
+
+// A deadline of `day` in the month AFTER the period being reported on.
+function dayOfFollowingMonth(periodStart, day) {
+  const y = periodStart.getUTCFullYear(), m = periodStart.getUTCMonth();
+  const dim = lastDayOfMonth(y, m + 1).getUTCDate();
+  return new Date(Date.UTC(y, m + 1, Math.min(day, dim)));
+}
+
+function monthlyObligations(client, opts) {
+  opts = opts || {};
+  if (!client) return [];
+  const acct = client.accounting || {};
+  const bookStatus = acct.monthlyStatus || {};
+  const misStatus = (client.mis && client.mis.monthlyStatus) || {};
+  const out = [];
+
+  for (const m of monthsInPlay(client, opts.today)) {
+    const key = monthKey(m);
+    // A month the firm isn't engaged for owes nothing. isBeforeScope is handled
+    // by monthsInPlay; this catches a one-off gap marked by hand.
+    if (String(bookStatus[key] || '') === 'Not Applicable') continue;
+
+    const periodStart = m;
+    const periodEnd = lastDayOfMonth(m.getUTCFullYear(), m.getUTCMonth());
+    const label = monthLabel(m);
+
+    out.push({
+      obligationType: 'Books_Closure',
+      periodLabel: label,
+      periodStart: iso(periodStart),
+      periodEnd: iso(periodEnd),
+      filingDeadline: iso(dayOfFollowingMonth(periodStart, BOOKS_CLOSE_DAY)),
+      paymentDeadline: null,
+      status: String(bookStatus[key] || '') === 'Completed' ? 'filed' : 'pending',
+      metadata: { derivedFrom: 'calendar', monthKey: key, internalDeadline: true, closeDay: BOOKS_CLOSE_DAY }
+    });
+
+    out.push({
+      obligationType: 'MIS_Report',
+      periodLabel: label,
+      periodStart: iso(periodStart),
+      periodEnd: iso(periodEnd),
+      filingDeadline: iso(dayOfFollowingMonth(periodStart, MIS_ISSUE_DAY)),
+      paymentDeadline: null,
+      status: String(misStatus[key] || '') === 'Issued' ? 'filed' : 'pending',
+      metadata: {
+        derivedFrom: 'calendar', monthKey: key, internalDeadline: true, issueDay: MIS_ISSUE_DAY,
+        // The MIS reports on the month's books, so it can't honestly go out
+        // before they're closed. Surfacing the dependency explains a blocked MIS.
+        booksClosed: String(bookStatus[key] || '') === 'Completed'
+      }
+    });
+  }
+  return out;
+}
+
 // ------------------------------------------------------------------ Accounting
 
 // Months the team has NOT yet closed, oldest first. Used to explain why a VAT
@@ -225,12 +337,15 @@ function openAccountingMonths(client) {
 }
 
 function allObligations(client, opts) {
-  return vatObligations(client, opts).concat(ctObligations(client, opts));
+  return vatObligations(client, opts)
+    .concat(ctObligations(client, opts))
+    .concat(monthlyObligations(client, opts));
 }
 
 module.exports = {
   ctObligations,
   vatObligations,
+  monthlyObligations,
   allObligations,
   openAccountingMonths,
   // exported for tests

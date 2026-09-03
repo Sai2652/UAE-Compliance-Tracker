@@ -47,6 +47,8 @@ function taskTypeFor(obligationType) {
     CT_Refund: 'Refund',
     Audit: 'Audit',
     Management_Report: 'Management_Report',
+    Books_Closure: 'Books_Closure',
+    MIS_Report: 'MIS_Report',
     Review: 'Review'
   })[obligationType] || 'Other';
 }
@@ -58,7 +60,11 @@ function leadDaysFor(obligationType) {
     VAT_Registration: 14, CT_Registration: 14,
     VAT_Amendment: 14, CT_Amendment: 14,
     VAT_Refund: 14, CT_Refund: 14,
-    Audit: 30, Management_Report: 7, Review: 3
+    Audit: 30, Management_Report: 7, Review: 3,
+    // Monthly work has a short runway by nature: the month has to end before
+    // its books can be closed, so the task appears as the period closes rather
+    // than weeks ahead like a VAT or CT filing.
+    Books_Closure: 7, MIS_Report: 5
   })[obligationType] || 14;
 }
 
@@ -119,11 +125,26 @@ async function ensureTasksForObligations(client, obligationRows) {
     return existingForClient;
   }
 
+  // How far past its deadline an internally-set monthly obligation may be and
+  // still be worth putting on somebody's list.
+  //
+  // Books closure and MIS fall due every month for every client, so a client
+  // that has never closed a month generates one per month per lookback — 39
+  // clients times six months times two is several hundred tasks nobody will
+  // work through. The obligation still exists and still counts as overdue in
+  // the reports; it just doesn't manufacture a task. Statutory filings are
+  // exempt: an overdue VAT or CT return matters however old it is.
+  const STALE_MONTHLY_DAYS = 60;
+  const isInternalMonthly = (t) => t === 'Books_Closure' || t === 'MIS_Report';
+
   for (const o of obligationRows) {
     const lead = leadDaysFor(o.obligation_type);
     const deadline = new Date(o.filing_deadline);
     const windowStart = new Date(deadline.getTime() - lead * DAY);
     if (windowStart > new Date()) continue; // not yet in lead window
+    if (isInternalMonthly(o.obligation_type) &&
+        Date.now() - deadline.getTime() > STALE_MONTHLY_DAYS * DAY) continue;
+    if (o.status === 'filed') continue;   // already done — nothing to raise
 
     const sourceKey = `task:obl:${o.id}`;
     const existing = await compliance.tasks.findBySourceKey(sourceKey);

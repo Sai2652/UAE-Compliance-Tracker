@@ -200,6 +200,9 @@ const FY_OPTIONS=["2023","2024","2025","2026","2027"];
 // already excludes it from both the total and the pending list, so an
 // out-of-scope month never counts against a client's completion.
 const ACCT_STATUSES=["Not Started","In Progress","Completed","Blocked","Not Applicable"];
+// Whether the month's management report has reached the client. Deliberately
+// short — this is a delivery fact, not a workflow.
+const MIS_STATUSES=["Not Issued","In Preparation","Issued","Not Applicable"];
 
 // 1) NEW Document list with mandatory flags
 const DOCS_LIST=[
@@ -474,6 +477,11 @@ function createBlankClient(ov={}){
     scopeStart:ov.scopeStart||"",
     // 4) Accounting with FY
     accounting:{financialYear:fy,monthlyStatus:MONTHS.reduce((a,m,i)=>{a[`${fy}-${String(i+1).padStart(2,'0')}`]="Not Started";return a},{})},
+    // Whether the month's MIS has gone to the client. Kept separate from the
+    // books status because they're two pieces of work with two deadlines —
+    // books close, then the MIS reporting on them is issued. Starts empty and
+    // fills in as months are worked, so it needs no per-FY seeding.
+    mis:{monthlyStatus:{}},
     // 5) VAT with custom return dates
     vat:{periods:vatVal==="Yes"?[]:[], returnDates:[]},
     // CT
@@ -2954,7 +2962,17 @@ function renderAccounting(sc,scm){
       // clicking; the scope-start selector above is the single control.
       h+=`<div class="month-cell" style="border-color:var(--border);opacity:0.5"><div class="month-name">${m.label}</div><span class="badge">N/A</span><div style="margin-top:8px;font-size:10px;color:var(--text-muted)">Before our scope</div></div>`;
     }else{
-      h+=`<div class="month-cell" style="border-color:${bc}"><div class="month-name">${m.label}</div>${badgeHTML(s,1)}<div style="margin-top:8px">${selectHTML(`a_${m.key}`,s,ACCT_STATUSES,`data-acct-key="${m.key}" data-cid="${sc.id}"`)}</div>${s==="Blocked"?`<input class="form-input" style="margin-top:6px;font-size:11px;padding:4px 8px;border-color:var(--red-border)" value="${esc(br)}" placeholder="Reason..." data-blocked-reason="acct_${m.key}" data-cid="${sc.id}">`:''}</div>`;
+      // Two pieces of work per month: close the books, then issue the MIS.
+      // The MIS control is shown greyed until the books are closed, because
+      // issuing a report on open books isn't a thing you'd want to record.
+      const misSt=((sc.mis&&sc.mis.monthlyStatus)||{})[m.key]||"Not Issued";
+      const booksDone=s==="Completed";
+      h+=`<div class="month-cell" style="border-color:${bc}"><div class="month-name">${m.label}</div>${badgeHTML(s,1)}<div style="margin-top:8px">${selectHTML(`a_${m.key}`,s,ACCT_STATUSES,`data-acct-key="${m.key}" data-cid="${sc.id}"`)}</div>${s==="Blocked"?`<input class="form-input" style="margin-top:6px;font-size:11px;padding:4px 8px;border-color:var(--red-border)" value="${esc(br)}" placeholder="Reason..." data-blocked-reason="acct_${m.key}" data-cid="${sc.id}">`:''}
+        <div style="margin-top:8px;padding-top:8px;border-top:1px dashed var(--border);${booksDone?'':'opacity:0.5'}">
+          <div class="form-label" style="font-size:9px;margin-bottom:3px">MIS to client</div>
+          ${selectHTML(`mis_${m.key}`,misSt,MIS_STATUSES,`data-mis-key="${m.key}" data-cid="${sc.id}"${booksDone?'':' title="Close the books for this month first"'}`)}
+        </div>
+      </div>`;
     }
   });
   h+=`</div>`;
@@ -3810,6 +3828,21 @@ function bindEvents(){
 
   // Accounting
   document.querySelectorAll("[data-acct-key]").forEach(el=>{el.onchange=(e)=>{const c=getClient(el.dataset.cid);if(c){c.accounting.monthlyStatus[el.dataset.acctKey]=e.target.value;markUpdated(c);updateAndSave();}};});
+  document.querySelectorAll("[data-mis-key]").forEach(el=>{el.onchange=(e)=>{
+    const c=getClient(el.dataset.cid);if(!c)return;
+    const key=el.dataset.misKey;
+    // A report can't honestly be marked issued while the month it reports on is
+    // still open. Say why rather than silently accepting it.
+    if(e.target.value==="Issued"&&c.accounting.monthlyStatus[key]!=="Completed"){
+      alert(`Cannot mark the ${formatMonthKey(key)} MIS as issued.\n\nThe books for that month are not closed yet.`);
+      e.target.value=((c.mis&&c.mis.monthlyStatus)||{})[key]||"Not Issued";
+      return;
+    }
+    if(!c.mis)c.mis={monthlyStatus:{}};
+    if(!c.mis.monthlyStatus)c.mis.monthlyStatus={};
+    c.mis.monthlyStatus[key]=e.target.value;
+    markUpdated(c);updateAndSave();
+  };});
 
   // VAT
   document.querySelectorAll("[data-vat-field]").forEach(el=>{el.onchange=(e)=>{const c=getClient(el.dataset.cid);if(!c)return;const idx=parseInt(el.dataset.vatIdx);const f=el.dataset.vatField;const v=e.target.value;if(f==="filingStatus"&&v==="Completed"){const r=c.vat.returnDates[idx];if(r){const chk=checkPeriodAccounting(c,r.period);if(!chk.complete){const pendingMonths=chk.pending.map(formatMonthKey).join(", ");alert(`⚠ Cannot complete VAT filing for ${r.period}.\n\nAccounting is not completed for: ${pendingMonths}\n\nPlease complete accounting for these months first.`);e.target.value=c.vat.returnDates[idx].filingStatus;return;}}}c.vat.returnDates[idx][f]=v;markUpdated(c);updateAndSave();};});

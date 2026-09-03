@@ -168,7 +168,11 @@ const users = {
       email: email,
       password: bcrypt.hashSync(Math.random().toString(36), 10),
       name: name,
-      role: 'member',
+      // New people start as User — least privilege. Promote to Admin and set
+      // their reporting line from the admin panel once they've signed up.
+      // ('member' was the pre-hierarchy name for this and still normalises to
+      // 'user', but new records shouldn't carry a retired key.)
+      role: 'user',
       active: 0,
       invite_token: token,
       invite_expires: expires,

@@ -32,6 +32,19 @@ Parameters:
     Type: String
     Default: ''
     Description: Public URL of the deployed API (fill in after first deploy)
+  # ---- Ops-Mkt link (read-only) ----
+  # The firm's master client register lives in the Ops-Mkt tool's Aurora
+  # Postgres database, reached over the RDS Data API. This tracker only ever
+  # SELECTs from it — see services/opsMktSync.js, which refuses any other
+  # statement — so the policy below grants no write action on that database.
+  OpsMktClusterArn:
+    Type: String
+    Default: 'arn:aws:rds:ap-south-1:333973504173:cluster:opsmkt-pg'
+    Description: Aurora cluster ARN holding the Ops-Mkt master client list
+  OpsMktSecretArn:
+    Type: String
+    Default: ''
+    Description: Secrets Manager ARN for the Ops-Mkt Aurora credentials (blank disables the client sync)
 
 Globals:
   Function:
@@ -50,6 +63,8 @@ Globals:
         ADMIN_NAME: !Ref AdminName
         APP_URL: !Ref AppUrl
         IS_LAMBDA: 'true'
+        OPSMKT_CLUSTER_ARN: !Ref OpsMktClusterArn
+        OPSMKT_SECRET_ARN: !Ref OpsMktSecretArn
 
 Resources:
   # ---------- API Lambda (Express via serverless-express) ----------
@@ -80,6 +95,19 @@ Resources:
         - DynamoDBCrudPolicy: { TableName: !Sub '${DdbPrefix}WorkflowSteps' }
         - DynamoDBCrudPolicy: { TableName: !Sub '${DdbPrefix}ClientSettings' }
         - S3CrudPolicy: { BucketName: !Ref S3Bucket }
+        # Read the Ops-Mkt master client list. ExecuteStatement is the only
+        # Data API action granted, and no BatchExecuteStatement or
+        # CommitTransaction, so this role cannot write to that database even
+        # if the SELECT-only guard in services/opsMktSync.js were removed.
+        # The secret is scoped to RDS-managed cluster secrets rather than
+        # named outright, so a blank OpsMktSecretArn still deploys.
+        - Statement:
+            - Effect: Allow
+              Action: ['rds-data:ExecuteStatement']
+              Resource: !Ref OpsMktClusterArn
+            - Effect: Allow
+              Action: ['secretsmanager:GetSecretValue']
+              Resource: !Sub 'arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:rds!cluster-*'
       Events:
         Root:
           Type: HttpApi
@@ -93,6 +121,38 @@ Resources:
             Method: ANY
 
   # ---------- Scheduled Lambdas ----------
+  # Pulls clients signed in Ops-Mkt since the last look, for the First POCs
+  # this tracker follows. Additions only — it never edits or removes a client.
+  # Runs before the obligation sweep at 02:30 so a client added tonight gets
+  # its VAT and CT deadlines seeded in the same night.
+  OpsMktSyncCronFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: .
+      Handler: handlers/opsMktSyncCron.handler
+      Timeout: 600
+      MemorySize: 1024
+      Policies:
+        - DynamoDBCrudPolicy: { TableName: !Sub '${DdbPrefix}Obligations' }
+        - DynamoDBCrudPolicy: { TableName: !Sub '${DdbPrefix}Tasks' }
+        - DynamoDBCrudPolicy: { TableName: !Sub '${DdbPrefix}Users' }
+        - DynamoDBCrudPolicy: { TableName: !Sub '${DdbPrefix}ActivityLog' }
+        # Writes the client list back to tracker_state.json, and its own
+        # opsmkt_sync.json, so this one needs Crud rather than Read.
+        - S3CrudPolicy: { BucketName: !Ref S3Bucket }
+        - Statement:
+            - Effect: Allow
+              Action: ['rds-data:ExecuteStatement']
+              Resource: !Ref OpsMktClusterArn
+            - Effect: Allow
+              Action: ['secretsmanager:GetSecretValue']
+              Resource: !Sub 'arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:rds!cluster-*'
+      Events:
+        Nightly:
+          Type: Schedule
+          Properties:
+            Schedule: cron(0 2 * * ? *)  # daily 02:00 UTC, ahead of the obligation sweep
+
   TaskCronFunction:
     Type: AWS::Serverless::Function
     Properties:

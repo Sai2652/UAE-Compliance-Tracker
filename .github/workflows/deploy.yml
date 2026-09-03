@@ -23,6 +23,11 @@ env:
   STACK_NAME: uae-compliance-tracker
   ARTIFACT_BUCKET: uct-tracker-state-333973504173
   ARTIFACT_KEY: deploy/app.zip
+  # Ops-Mkt master client list, read-only. These ARNs are identifiers, not
+  # credentials — the IAM policy in template.yaml is what grants the SELECT,
+  # and services/opsMktSync.js refuses anything that is not one.
+  OPSMKT_CLUSTER_ARN: arn:aws:rds:ap-south-1:333973504173:cluster:opsmkt-pg
+  OPSMKT_SECRET_ARN: arn:aws:secretsmanager:ap-south-1:333973504173:secret:rds!cluster-bdb2320a-ca0f-405d-b2e6-15ade5fcf6f6-oG3I26
 
 jobs:
   deploy:
@@ -66,7 +71,7 @@ jobs:
       - name: Update Lambda code (fast path)
         if: github.event.inputs.full_stack != 'true'
         run: |
-          for FN in ApiFunction TaskCronFunction ObligationCronFunction EscalationCronFunction SlaCronFunction; do
+          for FN in ApiFunction TaskCronFunction ObligationCronFunction EscalationCronFunction SlaCronFunction OpsMktSyncCronFunction; do
             FULL_NAME=$(aws cloudformation describe-stack-resource \
               --stack-name ${{ env.STACK_NAME }} \
               --logical-resource-id "$FN" \
@@ -79,7 +84,7 @@ jobs:
               --s3-key ${{ env.ARTIFACT_KEY }} \
               --publish >/dev/null
           done
-          echo "All 5 Lambdas updated."
+          echo "All 6 Lambdas updated."
 
       - name: Full CloudFormation deploy (when template changes)
         if: github.event.inputs.full_stack == 'true'
@@ -98,7 +103,9 @@ jobs:
               JwtSecret='${{ secrets.JWT_SECRET }}' \
               S3Bucket=${{ env.ARTIFACT_BUCKET }} \
               DdbPrefix=Uct \
-              AppUrl='${{ secrets.APP_URL }}'
+              AppUrl='${{ secrets.APP_URL }}' \
+              OpsMktClusterArn=${{ env.OPSMKT_CLUSTER_ARN }} \
+              OpsMktSecretArn=${{ env.OPSMKT_SECRET_ARN }}
 
       - name: Smoke test
         run: |

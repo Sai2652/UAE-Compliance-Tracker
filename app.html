@@ -193,7 +193,76 @@ tbody tr:hover{background:var(--bg-card-hover)}
 // ═══════════════════════════════════════════════════════════════
 const STATUSES=["Not Started","In Progress","Completed","Blocked","Not Applicable"];
 const MONTHS=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-const ENTITY_TYPES=["FZCO (Free Zone)","FZE (Free Zone)","FZ-LLC (Free Zone)","Mainland LLC"];
+// UAE legal forms, grouped, with one line on when to pick each.
+//
+// The old list had four entries — FZCO, FZE, FZ-LLC and Mainland LLC — which
+// could not tell a DIFC company from an offshore holding company from a
+// representative office. That difference decides whether a client can claim
+// the free-zone 0% corporate-tax rate, whether it registers for CT at all,
+// and whether it can invoice inside the UAE, so the whole set is listed here
+// with guidance attached instead of leaving the team to guess.
+//
+// KEEP IN STEP WITH entityTypes.js — the server needs the same catalogue for
+// the Ops-Mkt sync, which runs with no browser. scripts/check-entity-types.js
+// fails if the two drift apart.
+const ENTITY_TYPE_CATALOGUE=[
+  {value:"Mainland — LLC",group:"Mainland (Economic Department licence)",hint:"The usual onshore company with two or more owners. Trades anywhere in the UAE. Corporate tax at 9% above AED 375,000 — no free-zone 0% relief."},
+  {value:"Mainland — One Person LLC",group:"Mainland (Economic Department licence)",hint:"An LLC with a single owner. Same tax and audit position as a normal LLC — pick this only when the licence itself says \"One Person\"."},
+  {value:"Mainland — Sole Establishment",group:"Mainland (Economic Department licence)",hint:"One individual trading in their own name, usually on a professional licence. The owner is personally liable for everything."},
+  {value:"Mainland — Civil Company",group:"Mainland (Economic Department licence)",hint:"A partnership of professionals — doctors, engineers, consultants, accountants. Partners are personally liable."},
+  {value:"Mainland — Private Joint Stock",group:"Mainland (Economic Department licence)",hint:"Shares held privately among founders, not offered to the public. Rare for SMEs — the licence will say PrJSC."},
+  {value:"Mainland — Public Joint Stock",group:"Mainland (Economic Department licence)",hint:"Listed, or able to offer shares publicly. Audited financial statements are compulsory every year."},
+  {value:"Mainland — Branch of a Foreign Company",group:"Mainland (Economic Department licence)",hint:"An arm of an overseas parent, with no share capital of its own. It still files its own UAE corporate tax return."},
+  {value:"Mainland — Branch of a UAE Company",group:"Mainland (Economic Department licence)",hint:"An arm of another UAE company. It is the same legal person as the parent, so corporate tax normally goes in the parent's return."},
+  {value:"Mainland — Representative Office",group:"Mainland (Economic Department licence)",hint:"Marketing and liaison only. It cannot trade or raise invoices, so there is no revenue to account for."},
+  {value:"Free Zone — FZE (single shareholder)",group:"Free Zone",hint:"Free Zone Establishment: exactly one shareholder. Can claim the 0% rate on qualifying income if it meets the free-zone conditions."},
+  {value:"Free Zone — FZCO / FZC (two or more shareholders)",group:"Free Zone",hint:"Free Zone Company: two or more shareholders. Same 0% possibility on qualifying income as an FZE."},
+  {value:"Free Zone — FZ-LLC",group:"Free Zone",hint:"The same thing as an FZCO — it is just the label DMCC, Dubai South and a few other zones print on the licence. Go by the licence wording."},
+  {value:"Free Zone — Branch",group:"Free Zone",hint:"A branch of a mainland or foreign company registered inside a free zone. Being in a zone does not by itself give it the 0% rate."},
+  {value:"Free Zone — Freelance Permit",group:"Free Zone",hint:"An individual permit, not a company. Corporate tax only bites once business turnover passes AED 1 million in a calendar year."},
+  {value:"DIFC — Company",group:"Financial free zone (own registrar and courts)",hint:"Dubai International Financial Centre company. Its own companies law and filing calendar — do not treat it like a Dubai mainland LLC."},
+  {value:"DIFC — Branch",group:"Financial free zone (own registrar and courts)",hint:"A branch registered with the DIFC registrar rather than an Economic Department."},
+  {value:"ADGM — Company",group:"Financial free zone (own registrar and courts)",hint:"Abu Dhabi Global Market company. Common-law rules and its own registrar, separate from Abu Dhabi mainland."},
+  {value:"ADGM — Branch",group:"Financial free zone (own registrar and courts)",hint:"A branch registered with the ADGM registrar."},
+  {value:"Offshore — JAFZA Offshore",group:"Offshore (cannot trade inside the UAE)",hint:"A Jebel Ali offshore holding company. No UAE trading, no office, no visas — usually just holds shares or property."},
+  {value:"Offshore — RAK ICC",group:"Offshore (cannot trade inside the UAE)",hint:"A Ras Al Khaimah International Corporate Centre company. Holding and asset ownership only."},
+  {value:"Offshore — Ajman Offshore",group:"Offshore (cannot trade inside the UAE)",hint:"An Ajman offshore holding company. Same restriction — it cannot trade or invoice within the UAE."},
+  {value:"Foundation",group:"Other structures",hint:"A DIFC, ADGM or RAK ICC foundation. It has no shareholders — it is used to hold assets and plan succession."},
+  {value:"Trust",group:"Other structures",hint:"A trust arrangement rather than a company. Choose this only when the instrument is actually a trust deed."},
+  {value:"Partnership (General or Limited)",group:"Other structures",hint:"A partnership registered as such. General partners carry unlimited liability; limited partners do not."},
+  {value:"Non-profit / Association",group:"Other structures",hint:"An association, society or non-profit body. Corporate tax may be exempt, but only once the exemption is actually granted."},
+  {value:"Natural Person (individual licence)",group:"Other structures",hint:"An individual doing business in their own name. They register for corporate tax only if business turnover crosses AED 1 million in a calendar year."},
+  {value:"Not Recorded",group:"Other structures",hint:"Use only as a placeholder when the trade licence has not been seen yet. Anything sitting here should be fixed before the first filing."}
+];
+const ENTITY_TYPES=ENTITY_TYPE_CATALOGUE.map(e=>e.value);
+// The four labels used before this catalogue existed, plus the spellings that
+// turn up in Excel imports, so old rows and old templates still load.
+const LEGACY_ENTITY_ALIASES={"mainland llc":"Mainland — LLC","llc":"Mainland — LLC","mainland":"Mainland — LLC","fzco (free zone)":"Free Zone — FZCO / FZC (two or more shareholders)","fzco":"Free Zone — FZCO / FZC (two or more shareholders)","fzc":"Free Zone — FZCO / FZC (two or more shareholders)","fze (free zone)":"Free Zone — FZE (single shareholder)","fze":"Free Zone — FZE (single shareholder)","fz-llc (free zone)":"Free Zone — FZ-LLC","fz-llc":"Free Zone — FZ-LLC","fz llc":"Free Zone — FZ-LLC","free zone":"Free Zone — FZCO / FZC (two or more shareholders)","difc":"DIFC — Company","adgm":"ADGM — Company","offshore":"Offshore — RAK ICC","branch":"Mainland — Branch of a Foreign Company","sole establishment":"Mainland — Sole Establishment","sole proprietorship":"Mainland — Sole Establishment","civil company":"Mainland — Civil Company","pjsc":"Mainland — Public Joint Stock","prjsc":"Mainland — Private Joint Stock"};
+function normalizeEntityType(raw){
+  const s=String(raw==null?"":raw).trim();
+  if(!s)return"";
+  const exact=ENTITY_TYPES.find(v=>v.toLowerCase()===s.toLowerCase());
+  if(exact)return exact;
+  const loose=s.toLowerCase().replace(/—/g,"-").replace(/\s+/g," ");
+  const byDash=ENTITY_TYPES.find(v=>v.toLowerCase().replace(/—/g,"-").replace(/\s+/g," ")===loose);
+  if(byDash)return byDash;
+  return LEGACY_ENTITY_ALIASES[s.toLowerCase()]||"";
+}
+function entityHintFor(v){const e=ENTITY_TYPE_CATALOGUE.find(x=>x.value===v);return e?e.hint:"";}
+// Grouped dropdown. The headings are what make a 26-entry list usable — you
+// find the zone first, then the form within it.
+function entitySelectHtml(id,selected,extraAttr){
+  const groups=[];
+  ENTITY_TYPE_CATALOGUE.forEach(e=>{const g=groups.find(x=>x.name===e.group);if(g)g.items.push(e);else groups.push({name:e.group,items:[e]});});
+  const sel=normalizeEntityType(selected)||"";
+  return`<select class="form-input" id="${id}" ${extraAttr||""}>${groups.map(g=>
+    `<optgroup label="${esc(g.name)}">${g.items.map(e=>`<option value="${esc(e.value)}"${e.value===sel?" selected":""}>${esc(e.value)}</option>`).join("")}</optgroup>`
+  ).join("")}</select>`;
+}
+// Trading vs service. Deliberately short: it drives what the team expects to
+// see in the books — stock and cost of goods for a trader, none for a service
+// firm — so a longer taxonomy would only invite inconsistent answers.
+const BUSINESS_NATURES=["Trading","Service","Trading & Service","Other","Not Recorded"];
 const VAT_OPTIONS=["Yes","No","Pending - Documents Awaited","Pending - Registration in Progress"];
 const FY_OPTIONS=["2023","2024","2025","2026","2027"];
 // "Not Applicable" covers months outside our scope of service. calcMetrics
@@ -467,7 +536,17 @@ function createBlankClient(ov={}){
   const ctDue=ov.ctDueDate||"2026-09-30";
   const ctFY=ov.ctFinancialYear||String(parseInt(ctDue.substring(0,4))-1);
   return{
-    id:uid(),name:ov.name||"",entityType:ov.entityType||"Mainland LLC",
+    id:uid(),name:ov.name||"",
+    // 'Not Recorded' rather than a guessed default. A client silently labelled
+    // "Mainland LLC" reads as a confirmed fact and nobody goes back to check
+    // it; a client labelled Not Recorded gets fixed.
+    entityType:normalizeEntityType(ov.entityType)||"Not Recorded",
+    // Set when the label came from reading a company name rather than a trade
+    // licence, so the UI can ask for it to be confirmed.
+    entityTypeGuessed:!!ov.entityTypeGuessed,
+    // Trading or service. Drives what the team expects to find in the books.
+    businessNature:ov.businessNature||"Not Recorded",
+    trn:ov.trn||"",
     assignedTeam:ov.assignedTeam||"Unassigned",
     vatApplicable:vatVal,
     ctApplicable:ov.ctApplicable!==undefined?ov.ctApplicable:true,
@@ -693,6 +772,7 @@ function _renderImpl(){
     h+=`</div>`;
     if(state.showModal==="addClient")h+=renderAddModal();
     if(state.showModal==="manageTeam")h+=renderTeamModal();
+    if(state.showModal==="opsMkt")h+=renderOpsMktModal();
     if(state.showModal==="addVatReturn")h+=renderAddVatReturnModal();
     if(state.showModal==="addCredential")h+=renderAddCredentialModal();
 
@@ -746,7 +826,10 @@ function isInsightTab(k){ return INSIGHTS_TABS.some(t=>t[0]===k); }
 // Main navigation lives in the left sidebar now (see renderMainNavSidebar).
 // The header keeps only branding + admin action buttons + user chip.
 function renderHeader(){
-  const adminBtns=isAdmin()?`<button class="btn" data-action="openManageTeam">👥 Team (${state.teamMembers.length})</button><button class="btn btn-primary" data-action="openAddClient">+ Add Client</button>`:'';
+  // Fetch is Super Admin only — it pulls a whole First POC's book of clients
+  // across from Ops-Mkt, which is a firm-level decision, not a team one.
+  const fetchBtn=isSuperAdmin()?`<button class="btn" data-action="openOpsMkt" title="Pull clients across from the Ops-Mkt master tracker">⬇ Fetch clients</button>`:'';
+  const adminBtns=isAdmin()?`<button class="btn" data-action="openManageTeam">👥 Team (${state.teamMembers.length})</button>${fetchBtn}<button class="btn btn-primary" data-action="openAddClient">+ Add Client</button>`:'';
   return`<div class="header"><div class="logo"><div class="logo-mark">CT</div><div><div class="logo-text">UAE Compliance Tracker</div><div class="logo-sub">Accounting &amp; Tax Ops</div></div></div><div class="header-actions">${adminBtns}${currentUser?`<div style="display:flex;align-items:center;gap:8px;margin-left:8px;padding-left:12px;border-left:1px solid var(--border)"><span style="font-size:12px;color:var(--text-muted)">${esc(currentUser.name)}</span><span style="font-size:9px;padding:2px 6px;border-radius:4px;background:${isAdmin()?'var(--accent-soft)':'var(--bg-elevated)'};color:${isAdmin()?'var(--accent)':'var(--text-muted)'};font-weight:700;text-transform:uppercase" title="${esc(roleLabel(currentUser))}">${esc(roleLabel(currentUser))}</span>${isAdmin()?'<a href="/admin" style="font-size:11px;color:var(--accent);text-decoration:none" title="Admin panel">⚙</a>':''}<button class="btn btn-sm" data-action="logout" style="font-size:11px">Logout</button></div>`:''}</div></div>`;
 }
 
@@ -2915,7 +2998,7 @@ function renderOverview(sc,scm){
   h+=`<div id="cli-timeline-${sc.id}" style="margin-bottom:16px"></div>`;
   setTimeout(function(){ loadClientLifecycle(sc.id); loadClientPortfolio(sc.id); loadClientTimeline(sc.id); }, 0);
   h+=`<div class="stat-grid" style="grid-template-columns:repeat(5,1fr)">${[{l:"Accounting",p:scm.acctPct,s:scm.acctStatus},{l:"VAT",p:scm.vatPct,s:scm.vatStatus},{l:"Corp Tax",p:scm.ctPct,s:scm.ctStatus},{l:"Documents",p:scm.docsPct,s:scm.docsStatus},{l:"Logins",p:scm.loginsPct,s:scm.loginsStatus}].map(i=>`<div class="stat-card"><div class="form-label" style="margin-bottom:6px">${i.l}</div><div class="stat-value" style="font-size:22px">${i.p}%</div><div style="margin-top:6px">${badgeHTML(i.s,1)}</div></div>`).join("")}</div>`;
-  h+=`<div class="card"><div class="card-title">Client Details</div><div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px"><div><div class="form-label">Entity Type</div><div>${esc(sc.entityType)}</div></div><div><div class="form-label">Financial Year</div><div>FY ${esc(sc.accounting.financialYear)}</div></div><div><div class="form-label">Assigned To</div>${isAdmin()?selectHTML("at",sc.assignedTeam,getTeamOptions(),`data-client-field="${sc.id}"`):`<div style="font-weight:600">${esc(sc.assignedTeam)}</div>`}</div><div><div class="form-label">VAT Status</div>${isAdmin()?selectHTML("vs",sc.vatApplicable,VAT_OPTIONS,`data-client-vatapp="${sc.id}"`):`<div>${esc(sc.vatApplicable)}</div>`}</div><div><div class="form-label">CT Applicable</div><div style="color:${sc.ctApplicable?'var(--green)':'var(--red)'};font-weight:600">${sc.ctApplicable?"Yes":"No"}</div></div><div><div class="form-label">Last Updated</div><div style="font-size:12px;color:var(--text-muted)">${fmtDate(sc.lastUpdated)} ${sc.lastUpdatedBy?'by '+esc(sc.lastUpdatedBy):''}</div></div></div></div>`;
+  h+=`<div class="card"><div class="card-title">Client Details</div><div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px"><div><div class="form-label">Entity Type</div>${isAdmin()?entitySelectHtml("etSel_"+sc.id,sc.entityType,`data-client-entity="${sc.id}" data-entity-hint-for="etHint_${sc.id}" style="padding:5px 8px;font-size:12px;max-width:230px"`):`<div>${esc(sc.entityType)}</div>`}${sc.entityTypeGuessed?`<div style="font-size:10px;color:var(--amber);margin-top:3px;font-weight:600">⚠ Read off the company name — check the trade licence</div>`:''}<div id="etHint_${sc.id}" style="font-size:10px;color:var(--text-muted);line-height:1.45;margin-top:4px">${esc(entityHintFor(normalizeEntityType(sc.entityType)||sc.entityType))}</div></div><div><div class="form-label">Nature</div>${isAdmin()?selectHTML("bn",sc.businessNature||"Not Recorded",BUSINESS_NATURES,`data-client-nature="${sc.id}"`):`<div>${esc(sc.businessNature||"Not Recorded")}</div>`}</div><div><div class="form-label">Financial Year</div><div>FY ${esc(sc.accounting.financialYear)}</div></div><div><div class="form-label">Assigned To</div>${isAdmin()?selectHTML("at",sc.assignedTeam,getTeamOptions(),`data-client-field="${sc.id}"`):`<div style="font-weight:600">${esc(sc.assignedTeam)}</div>`}</div><div><div class="form-label">VAT Status</div>${isAdmin()?selectHTML("vs",sc.vatApplicable,VAT_OPTIONS,`data-client-vatapp="${sc.id}"`):`<div>${esc(sc.vatApplicable)}</div>`}</div><div><div class="form-label">CT Applicable</div><div style="color:${sc.ctApplicable?'var(--green)':'var(--red)'};font-weight:600">${sc.ctApplicable?"Yes":"No"}</div></div><div><div class="form-label">Last Updated</div><div style="font-size:12px;color:var(--text-muted)">${fmtDate(sc.lastUpdated)} ${sc.lastUpdatedBy?'by '+esc(sc.lastUpdatedBy):''}</div></div></div></div>`;
   if(scm.warnings.length)h+=`<div class="card" style="border-color:var(--red-border)"><div class="card-title" style="color:var(--red)">⚠ Warnings</div>${scm.warnings.map(w=>`<div style="padding:5px 0;font-size:13px;color:var(--amber);border-bottom:1px solid var(--border)">• ${esc(w)}</div>`).join("")}</div>`;
   // Blocked reasons summary — specific per module
   const brs=sc.blockedReasons||{};
@@ -3533,10 +3616,9 @@ function processExcelFile(file){
       for(let i=0;i<Math.min(rows.length,10);i++){if(rows[i].some(c=>String(c).toLowerCase().includes("client name"))){headerIdx=i;break;}}
       if(headerIdx===-1){statusEl.innerHTML=`<div class="alert alert-warning" style="margin:0">⚠ "Client Name" header not found in first 10 rows.</div>`;return;}
       const hdr=rows[headerIdx].map(h=>String(h).toLowerCase().trim());
-      const col={name:hdr.findIndex(h=>h.includes("client name")),entity:hdr.findIndex(h=>h.includes("entity")),team:hdr.findIndex(h=>h.includes("assigned")||h.includes("team")),vat:hdr.findIndex(h=>h.includes("vat")),ct:hdr.findIndex(h=>h.includes("ct")||h.includes("corporate")),fy:hdr.findIndex(h=>h.includes("year start")||h.includes("financial")),ctdue:hdr.findIndex(h=>h.includes("due date")||h.includes("ct due"))};
+      const col={name:hdr.findIndex(h=>h.includes("client name")),entity:hdr.findIndex(h=>h.includes("entity")),team:hdr.findIndex(h=>h.includes("assigned")||h.includes("team")),vat:hdr.findIndex(h=>h.includes("vat")),nature:hdr.findIndex(h=>h.includes("nature")),ct:hdr.findIndex(h=>h.includes("ct")||h.includes("corporate")),fy:hdr.findIndex(h=>h.includes("year start")||h.includes("financial")),ctdue:hdr.findIndex(h=>h.includes("due date")||h.includes("ct due"))};
       let imported=0,skipped=0,dupes=0;const errors=[];
       const existing=new Set([...state.clients.map(c=>c.name.toLowerCase()),...state.bulkClients.map(c=>c.name.toLowerCase())]);
-      const validEntities=ENTITY_TYPES;
       const parseBool=v=>{const s=String(v||"").toLowerCase().trim();return s===""||s==="yes"||s==="y"||s==="true"||s==="1";};
       const isDate=s=>/^\d{4}-\d{2}-\d{2}$/.test(s)&&!isNaN(new Date(s).getTime());
       for(let i=headerIdx+1;i<rows.length;i++){
@@ -3544,13 +3626,19 @@ function processExcelFile(file){
         if(!name){skipped++;continue;}
         if(existing.has(name.toLowerCase())){dupes++;continue;}
         const eRaw=col.entity>=0?String(r[col.entity]||"").trim():"";
-        let entity="Mainland LLC";
-        if(eRaw){if(validEntities.includes(eRaw))entity=eRaw;else errors.push(`Row ${rn}: Unknown entity "${eRaw}" → Mainland LLC`);}
+        // An unrecognised entity parks at Not Recorded, not at a guessed
+        // "Mainland LLC". A wrong-but-plausible label is worse than a blank
+        // one, because nobody comes back to correct it.
+        let entity="Not Recorded";
+        if(eRaw){const norm=normalizeEntityType(eRaw);if(norm)entity=norm;else errors.push(`Row ${rn}: Unknown entity "${eRaw}" → Not Recorded`);}
+        const nRaw=col.nature>=0?String(r[col.nature]||"").trim():"";
+        let nature="Not Recorded";
+        if(nRaw){const nn=BUSINESS_NATURES.find(b=>b.toLowerCase()===nRaw.toLowerCase());if(nn)nature=nn;else if(/^trad/i.test(nRaw))nature="Trading";else if(/^serv/i.test(nRaw))nature="Service";else errors.push(`Row ${rn}: Unknown nature "${nRaw}" → Not Recorded`);}
         const team=col.team>=0?String(r[col.team]||"").trim()||"Unassigned":"Unassigned";
         let vat="Yes";
         if(col.vat>=0){const vr=String(r[col.vat]||"").trim().toLowerCase();if(!vr||vr==="yes")vat="Yes";else if(vr==="no")vat="No";else if(vr.includes("pending")||vr.includes("await"))vat="Pending - Documents Awaited";else if(vr.includes("registration")||vr.includes("progress"))vat="Pending - Registration in Progress";else{errors.push(`Row ${rn}: Unknown VAT "${r[col.vat]}" → Yes`);}}
         let ct=true;if(col.ct>=0)ct=parseBool(r[col.ct]);
-        state.bulkClients.push({name,entityType:entity,assignedTeam:team,vatApplicable:vat,ctApplicable:ct});
+        state.bulkClients.push({name,entityType:entity,businessNature:nature,assignedTeam:team,vatApplicable:vat,ctApplicable:ct});
         existing.add(name.toLowerCase());imported++;
       }
       let msg=imported?`<div class="alert" style="margin:0 0 6px;background:var(--green-bg);border:1px solid var(--green-border);color:var(--green)">✅ Imported <b>${imported}</b> client${imported!==1?'s':''}${dupes?` · ${dupes} dupes skipped`:''}${skipped?` · ${skipped} empty rows`:''}</div>`:`<div class="alert alert-warning" style="margin:0 0 6px">No valid clients found</div>`;
@@ -3562,21 +3650,182 @@ function processExcelFile(file){
   reader.readAsArrayBuffer(file);
 }
 
+// ═══════════════════════════════════════════════════════════════
+// FETCH CLIENTS FROM OPS-MKT
+// ═══════════════════════════════════════════════════════════════
+// Ops-Mkt is where a client first exists — the moment the firm signs it, it
+// is on that grid with a First POC against it. Re-typing that list here was
+// how the two drifted apart, so this pulls it across instead: pick the First
+// POCs whose book this tracker should carry, see exactly what will arrive,
+// then fetch. After that the nightly sweep keeps up with new signings on its
+// own, and Refresh does the same on demand.
+//
+// It only ever adds. A client disengaged in Ops-Mkt keeps its record here,
+// because its filings and its history are still this team's work.
+const opsState={loading:false,error:'',pocs:null,selected:new Set(),preview:null,previewing:false,working:'',status:null,activeOnly:true};
+
+// Pull the client list back from the server after a fetch or a sync. The
+// clients are created server-side, so the page has to re-read them rather
+// than merge — and it must not go anywhere near saveData(), which would push
+// the stale in-memory list straight back over what was just written.
+async function reloadTrackerFromServer(){
+  const d=await loadData();
+  if(d){ state.clients=d.clients||[]; state.teamMembers=d.teamMembers||[]; }
+  render();
+}
+
+async function loadOpsMkt(){
+  opsState.loading=true;opsState.error='';render();
+  try{
+    const [p,s]=await Promise.all([apiJSON('/api/opsmkt/pocs'),apiJSON('/api/opsmkt/status')]);
+    opsState.pocs=p.pocs||[];opsState.status=s;opsState.activeOnly=s.activeOnly!==false;
+    // Pre-tick the POCs already being followed, so Refresh and Fetch show the
+    // same selection and nobody has to remember what was chosen last time.
+    (s.pocs||[]).forEach(x=>opsState.selected.add(x));
+  }catch(e){opsState.error=e.message;}
+  opsState.loading=false;render();
+}
+
+async function previewOpsMkt(){
+  if(!opsState.selected.size){opsState.preview=null;render();return;}
+  opsState.previewing=true;opsState.error='';render();
+  try{
+    opsState.preview=await apiJSON('/api/opsmkt/preview',{method:'POST',body:JSON.stringify({pocs:[...opsState.selected],activeOnly:opsState.activeOnly})});
+  }catch(e){opsState.error=e.message;opsState.preview=null;}
+  opsState.previewing=false;render();
+}
+
+async function runOpsMktFetch(){
+  if(!opsState.selected.size){alert('Pick at least one First POC.');return;}
+  const n=opsState.preview?opsState.preview.willAdd:0;
+  if(!n){alert('Nothing new to add for that selection.');return;}
+  if(!confirm('Add '+n+' client(s) to the tracker?\n\nThis creates their VAT and CT obligations too. Nothing in Ops-Mkt is changed.'))return;
+  opsState.working='Fetching '+n+' client(s)…';opsState.error='';render();
+  try{
+    const r=await apiJSON('/api/opsmkt/fetch',{method:'POST',body:JSON.stringify({pocs:[...opsState.selected],activeOnly:opsState.activeOnly})});
+    opsState.working='';opsState.preview=null;
+    await reloadTrackerFromServer();
+    await loadOpsMkt();
+    alert('Added '+r.added+' client(s). VAT and CT deadlines set up for '+r.seeded+'.'+(r.deferred?'\n\nThe last '+r.deferred+' will get theirs in tonight\'s run — the clients themselves are already saved.':''));
+  }catch(e){opsState.error=e.message;opsState.working='';render();}
+}
+
+async function runOpsMktRefresh(){
+  opsState.working='Checking Ops-Mkt for new clients…';opsState.error='';render();
+  try{
+    const r=await apiJSON('/api/opsmkt/sync',{method:'POST',body:JSON.stringify({})});
+    opsState.working='';
+    await reloadTrackerFromServer();
+    await loadOpsMkt();
+    alert(r.added?('Added '+r.added+' new client(s): '+(r.newNames||[]).join(', ')):(r.note||'Nothing new — the tracker is already up to date.'));
+  }catch(e){opsState.error=e.message;opsState.working='';render();}
+}
+
+async function setOpsMktAutoSync(on){
+  try{ await apiJSON('/api/opsmkt/settings',{method:'PUT',body:JSON.stringify({autoSync:on})}); await loadOpsMkt(); }
+  catch(e){ opsState.error=e.message; render(); }
+}
+
+function renderOpsMktModal(){
+  const s=opsState.status;
+  let h=`<div class="modal-overlay" data-action="closeModal"><div class="modal" onclick="event.stopPropagation()" style="width:860px;max-width:96vw"><div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:4px"><div><div class="modal-title" style="margin-bottom:2px">Fetch clients from Ops-Mkt</div><div style="font-size:12px;color:var(--text-muted);line-height:1.5">Pick the First POCs whose clients this tracker should carry. Ops-Mkt is only read — nothing there is changed.</div></div><button class="btn btn-sm" data-action="closeModal">✕</button></div>`;
+
+  if(opsState.error)h+=`<div class="alert" style="margin:12px 0;background:var(--red-bg);border:1px solid var(--red-border);color:var(--red)">${esc(opsState.error)}</div>`;
+  if(opsState.working)h+=`<div class="alert" style="margin:12px 0;background:var(--bg-elevated);border:1px solid var(--border)">⏳ ${esc(opsState.working)}</div>`;
+
+  if(s&&!s.configured)h+=`<div class="alert" style="margin:12px 0;background:var(--amber-bg);border:1px solid var(--amber-border);color:var(--amber)">The Ops-Mkt link is not configured on the server yet, so nothing can be fetched.</div>`;
+
+  // What the tracker is already following, and when it last looked.
+  if(s&&s.pocs&&s.pocs.length){
+    h+=`<div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin:12px 0;padding:10px 12px;background:var(--bg-elevated);border:1px solid var(--border);border-radius:var(--radius);font-size:12px">
+      <div><b>Following:</b> ${s.pocs.map(p=>esc(p)).join(', ')}</div>
+      <div style="color:var(--text-muted)">${s.fromOpsMkt} of ${s.trackerClients} clients came from Ops-Mkt</div>
+      <div style="color:var(--text-muted)">Last checked: ${s.lastSyncAt?fmtDate(s.lastSyncAt.slice(0,10)):'never'}</div>
+      <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="opsAuto"${s.autoSync?' checked':''}> Add new clients automatically each night</label>
+        <button class="btn btn-sm" data-action="opsRefresh">↻ Refresh now</button>
+      </div>
+    </div>`;
+  }
+
+  if(opsState.loading&&!opsState.pocs)h+=`<div style="padding:28px;text-align:center;color:var(--text-muted);font-size:13px">Reading the Ops-Mkt client list…</div>`;
+  else if(opsState.pocs){
+    h+=`<div class="form-label" style="margin-top:6px">First POC</div>`;
+    h+=`<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:10px">`;
+    opsState.pocs.forEach(p=>{
+      const on=opsState.selected.has(p.poc);
+      h+=`<label style="display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid ${on?'var(--accent)':'var(--border)'};border-radius:var(--radius);cursor:pointer;font-size:12px;background:${on?'var(--accent-soft)':'transparent'}">
+        <input type="checkbox" data-ops-poc="${esc(p.poc)}"${on?' checked':''}>
+        <span style="flex:1;font-weight:600">${esc(p.poc)}</span>
+        <span style="color:var(--text-muted)">${p.active} active</span>
+      </label>`;
+    });
+    h+=`</div>`;
+    h+=`<div style="display:flex;gap:12px;align-items:center;margin-bottom:12px">
+      <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer"><input type="checkbox" id="opsActiveOnly"${opsState.activeOnly?' checked':''}> Active clients only</label>
+      <button class="btn btn-sm" data-action="opsPreview"${opsState.selected.size?'':' style="opacity:0.4;pointer-events:none"'}>Check what will be added</button>
+      <span style="font-size:11px;color:var(--text-muted)">${opsState.selected.size?opsState.selected.size+' POC selected':'Nothing selected yet'}</span>
+    </div>`;
+  }
+
+  // The preview. Shown before anything is written, because importing sixty
+  // clients to find out what they were is not a workable order of events.
+  const pv=opsState.preview;
+  if(opsState.previewing)h+=`<div style="padding:18px;text-align:center;color:var(--text-muted);font-size:12px">Working out what would be added…</div>`;
+  else if(pv){
+    h+=`<div class="alert" style="margin:0 0 10px;background:${pv.willAdd?'var(--green-bg)':'var(--bg-elevated)'};border:1px solid ${pv.willAdd?'var(--green-border)':'var(--border)'};color:${pv.willAdd?'var(--green)':'var(--text-muted)'};font-size:12px">
+      ${pv.willAdd?('<b>'+pv.willAdd+'</b> client(s) will be added'):'Nothing new to add'} — ${pv.skippedTotal} skipped, ${pv.scanned} scanned in Ops-Mkt</div>`;
+    if(pv.clients.length){
+      h+=`<div style="max-height:240px;overflow:auto;border:1px solid var(--border);border-radius:var(--radius);margin-bottom:10px"><table style="font-size:11px"><thead><tr>
+        <th style="padding:6px 8px;text-align:left">Client</th><th style="padding:6px 8px;text-align:left">Entity type</th><th style="padding:6px 8px;text-align:left">Nature</th><th style="padding:6px 8px;text-align:left">VAT</th><th style="padding:6px 8px;text-align:left">Assign to</th></tr></thead><tbody>`;
+      pv.clients.forEach(c=>{
+        h+=`<tr><td style="padding:5px 8px;font-weight:600">${esc(c.name)}</td>
+          <td style="padding:5px 8px">${esc(c.entityType)}${c.entityTypeGuessed?' <span style="color:var(--amber)" title="Read off the company name — confirm against the trade licence">⚠</span>':''}</td>
+          <td style="padding:5px 8px;color:var(--text-muted)">${esc(c.businessNature)}</td>
+          <td style="padding:5px 8px">${esc(c.vatApplicable)}</td>
+          <td style="padding:5px 8px">${c.assignedTeam==='Unassigned'?`<span style="color:var(--amber)">Unassigned${c.opsMktMember?' ('+esc(c.opsMktMember)+' in Ops-Mkt)':''}</span>`:esc(c.assignedTeam)}</td></tr>`;
+      });
+      h+=`</tbody></table></div>`;
+      h+=`<div style="font-size:11px;color:var(--text-muted);line-height:1.5;margin-bottom:12px">⚠ marks an entity type read off the company name rather than a trade licence — open the client and confirm it. Anyone shown Unassigned is handled by someone in Ops-Mkt who is not a user of this tracker, so assign them here.</div>`;
+    }
+    if(pv.skipped.length){
+      h+=`<details style="margin-bottom:12px"><summary style="cursor:pointer;font-size:12px;color:var(--text-muted)">Why ${pv.skippedTotal} were skipped</summary><div style="max-height:160px;overflow:auto;font-size:11px;padding:8px 0">`;
+      pv.skipped.forEach(sk=>{h+=`<div style="padding:3px 0;border-bottom:1px solid var(--border)"><b>${esc(sk.name)}</b> — ${esc(sk.reason)}</div>`;});
+      h+=`</div></details>`;
+    }
+  }
+
+  h+=`<div style="display:flex;justify-content:flex-end;gap:8px;padding-top:12px;border-top:1px solid var(--border)">
+    <button class="btn" data-action="closeModal">Close</button>
+    <button class="btn btn-primary" data-action="opsFetch"${(pv&&pv.willAdd)?'':' style="opacity:0.4;pointer-events:none"'}>Fetch ${(pv&&pv.willAdd)?pv.willAdd+' client(s)':'clients'}</button>
+  </div></div></div>`;
+  return h;
+}
+
 function generateTemplateXLSX(){
   const wb=XLSX.utils.book_new();
   const wsData=[
     ["UAE Compliance Tracker — Client Import Template"],
     ["Fill details. * = required. VAT: Yes/No/Pending - Documents Awaited/Pending - Registration in Progress. CT: Yes/No. Dates: YYYY-MM-DD"],
     [],
-    ["Client Name *","Entity Type *","Assigned Team Member","VAT Applicable","CT Applicable"],
-    ["Al Noor Trading","Mainland LLC","","Yes","Yes"],
-    ["Gulf Star","FZE (Free Zone)","","Pending - Documents Awaited","Yes"],
-    ["Horizon","FZCO (Free Zone)","","No","No"],
+    ["Client Name *","Entity Type *","Nature","Assigned Team Member","VAT Applicable","CT Applicable"],
+    ["Al Noor Trading","Mainland — LLC","Trading","","Yes","Yes"],
+    ["Gulf Star","Free Zone — FZE (single shareholder)","Service","","Pending - Documents Awaited","Yes"],
+    ["Horizon","Free Zone — FZCO / FZC (two or more shareholders)","Trading & Service","","No","No"],
   ];
+  // A second sheet listing every valid entity type with its guidance, so the
+  // person filling the template has the same help the dropdown gives and does
+  // not have to invent a label the import will then reject.
+  const refData=[["Entity Type","Group","When to choose it"]].concat(
+    ENTITY_TYPE_CATALOGUE.map(e=>[e.value,e.group,e.hint])
+  ).concat([[],["Nature"],...BUSINESS_NATURES.map(n=>[n])]);
   const ws=XLSX.utils.aoa_to_sheet(wsData);
-  ws['!cols']=[{wch:36},{wch:24},{wch:26},{wch:34},{wch:18}];
-  ws['!merges']=[{s:{r:0,c:0},e:{r:0,c:4}},{s:{r:1,c:0},e:{r:1,c:4}}];
+  ws['!cols']=[{wch:36},{wch:46},{wch:18},{wch:26},{wch:34},{wch:18}];
+  ws['!merges']=[{s:{r:0,c:0},e:{r:0,c:5}},{s:{r:1,c:0},e:{r:1,c:5}}];
   XLSX.utils.book_append_sheet(wb,ws,"Client Import");
+  const wsRef=XLSX.utils.aoa_to_sheet(refData);
+  wsRef['!cols']=[{wch:46},{wch:40},{wch:110}];
+  XLSX.utils.book_append_sheet(wb,wsRef,"Entity Types");
   XLSX.writeFile(wb,"client_import_template.xlsx");
 }
 
@@ -3601,7 +3850,13 @@ function renderAddModal(){
   h+=`<div style="display:flex;align-items:center;gap:12px;margin-bottom:10px"><div style="flex:1;height:1px;background:var(--border)"></div><span style="font-size:10px;color:var(--text-muted);font-weight:600">OR ADD MANUALLY</span><div style="flex:1;height:1px;background:var(--border)"></div></div>`;
 
   // Manual input
-  h+=`<div class="card" style="padding:14px;margin-bottom:12px;border-color:var(--accent-soft)"><div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:10px"><div><div class="form-label">Client Name *</div><input class="form-input" id="bcName" placeholder="e.g., Al Noor Trading"></div><div><div class="form-label">Entity Type</div><select class="form-input" id="bcEntity">${ENTITY_TYPES.map(e=>`<option>${e}</option>`).join("")}</select></div><div><div class="form-label">Assigned To</div><select class="form-input" id="bcTeam">${to.map(t=>`<option>${esc(t)}</option>`).join("")}</select></div></div><div style="display:flex;gap:16px;align-items:flex-end"><div style="flex:1"><div class="form-label">VAT</div><select class="form-input" id="bcVAT" style="padding:5px 8px;font-size:12px">${VAT_OPTIONS.map(o=>`<option${o==="Yes"?' selected':''}>${esc(o)}</option>`).join("")}</select></div><label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;padding-bottom:6px"><input type="checkbox" id="bcCT" checked> Corp Tax</label><button class="btn btn-primary btn-sm" data-action="addToList">+ Add to List</button></div></div>`;
+  h+=`<div class="card" style="padding:14px;margin-bottom:12px;border-color:var(--accent-soft)"><div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:10px"><div><div class="form-label">Client Name *</div><input class="form-input" id="bcName" placeholder="e.g., Al Noor Trading"></div><div><div class="form-label">Entity Type</div>${entitySelectHtml("bcEntity","Not Recorded")}</div><div><div class="form-label">Assigned To</div><select class="form-input" id="bcTeam">${to.map(t=>`<option>${esc(t)}</option>`).join("")}</select></div></div>`;
+  // The guidance for whatever is currently selected, right under the picker.
+  // Twenty-six legal forms is only useful if you can tell them apart at the
+  // moment of choosing — sending someone to a wiki page instead means the
+  // field gets filled with whatever is at the top of the list.
+  h+=`<div id="bcEntityHint" style="font-size:11px;color:var(--text-muted);line-height:1.5;margin:-4px 0 10px;padding:7px 9px;background:var(--bg-elevated);border-radius:var(--radius);border:1px solid var(--border)">${esc(entityHintFor("Not Recorded"))}</div>`;
+  h+=`<div style="display:flex;gap:16px;align-items:flex-end"><div style="flex:1"><div class="form-label">VAT</div><select class="form-input" id="bcVAT" style="padding:5px 8px;font-size:12px">${VAT_OPTIONS.map(o=>`<option${o==="Yes"?' selected':''}>${esc(o)}</option>`).join("")}</select></div><div style="flex:1"><div class="form-label">Nature</div><select class="form-input" id="bcNature" style="padding:5px 8px;font-size:12px">${BUSINESS_NATURES.map(o=>`<option${o==="Not Recorded"?' selected':''}>${esc(o)}</option>`).join("")}</select></div><label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;padding-bottom:6px"><input type="checkbox" id="bcCT" checked> Corp Tax</label><button class="btn btn-primary btn-sm" data-action="addToList">+ Add to List</button></div></div>`;
 
   // Staged list
   if(bc.length){h+=`<div style="max-height:180px;overflow-y:auto;margin-bottom:12px"><table><thead><tr><th style="padding:6px 8px;font-size:9px">#</th><th style="padding:6px 8px;font-size:9px">Name</th><th style="padding:6px 8px;font-size:9px">Entity</th><th style="padding:6px 8px;font-size:9px">VAT</th><th style="padding:6px 8px;font-size:9px"></th></tr></thead><tbody>`;bc.forEach((c,i)=>{h+=`<tr><td style="padding:5px 8px;font-size:11px">${i+1}</td><td style="padding:5px 8px;font-size:12px;font-weight:600">${esc(c.name)}</td><td style="padding:5px 8px;font-size:11px;color:var(--text-muted)">${esc(c.entityType)}</td><td style="padding:5px 8px;font-size:11px;color:${c.vatApplicable==='Yes'?'var(--green)':c.vatApplicable==='No'?'var(--text-muted)':'var(--amber)'}">${c.vatApplicable.startsWith('Pending')?'Pending':c.vatApplicable}</td><td style="padding:5px 8px"><button class="tm-remove" data-action="removeBulkItem" data-idx="${i}">✕</button></td></tr>`;});h+=`</tbody></table></div>`;}
@@ -3704,6 +3959,10 @@ function bindEvents(){
     const a=el.dataset.action;
     if(a==="openAddClient")el.onclick=()=>{state.showModal="addClient";state.bulkClients=[];render();};
     if(a==="openManageTeam")el.onclick=()=>{state.showModal="manageTeam";render();};
+    if(a==="openOpsMkt")el.onclick=()=>{state.showModal="opsMkt";opsState.preview=null;opsState.error='';render();loadOpsMkt();};
+    if(a==="opsPreview")el.onclick=()=>previewOpsMkt();
+    if(a==="opsFetch")el.onclick=()=>runOpsMktFetch();
+    if(a==="opsRefresh")el.onclick=()=>runOpsMktRefresh();
     if(a==="openAddVatReturn")el.onclick=()=>{state.showModal="addVatReturn";render();};
     if(a==="openAddCredential")el.onclick=()=>{state.showModal="addCredential";render();};
     if(a==="closeModal")el.onclick=()=>{state.showModal=null;render();};
@@ -3739,7 +3998,7 @@ function bindEvents(){
     if(a==="addToList")el.onclick=()=>{
       const n=document.getElementById("bcName")?.value?.trim();if(!n){alert("Enter client name");return;}
       if(state.bulkClients.some(c=>c.name.toLowerCase()===n.toLowerCase())){alert("Already in list");return;}
-      state.bulkClients.push({name:n,entityType:document.getElementById("bcEntity")?.value,assignedTeam:document.getElementById("bcTeam")?.value||"Unassigned",vatApplicable:document.getElementById("bcVAT")?.value||"Yes",ctApplicable:document.getElementById("bcCT")?.checked??true});
+      state.bulkClients.push({name:n,entityType:document.getElementById("bcEntity")?.value,businessNature:document.getElementById("bcNature")?.value||"Not Recorded",assignedTeam:document.getElementById("bcTeam")?.value||"Unassigned",vatApplicable:document.getElementById("bcVAT")?.value||"Yes",ctApplicable:document.getElementById("bcCT")?.checked??true});
       render();setTimeout(()=>{const i=document.getElementById("bcName");if(i)i.focus();},0);
     };
     if(a==="removeBulkItem")el.onclick=()=>{state.bulkClients.splice(parseInt(el.dataset.idx),1);render();};
@@ -3809,6 +4068,27 @@ function bindEvents(){
   const tmI=document.getElementById("tmName");if(tmI)tmI.onkeydown=(e)=>{if(e.key==="Enter"){e.preventDefault();document.querySelector('[data-action="addTeamMember"]')?.click();}};
   const bcI=document.getElementById("bcName");if(bcI)bcI.onkeydown=(e)=>{if(e.key==="Enter"){e.preventDefault();document.querySelector('[data-action="addToList"]')?.click();}};
 
+  // Ops-Mkt fetch modal: POC ticks, the active-only filter and the nightly
+  // switch. Ticking a POC clears any preview on screen — it described a
+  // different selection, and leaving it up would invite fetching the wrong one.
+  document.querySelectorAll("[data-ops-poc]").forEach(el=>{el.onchange=()=>{
+    const p=el.dataset.opsPoc;
+    if(el.checked)opsState.selected.add(p);else opsState.selected.delete(p);
+    opsState.preview=null;render();
+  };});
+  const oao=document.getElementById("opsActiveOnly");
+  if(oao)oao.onchange=()=>{opsState.activeOnly=oao.checked;opsState.preview=null;render();};
+  const oat=document.getElementById("opsAuto");
+  if(oat)oat.onchange=()=>setOpsMktAutoSync(oat.checked);
+
+  // Entity-type guidance follows the selection. Swapped in place rather than
+  // through render() so the half-typed client name in the form survives.
+  const bcE=document.getElementById("bcEntity");
+  if(bcE)bcE.onchange=()=>{const t=document.getElementById("bcEntityHint");if(t)t.textContent=entityHintFor(bcE.value);};
+  document.querySelectorAll('[data-entity-hint-for]').forEach(sel=>{
+    sel.onchange=()=>{const t=document.getElementById(sel.dataset.entityHintFor);if(t)t.textContent=entityHintFor(sel.value);};
+  });
+
   // Excel file import
   const dz=document.getElementById("dropZone"),fi=document.getElementById("excelFileInput");
   if(dz&&fi){
@@ -3842,6 +4122,19 @@ function bindEvents(){
   // Client fields
   document.querySelectorAll("[data-client-field]").forEach(el=>{el.onchange=(e)=>{const c=getClient(el.dataset.clientField);if(c){c.assignedTeam=e.target.value;markUpdated(c);updateAndSave();}};});
   document.querySelectorAll("[data-client-vatapp]").forEach(el=>{el.onchange=(e)=>{const c=getClient(el.dataset.clientVatapp);if(c){c.vatApplicable=e.target.value;if(e.target.value==="Yes"&&!c.vat.returnDates.length){}if(e.target.value==="No")c.documents["VAT Registration"]="N/A";else if(c.documents["VAT Registration"]==="N/A")c.documents["VAT Registration"]="Pending";markUpdated(c);updateAndSave();}};});
+  // Entity type and nature. Picking an entity type by hand clears the
+  // "guessed" flag — a person has now looked at it, which is the whole point
+  // of the warning, so the warning goes away.
+  // This select also carries data-entity-hint-for, and this assignment runs
+  // after that one — so the hint has to be refreshed here or it would never
+  // update, the later onchange having replaced the earlier handler.
+  document.querySelectorAll("[data-client-entity]").forEach(el=>{el.onchange=(e)=>{
+    const t=el.dataset.entityHintFor?document.getElementById(el.dataset.entityHintFor):null;
+    if(t)t.textContent=entityHintFor(e.target.value);
+    const c=getClient(el.dataset.clientEntity);
+    if(c){c.entityType=e.target.value;c.entityTypeGuessed=false;markUpdated(c);updateAndSave();}
+  };});
+  document.querySelectorAll("[data-client-nature]").forEach(el=>{el.onchange=(e)=>{const c=getClient(el.dataset.clientNature);if(c){c.businessNature=e.target.value;markUpdated(c);updateAndSave();}};});
   // Blocked reasons (per-item)
   document.querySelectorAll("[data-blocked-reason]").forEach(el=>{el.onchange=(e)=>{const c=getClient(el.dataset.cid);if(c){if(!c.blockedReasons)c.blockedReasons={};c.blockedReasons[el.dataset.blockedReason]=e.target.value;markUpdated(c);updateAndSave();}};});
 

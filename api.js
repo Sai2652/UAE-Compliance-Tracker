@@ -28,6 +28,8 @@ const compliance = require('./compliance');
 const taskEngine = require('./taskEngine');
 const { obligations } = require('./obligations');
 const obligationEngine = require('./obligationEngine');
+const opsMktSync = require('./services/opsMktSync');
+const opsMktEngine = require('./services/opsMktSyncEngine');
 const healthScore = require('./healthScore');
 const slaMonitor = require('./slaMonitor');
 const escalationEngine = require('./escalationEngine');
@@ -307,7 +309,62 @@ router.put('/tracker', requireAuth, asyncH(async function(req, res) {
   res.json({ ok: true });
 }));
 
-router.get('/activity', requireAuth, function(req, res) { 
+// ---------- Ops-Mkt client sync ----------
+// Ops-Mkt is where a client first appears when the firm signs it, so that is
+// where this tracker's client list comes from instead of being re-typed.
+// Super Admin only: pulling in another POC's whole book, and switching the
+// nightly sweep on or off, is a firm-level decision.
+router.get('/opsmkt/status', requireAuth, requireSuperAdmin, asyncH(async function(req, res) {
+  res.json(await opsMktEngine.status());
+}));
+
+// The Fetch popup's list: every First POC in Ops-Mkt with their client count.
+router.get('/opsmkt/pocs', requireAuth, requireSuperAdmin, asyncH(async function(req, res) {
+  res.json({ pocs: await opsMktSync.listFirstPocs() });
+}));
+
+// What a fetch would add, and what it would skip and why. Writes nothing.
+router.post('/opsmkt/preview', requireAuth, requireSuperAdmin, asyncH(async function(req, res) {
+  var plan = await opsMktEngine.preview({ pocs: req.body.pocs || [], activeOnly: req.body.activeOnly !== false });
+  res.json({
+    willAdd: plan.toAdd.length,
+    scanned: plan.scanned,
+    // Enough of each row to see what is coming, without shipping whole client
+    // records to the browser just for a preview.
+    clients: plan.toAdd.map(function(c) {
+      return { name: c.name, entityType: c.entityType, entityTypeGuessed: c.entityTypeGuessed,
+               businessNature: c.businessNature, vatApplicable: c.vatApplicable,
+               assignedTeam: c.assignedTeam, firstPoc: c.opsMkt.firstPoc, opsMktMember: c.opsMkt.member };
+    }),
+    skipped: plan.skipped.slice(0, 200),
+    skippedTotal: plan.skipped.length
+  });
+}));
+
+router.post('/opsmkt/fetch', requireAuth, requireSuperAdmin, asyncH(async function(req, res) {
+  res.json(await opsMktEngine.fetchForPocs({
+    pocs: req.body.pocs || [],
+    activeOnly: req.body.activeOnly !== false,
+    autoSync: req.body.autoSync,
+    actor: req.user.name,
+    // The HTTP API cuts every request off at 30 seconds — an AWS limit, not a
+    // setting. The clients are saved before any of this, so the budget only
+    // caps how many get their obligations seeded inside the request; the
+    // nightly obligation sweep covers every client regardless.
+    budgetMs: 18000
+  }));
+}));
+
+// Refresh — pull in anything signed in Ops-Mkt since the last look.
+router.post('/opsmkt/sync', requireAuth, requireSuperAdmin, asyncH(async function(req, res) {
+  res.json(await opsMktEngine.runAutoSync({ manual: true, actor: req.user.name, budgetMs: 18000 }));
+}));
+
+router.put('/opsmkt/settings', requireAuth, requireSuperAdmin, asyncH(async function(req, res) {
+  res.json(await opsMktEngine.setSettings(req.body || {}));
+}));
+
+router.get('/activity', requireAuth, function(req, res) {
   var all = activity.getRecent(parseInt(req.query.limit) || 50);
   if (!seesEveryClient(req)) {
     all = all.filter(function(a) { return a.user_id === req.user.id; });

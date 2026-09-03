@@ -99,29 +99,87 @@ function showAlert(msg, type = 'success') {
   setTimeout(() => document.getElementById('alerts').innerHTML = '', 5000);
 }
 
+// Three roles, labelled as in AutoLedger. Role and reporting line are edited
+// together, because one without the other is a half-configured person: a lead
+// with nobody under them sees only their own clients, and an executive with no
+// manager escalates to nobody.
+const ROLE_LABEL = { super_admin: 'Super Admin', admin: 'Admin', user: 'User' };
+const ROLE_HINT = {
+  super_admin: 'Every client, every team, and all settings',
+  admin: 'Their own clients plus everyone reporting to them',
+  user: 'Only the clients assigned to them'
+};
+function normRole(r) {
+  if (ROLE_LABEL[r]) return r;
+  if (r === 'member' || r === 'staff') return 'user';
+  if (r === 'team-lead') return 'admin';
+  return 'user';
+}
+let ORG = { people: [], orphanOwners: [] };
+
 async function loadUsers() {
-  const data = await api('/users');
-  if (!data) return;
-  let html = '<table><thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Status</th><th>Last Login</th><th>Actions</th></tr></thead><tbody>';
-  data.users.forEach(u => {
+  const org = await api('/users/org');
+  if (!org) return;
+  ORG = org;
+  const people = org.people;
+  const nameOf = (id) => (people.find(p => String(p.id) === String(id)) || {}).name || '—';
+  // Who can be a manager: anyone at Admin or above, excluding the person being edited.
+  const managers = people.filter(p => normRole(p.role) !== 'user' && p.active);
+
+  let html = '<table><thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Reports to</th><th>Clients</th><th>Status</th><th>Last Login</th><th>Actions</th></tr></thead><tbody>';
+  people.forEach(u => {
+    const role = normRole(u.role);
+    const isTop = role === 'super_admin';
+    const roleSelect = `<select onchange="saveRole(${u.id}, this.value, null)" title="${ROLE_HINT[role]}" style="font-size:12px;padding:3px 6px">`
+      + Object.keys(ROLE_LABEL).map(r => `<option value="${r}"${r === role ? ' selected' : ''}>${ROLE_LABEL[r]}</option>`).join('')
+      + '</select>';
+    const mgrSelect = isTop
+      ? '<span style="color:#5a6578;font-size:11px">—</span>'
+      : `<select onchange="saveRole(${u.id}, null, this.value)" style="font-size:12px;padding:3px 6px">`
+        + `<option value=""${u.reports_to == null ? ' selected' : ''}>— nobody —</option>`
+        + managers.filter(m => String(m.id) !== String(u.id))
+            .map(m => `<option value="${m.id}"${String(m.id) === String(u.reports_to) ? ' selected' : ''}>${m.name}</option>`).join('')
+        + '</select>';
+
     html += `<tr>
       <td style="font-weight:600">${u.name}</td>
       <td style="color:#8a95aa">${u.email}</td>
-      <td><span class="badge badge-${u.role}">${u.role}</span></td>
+      <td>${roleSelect}</td>
+      <td>${mgrSelect}</td>
+      <td style="font-size:12px;color:#8a95aa">${u.clientCount || 0}</td>
       <td><span class="badge badge-${u.active ? 'active' : 'inactive'}">${u.active ? 'Active' : 'Inactive'}</span></td>
       <td style="font-size:12px;color:#5a6578">${u.last_login ? new Date(u.last_login).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : 'Never'}</td>
       <td>
         <button class="btn btn-sm" onclick="resetUserPassword(${u.id},'${u.name}')" style="margin-right:4px">🔑 Reset PW</button>
-        ${u.role !== 'admin' ? `
-          <button class="btn btn-sm" onclick="toggleRole(${u.id},'${u.role === 'admin' ? 'member' : 'admin'}')">${u.role === 'admin' ? 'Demote' : 'Make Admin'}</button>
+        ${!isTop ? `
           <button class="btn btn-sm ${u.active ? 'btn-danger' : ''}" onclick="${u.active ? `deactivateUser(${u.id})` : `activateUser(${u.id})`}">${u.active ? 'Disable' : 'Enable'}</button>
           <button class="btn btn-sm btn-danger" onclick="deleteUser(${u.id},'${u.name}')">🗑 Delete</button>
-        ` : '<span style="color:#5a6578;font-size:11px">Primary Admin</span>'}
+        ` : '<span style="color:#5a6578;font-size:11px">Super Admin</span>'}
       </td>
     </tr>`;
   });
   html += '</tbody></table>';
+
+  // Client owners with no account, or with no place in the reporting line.
+  // Their work reaches no team lead, which is worth saying out loud.
+  if ((org.orphanOwners || []).length) {
+    html += '<div style="margin-top:14px;padding:12px 14px;background:rgba(217,110,50,.10);border:1px solid rgba(217,110,50,.35);border-radius:8px;font-size:12.5px;color:#e0a06b">'
+      + '<b>Outside the reporting line</b><br>These people own clients but have no account, or report to nobody — so their work never reaches a team lead:<br>'
+      + org.orphanOwners.map(o => `<b>${o.name}</b> (${o.clientCount} client${o.clientCount === 1 ? '' : 's'})`).join(' · ')
+      + '</div>';
+  }
+
   document.getElementById('usersTable').innerHTML = html;
+}
+
+// Send only what changed; the server leaves the other field alone.
+async function saveRole(id, role, reportsTo) {
+  const body = {};
+  if (role !== null) body.role = role;
+  if (reportsTo !== null) body.reports_to = reportsTo;
+  const r = await api(`/users/${id}/role`, { method: 'PUT', body: JSON.stringify(body) });
+  if (r && r.error) alert(r.error);
+  loadUsers();
 }
 
 async function loadActivity() {
@@ -161,11 +219,6 @@ document.getElementById('inviteForm').onsubmit = async (e) => {
     document.getElementById('inviteResult').innerHTML = `<div class="alert alert-error">${data.error}</div>`;
   }
 };
-
-async function toggleRole(id, newRole) {
-  await api(`/users/${id}/role`, { method: 'PUT', body: JSON.stringify({ role: newRole }) });
-  showAlert('Role updated'); loadUsers();
-}
 
 async function deactivateUser(id) {
   if (!confirm('Disable this user? They will not be able to log in.')) return;

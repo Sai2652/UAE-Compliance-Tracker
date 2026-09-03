@@ -5,6 +5,7 @@
 
 const compliance = require('./compliance');
 const { store, users, activity } = require('./database');
+const roles = require('./roles');
 const email = require('./email');
 const { EscalationRulesRepo, EscalationEventsRepo } = require('./repositories');
 
@@ -46,29 +47,42 @@ async function hasOpenEventFor(taskId, ruleId) {
   catch (e) { console.warn('[escalation] hasOpenEventFor:', e.message); return false; }
 }
 
-function findUserByName(name) {
-  return (store.users || []).find(u => u.name === name);
+// Everyone who should receive a morning digest: the manager and every team
+// lead. Each one gets their own scope, not the same firm-wide list.
+function digestRecipients() {
+  return (store.users || []).filter(u => u.active === 1 && u.email && roles.atLeast(u, 'admin'));
 }
 
-function adminEmails() {
-  return (store.users || []).filter(u => u.role === 'admin' && u.active === 1).map(u => u.email);
+// How far up the reporting line a given severity should reach.
+//   1 → the owner only
+//   2 → the owner and their team lead
+//   3+ → the owner, their lead, and the manager
+// Before this, notify_admin meant "every admin", so a stuck job belonging to
+// one executive was mailed to both team leads and the manager at once. The
+// point of a hierarchy is that a problem climbs one rung at a time.
+function chainDepthFor(severity) {
+  const s = Number(severity) || 1;
+  if (s <= 1) return 1;
+  if (s === 2) return 2;
+  return 3;
 }
 
 async function recordEvent(task, rule) {
   const notified = [];
-  // owner notify
-  if (rule.notify_owner && task.assigned_user_name) {
-    const u = findUserByName(task.assigned_user_name);
-    if (u && u.email) {
-      const r = await email.sendEscalationOwnerEmail(u.email, u.name, task, rule);
-      if (r && r.success) notified.push('owner:' + u.email);
-    }
-  }
-  if (rule.notify_admin) {
-    for (const ae of adminEmails()) {
-      const r = await email.sendEscalationAdminEmail(ae, 'Admin', task, rule);
-      if (r && r.success) notified.push('admin:' + ae);
-    }
+  const chain = roles.escalationChain(task.assigned_user_name, store.users || []);
+  const depth = chainDepthFor(rule.severity);
+
+  for (let i = 0; i < chain.length && i < depth; i++) {
+    const person = chain[i];
+    if (!person || !person.email) continue;
+    // The owner gets the "your task" wording; anyone above gets the manager one.
+    const isOwner = i === 0 && person.name === task.assigned_user_name;
+    if (isOwner && !rule.notify_owner) continue;
+    if (!isOwner && !rule.notify_admin) continue;
+    const r = isOwner
+      ? await email.sendEscalationOwnerEmail(person.email, person.name, task, rule)
+      : await email.sendEscalationAdminEmail(person.email, person.name, task, rule);
+    if (r && r.success) notified.push((isOwner ? 'owner:' : roles.labelOf(person.role) + ':') + person.email);
   }
   await EscalationEventsRepo.create({
     task_id: task.id, rule_id: rule.id, rule_name: rule.name,
@@ -102,15 +116,37 @@ async function runSweep() {
   return { matched, scannedTasks: tasks.length, rules: rules.length };
 }
 
-// Independently notify on overdue tasks + blocked tasks (admin), once per day per task.
+// The morning digest: what's overdue and what's stuck. Sent once a day to the
+// manager and to each team lead — but scoped, so a lead sees their own team's
+// work rather than the whole firm's. A digest full of another team's clients is
+// a digest that gets ignored.
 async function dailyAdminDigests() {
   const todayStr = new Date().toISOString().slice(0,10);
-  const overdue = await compliance.tasks.list({ overdue: true, limit: 200 });
-  const blocked = await compliance.tasks.list({ status: ['blocked','escalated'], limit: 200 });
-  if (!overdue.length && !blocked.length) return;
-  for (const ae of adminEmails()) {
-    await email.sendAdminDigest(ae, 'Admin', { overdue, blocked, date: todayStr });
+  const overdue = await compliance.tasks.list({ overdue: true, limit: 500 });
+  const blocked = await compliance.tasks.list({ status: ['blocked','escalated'], limit: 500 });
+  if (!overdue.length && !blocked.length) return { sent: 0 };
+
+  const allUsers = store.users || [];
+  const clients = ((store.trackerData || {}).clients) || [];
+  let sent = 0;
+
+  for (const person of digestRecipients()) {
+    const scope = roles.clientScope(person, allUsers);
+    const mineIds = new Set(
+      (scope.all ? clients : clients.filter(c => roles.scopeAllows(scope, c.assignedTeam)))
+        .map(c => String(c.id))
+    );
+    const inScope = (t) => scope.all || mineIds.has(String(t.client_external_id));
+    const myOverdue = overdue.filter(inScope);
+    const myBlocked = blocked.filter(inScope);
+    if (!myOverdue.length && !myBlocked.length) continue;   // nothing to say to them
+
+    const r = await email.sendAdminDigest(person.email, person.name, {
+      overdue: myOverdue, blocked: myBlocked, date: todayStr
+    });
+    if (r && r.success) sent++;
   }
+  return { sent };
 }
 
 function startScheduler() {

@@ -2,7 +2,27 @@ const express = require('express');
 const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
 const { users, tracker, activity } = require('./database');
-const { generateToken, requireAuth, requireAdmin } = require('./auth');
+const { generateToken, requireAuth, requireAdmin, requireSuperAdmin } = require('./auth');
+const roles = require('./roles');
+
+// --- Visibility helpers -----------------------------------------------------
+// Every route that returns client-shaped data goes through these, so the rule
+// lives in roles.js and not in fifteen copies of the same filter. Before this,
+// each route asked "is this user an admin? if not, only their own clients" —
+// which left a team lead seeing nothing but their own work.
+function myClients(req) {
+  return roles.visibleClients(req.user, users.getAll(), tracker.getData().clients || []);
+}
+function myClientIds(req) {
+  return myClients(req).map(function(c) { return String(c.id); });
+}
+function seesEveryClient(req) {
+  return roles.isSuperAdmin(req.user);
+}
+// Fetch a client by id only if this user is allowed to see it.
+function myClientById(req, id) {
+  return myClients(req).find(function(c) { return String(c.id) === String(id); }) || null;
+}
 const { sendInviteEmail, sendResetEmail } = require('./email');
 const compliance = require('./compliance');
 const taskEngine = require('./taskEngine');
@@ -79,7 +99,7 @@ router.post('/auth/reset-password', function(req, res) {
   res.json({ ok: true });
 });
 
-router.post('/invite', requireAuth, requireAdmin, async function(req, res) {
+router.post('/invite', requireAuth, requireSuperAdmin, async function(req, res) {
   var email = req.body.email; var name = req.body.name;
   if (!email || !name) return res.status(400).json({ error: 'Email and name required' });
   var cleanEmail = email.toLowerCase().trim();
@@ -119,15 +139,94 @@ router.post('/invite/signup', function(req, res) {
   res.json({ token: authToken, user: { id: updatedUser.id, email: updatedUser.email, name: updatedUser.name, role: updatedUser.role } });
 });
 
-router.get('/users', requireAuth, requireAdmin, function(req, res) { res.json({ users: users.getAll() }); });
-router.put('/users/:id/role', requireAuth, requireAdmin, function(req, res) { users.updateRole(req.params.id, req.body.role); res.json({ ok: true }); });
-router.put('/users/:id/deactivate', requireAuth, requireAdmin, function(req, res) { users.deactivate(req.params.id); res.json({ ok: true }); });
-router.put('/users/:id/activate', requireAuth, requireAdmin, function(req, res) { users.activate(req.params.id); res.json({ ok: true }); });
-router.delete('/users/:id', requireAuth, requireAdmin, function(req, res) {
+router.get('/users', requireAuth, requireSuperAdmin, function(req, res) { res.json({ users: users.getAll() }); });
+// Role and reporting line, set together. They belong together: promoting
+// somebody to Admin without saying who reports to them produces a lead with an
+// empty team, and an executive with no manager escalates to nobody.
+router.put('/users/:id/role', requireAuth, requireSuperAdmin, function(req, res) {
+  var id = parseInt(req.params.id, 10);
+  var target = users.findById(id);
+  if (!target) return res.status(404).json({ error: 'No such user' });
+
+  var role = req.body.role != null ? roles.normalizeRole(req.body.role) : null;
+  var reportsTo = req.body.reports_to;   // undefined = leave alone, null = clear
+
+  if (reportsTo !== undefined && reportsTo !== null && reportsTo !== '') {
+    var mgrId = parseInt(reportsTo, 10);
+    if (mgrId === id) return res.status(400).json({ error: 'Somebody cannot report to themselves' });
+    var mgr = users.findById(mgrId);
+    if (!mgr) return res.status(400).json({ error: 'That manager does not exist' });
+    // One level of reporting only: an executive reports to a lead, a lead to
+    // the manager. Anything deeper makes visibility ambiguous.
+    if (!roles.atLeast(mgr, 'admin')) {
+      return res.status(400).json({ error: 'People can only report to an Admin or Super Admin' });
+    }
+    // Don't allow a cycle, even a long one.
+    var walk = mgr, hops = 0;
+    while (walk && walk.reports_to != null && hops < 10) {
+      if (String(walk.reports_to) === String(id)) {
+        return res.status(400).json({ error: 'That would create a reporting loop' });
+      }
+      walk = users.findById(walk.reports_to); hops++;
+    }
+    reportsTo = mgrId;
+  }
+
+  // Never leave the firm without a Super Admin — otherwise nobody can restore
+  // anyone's access, including their own.
+  if (role && role !== 'super_admin' && roles.isSuperAdmin(target)) {
+    var others = users.getAll().filter(function(u) {
+      return roles.isSuperAdmin(u) && u.active === 1 && String(u.id) !== String(id);
+    });
+    if (!others.length) return res.status(400).json({ error: 'This is the only Super Admin — promote somebody else first' });
+  }
+
+  var updated = users.setRoleAndManager(id, role, reportsTo);
+  activity.log(req.user.id, req.user.name, 'role_changed',
+    target.name + ' → ' + roles.labelOf(updated.role) +
+    (updated.reports_to != null ? ' reporting to ' + ((users.findById(updated.reports_to) || {}).name || updated.reports_to) : ''));
+  res.json({ ok: true, user: updated });
+});
+
+// The org chart, for the admin panel: who reports to whom, and how many
+// clients each person carries.
+router.get('/users/org', requireAuth, requireAdmin, function(req, res) {
+  var all = users.getAll();
+  var clients = tracker.getData().clients || [];
+  var counts = {};
+  clients.forEach(function(c) { if (c.assignedTeam) counts[c.assignedTeam] = (counts[c.assignedTeam] || 0) + 1; });
+
+  // A lead only needs to see their own branch.
+  var visible = roles.isSuperAdmin(req.user)
+    ? all
+    : all.filter(function(u) { return String(u.id) === String(req.user.id) || String(u.reports_to) === String(req.user.id); });
+
+  res.json({
+    people: visible.map(function(u) {
+      return {
+        id: u.id, name: u.name, email: u.email, role: u.role,
+        roleLabel: roles.labelOf(u.role),
+        reports_to: u.reports_to, active: u.active, last_login: u.last_login,
+        clientCount: counts[u.name] || 0
+      };
+    }),
+    // Owners of clients who have no account, or sit outside the reporting line.
+    // These are the people whose work reaches no team lead.
+    orphanOwners: roles.isSuperAdmin(req.user)
+      ? Object.keys(counts).filter(function(n) {
+          var u = all.find(function(x) { return x.name === n; });
+          return !u || (u.reports_to == null && !roles.atLeast(u, 'admin'));
+        }).map(function(n) { return { name: n, clientCount: counts[n] }; })
+      : []
+  });
+});
+router.put('/users/:id/deactivate', requireAuth, requireSuperAdmin, function(req, res) { users.deactivate(req.params.id); res.json({ ok: true }); });
+router.put('/users/:id/activate', requireAuth, requireSuperAdmin, function(req, res) { users.activate(req.params.id); res.json({ ok: true }); });
+router.delete('/users/:id', requireAuth, requireSuperAdmin, function(req, res) {
   if (parseInt(req.params.id) === req.user.id) return res.status(400).json({ error: 'Cannot delete yourself' });
   users.delete(req.params.id); res.json({ ok: true });
 });
-router.put('/users/:id/reset-password', requireAuth, requireAdmin, function(req, res) {
+router.put('/users/:id/reset-password', requireAuth, requireSuperAdmin, function(req, res) {
   if (!req.body.password || req.body.password.length < 6) return res.status(400).json({ error: 'Min 6 characters' });
   users.updatePassword(req.params.id, req.body.password); res.json({ ok: true });
 });
@@ -142,9 +241,10 @@ function complianceFingerprint(c) { if (!c) return ''; return COMPLIANCE_FIELDS.
 // but didn't close it.
 router.get('/tracker', requireAuth, function(req, res) {
   var data = tracker.getData();
-  if (req.user.role !== 'admin') {
-    var mine = (data.clients || []).filter(function(c) { return c.assignedTeam === req.user.name; });
-    return res.json({ clients: mine, teamMembers: data.teamMembers });
+  if (!seesEveryClient(req)) {
+    // Their whole branch, not just their own name — a team lead needs their
+    // reports' clients too.
+    return res.json({ clients: myClients(req), teamMembers: data.teamMembers });
   }
   res.json(data);
 });
@@ -152,10 +252,15 @@ router.put('/tracker', requireAuth, asyncH(async function(req, res) {
   var clients = req.body.clients; var teamMembers = req.body.teamMembers; var user = req.user;
   var existing = tracker.getData();
   var savePromise;
-  if (user.role === 'member') {
+  if (!roles.isSuperAdmin(user)) {
+    // Accept edits only to clients this person is allowed to see. A team lead
+    // may save their reports' clients; an executive only their own. Anything
+    // else in the payload is ignored rather than rejected, so a stale browser
+    // tab can't overwrite another team's work.
+    var writable = roles.clientScope(user, users.getAll());
     var merged = existing.clients.map(function(ec) {
       var updated = clients.find(function(c) { return c.id === ec.id; });
-      if (updated && ec.assignedTeam === user.name) {
+      if (updated && roles.scopeAllows(writable, ec.assignedTeam)) {
         // Log specific changes
         if (JSON.stringify(ec) !== JSON.stringify(updated)) {
           activity.log(user.id, user.name, 'client_updated', 'Updated: ' + ec.name);
@@ -165,7 +270,7 @@ router.put('/tracker', requireAuth, asyncH(async function(req, res) {
       return ec;
     });
     savePromise = tracker.saveData(merged, existing.teamMembers, user.name);
-    activity.log(user.id, user.name, 'data_save', 'Member saved assigned clients');
+    activity.log(user.id, user.name, 'data_save', roles.labelOf(user.role) + ' saved clients in their scope');
   } else {
     // Log new/removed clients
     var newClients = (clients || []).filter(function(c) { return !existing.clients.find(function(ec) { return ec.id === c.id; }); });
@@ -204,7 +309,7 @@ router.put('/tracker', requireAuth, asyncH(async function(req, res) {
 
 router.get('/activity', requireAuth, function(req, res) { 
   var all = activity.getRecent(parseInt(req.query.limit) || 50);
-  if (req.user.role !== 'admin') {
+  if (!seesEveryClient(req)) {
     all = all.filter(function(a) { return a.user_id === req.user.id; });
   }
   res.json({ activities: all }); 
@@ -224,7 +329,7 @@ router.get('/tasks', requireAuth, asyncH(async function(req, res) {
   if (req.query.status) filter.status = req.query.status.split(',');
   if (req.query.overdue === '1') filter.overdue = true;
   // members only see their own tasks
-  if (req.user.role !== 'admin') filter.assignedUserId = req.user.id;
+  if (!seesEveryClient(req)) filter.assignedUserId = req.user.id;
   var rows = await compliance.tasks.list(filter);
   res.json({ tasks: rows });
 }));
@@ -248,7 +353,7 @@ router.post('/tasks', requireAuth, requireAdmin, asyncH(async function(req, res)
 router.get('/tasks/:id', requireAuth, asyncH(async function(req, res) {
   var t = await compliance.tasks.getById(req.params.id);
   if (!t) return res.status(404).json({ error: 'Not found' });
-  if (req.user.role !== 'admin' && t.assigned_user_id !== req.user.id) return res.status(403).json({ error: 'Forbidden' });
+  if (!roles.atLeast(req.user, 'admin') && t.assigned_user_id !== req.user.id) return res.status(403).json({ error: 'Forbidden' });
   var comments = await compliance.comments.listForTask(t.id);
   res.json({ task: t, comments: comments });
 }));
@@ -257,7 +362,7 @@ router.patch('/tasks/:id', requireAuth, asyncH(async function(req, res) {
   var t = await compliance.tasks.getById(req.params.id);
   if (!t) return res.status(404).json({ error: 'Not found' });
   var isOwner = t.assigned_user_id === req.user.id;
-  var isAdmin = req.user.role === 'admin';
+  var isAdmin = roles.atLeast(req.user, 'admin');
   if (!isAdmin && !isOwner) return res.status(403).json({ error: 'Forbidden' });
   var patch = {};
   var allowedMember = ['status','description'];
@@ -289,7 +394,7 @@ router.patch('/tasks/:id', requireAuth, asyncH(async function(req, res) {
 router.post('/tasks/:id/submit-review', requireAuth, asyncH(async function(req, res) {
   var t = await compliance.tasks.getById(req.params.id);
   if (!t) return res.status(404).json({ error: 'Not found' });
-  if (req.user.role !== 'admin' && t.assigned_user_id !== req.user.id) return res.status(403).json({ error: 'Forbidden' });
+  if (!roles.atLeast(req.user, 'admin') && t.assigned_user_id !== req.user.id) return res.status(403).json({ error: 'Forbidden' });
   if (t.status !== 'in_progress' && t.status !== 'documents_received') return res.status(400).json({ error: 'Task must be in_progress' });
   var nowIso = new Date().toISOString();
   var updated = await compliance.tasks.setStatus(t.id, 'ready_for_review', { review_status: 'pending_review', submitted_for_review_at: nowIso });
@@ -391,8 +496,8 @@ router.get('/documents', requireAuth, asyncH(async function(req, res) {
   if (req.query.clientId) filter.clientId = req.query.clientId;
   var rows = await compliance.documents.list(filter);
   // members only see docs for clients they own
-  if (req.user.role !== 'admin') {
-    var myClients = (tracker.getData().clients || []).filter(function(c){ return c.assignedTeam === req.user.name; }).map(function(c){ return String(c.id); });
+  if (!seesEveryClient(req)) {
+    var myClients = myClientIds(req);
     rows = rows.filter(function(r){ return myClients.indexOf(String(r.client_external_id)) >= 0; });
   }
   res.json({ documents: rows });
@@ -425,10 +530,10 @@ router.post('/documents/:id/receive', requireAuth, asyncH(async function(req, re
 }));
 
 // ---- Priority config (admin) ----
-router.get('/priority-config', requireAuth, requireAdmin, asyncH(async function(req, res) {
+router.get('/priority-config', requireAuth, requireSuperAdmin, asyncH(async function(req, res) {
   res.json({ config: await compliance.config.getAll() });
 }));
-router.put('/priority-config', requireAuth, requireAdmin, asyncH(async function(req, res) {
+router.put('/priority-config', requireAuth, requireSuperAdmin, asyncH(async function(req, res) {
   var updates = req.body && req.body.config || {};
   for (var k in updates) await compliance.config.set(k, Number(updates[k]));
   await taskEngine.recomputeAllPriorities();
@@ -455,8 +560,8 @@ router.get('/obligations', requireAuth, asyncH(async function(req, res) {
   if (req.query.to)       f.to = req.query.to;
   var rows = await obligations.list(f);
   // members: limit to their assigned clients
-  if (req.user.role !== 'admin') {
-    var myClients = (tracker.getData().clients || []).filter(function(c){ return c.assignedTeam === req.user.name; }).map(function(c){ return String(c.id); });
+  if (!seesEveryClient(req)) {
+    var myClients = myClientIds(req);
     rows = rows.filter(function(r){ return myClients.indexOf(String(r.client_external_id)) >= 0; });
   }
   res.json({ obligations: rows });
@@ -493,8 +598,8 @@ router.get('/calendar', requireAuth, asyncH(async function(req, res) {
   // Drop tasks whose due_date is before `from`
   taskRows = taskRows.filter(function(t){ return t.due_date && t.due_date >= from; });
 
-  if (req.user.role !== 'admin') {
-    var myClients = (tracker.getData().clients || []).filter(function(c){ return c.assignedTeam === req.user.name; }).map(function(c){ return String(c.id); });
+  if (!seesEveryClient(req)) {
+    var myClients = myClientIds(req);
     oblRows = oblRows.filter(function(r){ return myClients.indexOf(String(r.client_external_id)) >= 0; });
     taskRows = taskRows.filter(function(t){ return t.assigned_user_id === req.user.id || myClients.indexOf(String(t.client_external_id)) >= 0; });
   }
@@ -517,7 +622,7 @@ router.get('/calendar', requireAuth, asyncH(async function(req, res) {
 router.get('/clients/:id/health', requireAuth, asyncH(async function(req, res) {
   var client = (tracker.getData().clients || []).find(function(c){ return String(c.id) === String(req.params.id); });
   if (!client) return res.status(404).json({ error: 'Unknown client' });
-  if (req.user.role !== 'admin' && client.assignedTeam !== req.user.name) return res.status(403).json({ error: 'Forbidden' });
+  if (!roles.canSeeClient(req.user, users.getAll(), client)) return res.status(403).json({ error: 'Forbidden' });
   res.json({ health: await healthScore.computeForClient(client) });
 }));
 
@@ -526,10 +631,10 @@ router.get('/health/summary', requireAuth, requireAdmin, asyncH(async function(r
   res.json({ scores: rows, weights: await healthScore.getWeights() });
 }));
 
-router.get('/health/weights', requireAuth, requireAdmin, asyncH(async function(req, res) {
+router.get('/health/weights', requireAuth, requireSuperAdmin, asyncH(async function(req, res) {
   res.json({ weights: await healthScore.getWeights() });
 }));
-router.put('/health/weights', requireAuth, requireAdmin, asyncH(async function(req, res) {
+router.put('/health/weights', requireAuth, requireSuperAdmin, asyncH(async function(req, res) {
   var updates = req.body && req.body.weights || {};
   for (var k in updates) {
     await repos.HealthWeightsRepo.set(k, Number(updates[k]));
@@ -538,10 +643,10 @@ router.put('/health/weights', requireAuth, requireAdmin, asyncH(async function(r
 }));
 
 // ---- SLA ----
-router.get('/sla/policies', requireAuth, requireAdmin, asyncH(async function(req, res) {
+router.get('/sla/policies', requireAuth, requireSuperAdmin, asyncH(async function(req, res) {
   res.json({ policies: await slaMonitor.getPolicies() });
 }));
-router.put('/sla/policies', requireAuth, requireAdmin, asyncH(async function(req, res) {
+router.put('/sla/policies', requireAuth, requireSuperAdmin, asyncH(async function(req, res) {
   var updates = req.body && req.body.policies || {};
   for (var taskType in updates) {
     await repos.SlaPoliciesRepo.upsert(taskType, updates[taskType]);
@@ -549,22 +654,22 @@ router.put('/sla/policies', requireAuth, requireAdmin, asyncH(async function(req
   await slaMonitor.recomputeAll();
   res.json({ policies: await slaMonitor.getPolicies() });
 }));
-router.post('/sla/recompute', requireAuth, requireAdmin, asyncH(async function(req, res) {
+router.post('/sla/recompute', requireAuth, requireSuperAdmin, asyncH(async function(req, res) {
   res.json(await slaMonitor.recomputeAll());
 }));
 
 // ---- Escalation ----
-router.get('/escalation/rules', requireAuth, requireAdmin, asyncH(async function(req, res) {
+router.get('/escalation/rules', requireAuth, requireSuperAdmin, asyncH(async function(req, res) {
   res.json({ rules: await repos.EscalationRulesRepo.listAll() });
 }));
-router.put('/escalation/rules/:id', requireAuth, requireAdmin, asyncH(async function(req, res) {
+router.put('/escalation/rules/:id', requireAuth, requireSuperAdmin, asyncH(async function(req, res) {
   var allowed = ['name','condition_type','threshold_days','severity','notify_owner','notify_admin','active'];
   var patch = {};
   Object.keys(req.body || {}).forEach(function(k){ if (allowed.indexOf(k) >= 0) patch[k] = req.body[k]; });
   var rule = await repos.EscalationRulesRepo.update(req.params.id, patch);
   res.json({ rule: rule });
 }));
-router.post('/escalation/run', requireAuth, requireAdmin, asyncH(async function(req, res) {
+router.post('/escalation/run', requireAuth, requireSuperAdmin, asyncH(async function(req, res) {
   res.json(await escalationEngine.runSweep());
 }));
 router.get('/escalation/events', requireAuth, requireAdmin, asyncH(async function(req, res) {
@@ -630,10 +735,10 @@ router.get('/team/productivity', requireAuth, asyncH(async function(req, res) {
   var range = req.query.range || '30';
   if (req.query.userId) {
     var uid = parseInt(req.query.userId, 10);
-    if (req.user.role !== 'admin' && uid !== req.user.id) return res.status(403).json({ error: 'Forbidden' });
+    if (!roles.atLeast(req.user, 'admin') && uid !== req.user.id) return res.status(403).json({ error: 'Forbidden' });
     return res.json({ user: await productivityService.getForUser(uid, range) });
   }
-  if (req.user.role !== 'admin') {
+  if (!seesEveryClient(req)) {
     return res.json({ user: await productivityService.getForUser(req.user.id, range) });
   }
   res.json({ users: await productivityService.getForAll(range) });
@@ -660,10 +765,10 @@ router.get('/clients/communication', requireAuth, requireAdmin, asyncH(async fun
 }));
 
 // Workload config (capacity defaults + band thresholds)
-router.get('/team/workload-config', requireAuth, requireAdmin, asyncH(async function(req, res) {
+router.get('/team/workload-config', requireAuth, requireSuperAdmin, asyncH(async function(req, res) {
   res.json({ config: await repos.WorkloadConfigRepo.getAll() });
 }));
-router.put('/team/workload-config', requireAuth, requireAdmin, asyncH(async function(req, res) {
+router.put('/team/workload-config', requireAuth, requireSuperAdmin, asyncH(async function(req, res) {
   var updates = req.body && req.body.config || {};
   for (var k in updates) await repos.WorkloadConfigRepo.set(k, Number(updates[k]));
   res.json({ config: await repos.WorkloadConfigRepo.getAll() });
@@ -690,8 +795,8 @@ router.put('/team/capacity/:userId', requireAuth, requireAdmin, asyncH(async fun
 router.get('/clients/readiness', requireAuth, asyncH(async function(req, res) {
   var clientReadinessService = require('./services/clientReadinessService');
   var data = await clientReadinessService.getAllClientReadiness();
-  if (req.user.role !== 'admin') {
-    var myClients = (tracker.getData().clients || []).filter(function(c){ return c.assignedTeam === req.user.name; }).map(function(c){ return String(c.id); });
+  if (!seesEveryClient(req)) {
+    var myClients = myClientIds(req);
     data.clients = data.clients.filter(function(r){ return myClients.indexOf(String(r.clientId)) >= 0; });
     var counts = {}; Object.keys(data.counts).forEach(function(k){ counts[k] = 0; });
     data.clients.forEach(function(r){ counts[r.state] = (counts[r.state] || 0) + 1; });
@@ -701,8 +806,8 @@ router.get('/clients/readiness', requireAuth, asyncH(async function(req, res) {
 }));
 
 router.get('/clients/:id/lifecycle-summary', requireAuth, asyncH(async function(req, res) {
-  if (req.user.role !== 'admin') {
-    var mine = (tracker.getData().clients || []).find(function(c){ return String(c.id) === String(req.params.id) && c.assignedTeam === req.user.name; });
+  if (!seesEveryClient(req)) {
+    var mine = myClientById(req, req.params.id);
     if (!mine) return res.status(403).json({ error: 'Forbidden' });
   }
   var clientLifecycleService = require('./services/clientLifecycleService');
@@ -712,8 +817,8 @@ router.get('/clients/:id/lifecycle-summary', requireAuth, asyncH(async function(
 }));
 
 router.get('/clients/:id/workflows', requireAuth, asyncH(async function(req, res) {
-  if (req.user.role !== 'admin') {
-    var mine = (tracker.getData().clients || []).find(function(c){ return String(c.id) === String(req.params.id) && c.assignedTeam === req.user.name; });
+  if (!seesEveryClient(req)) {
+    var mine = myClientById(req, req.params.id);
     if (!mine) return res.status(403).json({ error: 'Forbidden' });
   }
   var rows = await workflowService.listForClient(req.params.id);
@@ -741,7 +846,7 @@ router.post('/workflows/:id/advance', requireAuth, asyncH(async function(req, re
       requireKey: b.requireKey || null,
       userId: req.user.id, userName: req.user.name,
       notes: b.notes || null,
-      isAdmin: req.user.role === 'admin',
+      isAdmin: roles.atLeast(req.user, 'admin'),
       forceStepKey: b.forceStepKey || null
     });
     res.json(data);
@@ -779,8 +884,8 @@ router.get('/risk/clients', requireAuth, requireAdmin, asyncH(async function(req
 }));
 
 router.get('/risk/clients/:id', requireAuth, asyncH(async function(req, res) {
-  if (req.user.role !== 'admin') {
-    var mine = (tracker.getData().clients || []).find(function(c){ return String(c.id) === String(req.params.id) && c.assignedTeam === req.user.name; });
+  if (!seesEveryClient(req)) {
+    var mine = myClientById(req, req.params.id);
     if (!mine) return res.status(403).json({ error: 'Forbidden' });
   }
   var data = await riskService.runAll();
@@ -966,16 +1071,16 @@ router.put('/clients/:id/settings', requireAuth, requireAdmin, asyncH(async func
 }));
 
 router.get('/clients/:id/portfolio', requireAuth, asyncH(async function(req, res) {
-  if (req.user.role !== 'admin') {
-    var mine = (tracker.getData().clients || []).find(function(c){ return String(c.id) === String(req.params.id) && c.assignedTeam === req.user.name; });
+  if (!seesEveryClient(req)) {
+    var mine = myClientById(req, req.params.id);
     if (!mine) return res.status(403).json({ error: 'Forbidden' });
   }
   res.json(await portfolioDashboardSvc.getForClient(req.params.id));
 }));
 
 router.get('/clients/:id/timeline', requireAuth, asyncH(async function(req, res) {
-  if (req.user.role !== 'admin') {
-    var mine = (tracker.getData().clients || []).find(function(c){ return String(c.id) === String(req.params.id) && c.assignedTeam === req.user.name; });
+  if (!seesEveryClient(req)) {
+    var mine = myClientById(req, req.params.id);
     if (!mine) return res.status(403).json({ error: 'Forbidden' });
   }
   res.json(await clientTimelineSvc.getTimeline(req.params.id, parseInt(req.query.limit, 10) || 200));
@@ -1014,7 +1119,7 @@ router.get('/ai/today', requireAuth, requireAdmin, asyncH(async function(req, re
 }));
 
 router.get('/ai/priority', requireAuth, asyncH(async function(req, res) {
-  res.json(await aiPriority.generate({ userId: req.user.id, isAdmin: req.user.role === 'admin' }));
+  res.json(await aiPriority.generate({ userId: req.user.id, isAdmin: roles.atLeast(req.user, 'admin') }));
 }));
 
 router.get('/ai/my/next-best', requireAuth, asyncH(async function(req, res) {
@@ -1033,8 +1138,8 @@ router.get('/ai/bottlenecks', requireAuth, requireAdmin, asyncH(async function(r
 }));
 
 router.get('/ai/clients/:id/insight', requireAuth, asyncH(async function(req, res) {
-  if (req.user.role !== 'admin') {
-    var mine = (tracker.getData().clients || []).find(function(c){ return String(c.id) === String(req.params.id) && c.assignedTeam === req.user.name; });
+  if (!seesEveryClient(req)) {
+    var mine = myClientById(req, req.params.id);
     if (!mine) return res.status(403).json({ error: 'Forbidden' });
   }
   var data = await aiClientInsight.generate(req.params.id);

@@ -45,6 +45,11 @@ async function hydrate() {
         password: u.password,
         name: u.name,
         role: u.role,
+        // Who this person reports to. Visibility is derived from the reporting
+        // line, so leaving it out of the hydration mapping stores it correctly
+        // and then loses it on every boot — a team lead would silently see only
+        // their own clients.
+        reports_to: u.reports_to != null ? Number(u.reports_to) : null,
         active: u.active,
         invite_token: u.invite_token,
         invite_expires: u.invite_expires,
@@ -115,15 +120,38 @@ const users = {
   findById(id) {
     const u = store.users.find(function(u) { return u.id === parseInt(id); });
     if (!u) return null;
-    return { id: u.id, email: u.email, name: u.name, role: u.role, active: u.active, created_at: u.created_at, last_login: u.last_login };
+    // reports_to must be part of every projection — visibility is derived from
+    // the reporting line, so dropping it silently collapses a team lead's view
+    // down to their own clients.
+    return { id: u.id, email: u.email, name: u.name, role: u.role, reports_to: u.reports_to != null ? u.reports_to : null, active: u.active, created_at: u.created_at, last_login: u.last_login };
   },
   findByInviteToken(token) {
     return store.users.find(function(u) { return u.invite_token === token && new Date(u.invite_expires) > new Date(); }) || null;
   },
   getAll() {
+    const roles = require('./roles');
     return store.users
-      .map(function(u) { return { id: u.id, email: u.email, name: u.name, role: u.role, active: u.active, created_at: u.created_at, last_login: u.last_login }; })
-      .sort(function(a, b) { return (b.role === 'admin' ? 1 : 0) - (a.role === 'admin' ? 1 : 0) || a.name.localeCompare(b.name); });
+      .map(function(u) { return { id: u.id, email: u.email, name: u.name, role: u.role, reports_to: u.reports_to != null ? u.reports_to : null, active: u.active, created_at: u.created_at, last_login: u.last_login }; })
+      // Seniority first, then alphabetical — so the manager, then leads, then
+      // executives. The old sort only knew about a single 'admin' role.
+      .sort(function(a, b) { return roles.rankOf(b.role) - roles.rankOf(a.role) || String(a.name || '').localeCompare(String(b.name || '')); });
+  },
+
+  // Change a person's role and/or who they report to, in one write. Used by the
+  // admin panel — the two travel together, because a role change without a
+  // reporting line leaves a lead with nobody under them.
+  setRoleAndManager(id, role, reportsTo) {
+    const roles = require('./roles');
+    const u = store.users.find(function(u) { return u.id === parseInt(id); });
+    if (!u) return null;
+    const patch = {};
+    if (role != null) { u.role = roles.normalizeRole(role); patch.role = u.role; }
+    if (reportsTo !== undefined) {
+      u.reports_to = (reportsTo === null || reportsTo === '') ? null : parseInt(reportsTo);
+      patch.reports_to = u.reports_to;
+    }
+    if (Object.keys(patch).length) fireAndForget(UsersDataRepo.patch(u.id, patch), 'setRoleAndManager');
+    return { id: u.id, email: u.email, name: u.name, role: u.role, reports_to: u.reports_to != null ? u.reports_to : null, active: u.active };
   },
   createInvite(email, name, token, expires) {
     const existing = store.users.find(function(u) { return u.email === email; });

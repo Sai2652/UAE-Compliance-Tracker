@@ -42,6 +42,9 @@ const UsersDataRepo = {
         password: row.password,
         name: row.name,
         role: row.role,
+        // A full Put replaces the whole item, so omitting this would erase an
+        // existing reporting line whenever a user record is rewritten.
+        reports_to: row.reports_to != null ? Number(row.reports_to) : undefined,
         active: row.active,
         invite_token: row.invite_token || undefined,   // sparse GSI: omit rather than null
         invite_expires: row.invite_expires || undefined,

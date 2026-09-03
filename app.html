@@ -324,7 +324,22 @@ async function saveData(d){
 function persistState(){ saveData({ clients: state.clients, teamMembers: state.teamMembers }); }
 
 // Role helpers
-function isAdmin(){ return currentUser && currentUser.role === 'admin'; }
+// Three roles, labelled the same way as AutoLedger so the two tools read alike.
+//   super_admin  Super Admin  the manager — every client, every team, all settings
+//   admin        Admin        a team lead — their own team's clients and overview
+//   user         User         an executive — their own clients
+const ROLE_LABEL={super_admin:'Super Admin',admin:'Admin',user:'User'};
+const ROLE_RANK={super_admin:3,admin:2,user:1};
+// Legacy accounts predate this model; treat anything unrecognised as the least
+// privileged rather than the most.
+function roleOf(u){const r=(u&&u.role)||'';if(ROLE_RANK[r])return r;if(r==='member'||r==='staff')return 'user';if(r==='team-lead')return 'admin';return 'user';}
+function roleLabel(u){return ROLE_LABEL[roleOf(u)]||'User';}
+function atLeast(role){return ROLE_RANK[roleOf(currentUser)]>=ROLE_RANK[role];}
+// The manager. Firm-wide settings and everything-at-once views.
+function isSuperAdmin(){ return !!currentUser && roleOf(currentUser)==='super_admin'; }
+// A lead or the manager — the management views. What DATA they get back is
+// scoped server-side by the reporting line, so this only decides what's on screen.
+function isAdmin(){ return !!currentUser && atLeast('admin'); }
 function getVisibleClients(){ 
   if(isAdmin()) return state.clients;
   if(!currentUser) return [];
@@ -713,7 +728,7 @@ function isInsightTab(k){ return INSIGHTS_TABS.some(t=>t[0]===k); }
 // The header keeps only branding + admin action buttons + user chip.
 function renderHeader(){
   const adminBtns=isAdmin()?`<button class="btn" data-action="openManageTeam">👥 Team (${state.teamMembers.length})</button><button class="btn btn-primary" data-action="openAddClient">+ Add Client</button>`:'';
-  return`<div class="header"><div class="logo"><div class="logo-mark">CT</div><div><div class="logo-text">UAE Compliance Tracker</div><div class="logo-sub">Accounting &amp; Tax Ops</div></div></div><div class="header-actions">${adminBtns}${currentUser?`<div style="display:flex;align-items:center;gap:8px;margin-left:8px;padding-left:12px;border-left:1px solid var(--border)"><span style="font-size:12px;color:var(--text-muted)">${esc(currentUser.name)}</span><span style="font-size:9px;padding:2px 6px;border-radius:4px;background:${currentUser.role==='admin'?'var(--accent-soft)':'var(--bg-elevated)'};color:${currentUser.role==='admin'?'var(--accent)':'var(--text-muted)'};font-weight:700;text-transform:uppercase">${currentUser.role}</span>${currentUser.role==='admin'?'<a href="/admin" style="font-size:11px;color:var(--accent);text-decoration:none">⚙</a>':''}<button class="btn btn-sm" data-action="logout" style="font-size:11px">Logout</button></div>`:''}</div></div>`;
+  return`<div class="header"><div class="logo"><div class="logo-mark">CT</div><div><div class="logo-text">UAE Compliance Tracker</div><div class="logo-sub">Accounting &amp; Tax Ops</div></div></div><div class="header-actions">${adminBtns}${currentUser?`<div style="display:flex;align-items:center;gap:8px;margin-left:8px;padding-left:12px;border-left:1px solid var(--border)"><span style="font-size:12px;color:var(--text-muted)">${esc(currentUser.name)}</span><span style="font-size:9px;padding:2px 6px;border-radius:4px;background:${isAdmin()?'var(--accent-soft)':'var(--bg-elevated)'};color:${isAdmin()?'var(--accent)':'var(--text-muted)'};font-weight:700;text-transform:uppercase" title="${esc(roleLabel(currentUser))}">${esc(roleLabel(currentUser))}</span>${isAdmin()?'<a href="/admin" style="font-size:11px;color:var(--accent);text-decoration:none" title="Admin panel">⚙</a>':''}<button class="btn btn-sm" data-action="logout" style="font-size:11px">Logout</button></div>`:''}</div></div>`;
 }
 
 // Left sidebar — main navigation. Shown when no client is opened.
@@ -728,6 +743,7 @@ function renderMainNavSidebar(){
   primary.push(['calendar','📅','Calendar']);
   primary.push(['tasks','✓','Tasks']);
   primary.push(['aiAssist','🧭','Copilot']);
+  // A team lead gets the Team view — scoped to their own people.
   if(isAdmin()) primary.push(['team','👥','Team']);
 
   const btn=(k,icon,label)=>`<button class="side-nav-btn ${state.activeTab===k?'active':''}" data-nav="${k}"><span class="side-nav-icon">${icon}</span><span class="side-nav-label">${label}</span></button>`;
@@ -735,7 +751,12 @@ function renderMainNavSidebar(){
   let h=`<aside class="side-nav">
     <div class="side-nav-section">Main</div>
     ${primary.map(([k,i,l])=>btn(k,i,l)).join('')}`;
-  if(isAdmin()){
+  // Insights is Super Admin only. Every screen above this point returns data
+  // scoped to the reporting line, but the Insights reports aggregate across the
+  // whole firm — so showing them to a team lead would put the other team's
+  // numbers in front of them. They come back for leads once the report
+  // services take a scope.
+  if(isSuperAdmin()){
     h+=`<div class="side-nav-section">Insights</div>
       ${INSIGHTS_TABS.map(([k,l,icon])=>btn(k,icon,l)).join('')}`;
   }
@@ -2818,8 +2839,16 @@ function renderTeamView(){
   let h=`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px"><h2 style="font-size:18px;font-weight:800">Team Workload</h2><button class="btn" data-action="openManageTeam">Manage Team</button></div>`;
   const ua=state.clients.filter(c=>c.assignedTeam==="Unassigned");
   if(ua.length)h+=`<div class="alert alert-warning" style="margin-bottom:16px">⚠ ${ua.length} client${ua.length!==1?'s':''} unassigned</div>`;
+  // A team lead sees their own people, not the whole firm. The server already
+  // scoped state.clients to their branch, so the owners appearing in it are
+  // exactly their team. Somebody with no clients yet won't show until they
+  // have one — which is also the honest answer to "what is my team carrying".
+  const roster=isSuperAdmin()
+    ? state.teamMembers
+    : state.teamMembers.filter(m=>m===currentUser.name||state.clients.some(c=>c.assignedTeam===m));
+  if(!isSuperAdmin()&&!roster.length)h+=`<div class="alert alert-warning" style="margin-bottom:16px">No clients are assigned to your team yet.</div>`;
   h+=`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px">`;
-  state.teamMembers.forEach(member=>{
+  roster.forEach(member=>{
     const mc=state.clients.filter(c=>c.assignedTeam===member);
     const avg=mc.length?Math.round(mc.reduce((s,c)=>s+(metricsCache[c.id]?.totalPct||0),0)/mc.length):0;
     h+=`<div class="team-card"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><div><div style="font-weight:700;font-size:15px;color:var(--text-primary)">${esc(member)}</div><div style="font-size:11px;color:var(--text-muted)">${mc.length} client${mc.length!==1?'s':''}</div></div></div>${progressHTML(avg)}<div style="margin-top:12px">${mc.length?mc.map(c=>`<div data-client="${c.id}" style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border);cursor:pointer"><span style="font-size:13px;color:var(--text-secondary)">${esc(c.name)}</span>${badgeHTML(metricsCache[c.id]?.overallStatus||"Not Started",1)}</div>`).join(""):'<div style="padding:12px 0;font-size:12px;color:var(--text-muted);text-align:center">No clients</div>'}</div></div>`;

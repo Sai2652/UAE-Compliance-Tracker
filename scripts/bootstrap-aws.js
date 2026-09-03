@@ -27,8 +27,9 @@ const s3 = new S3Client({
   forcePathStyle: !!process.env.AWS_ENDPOINT_URL
 });
 
-// Provisioned = 5 WCU / 5 RCU ⇒ well within always-free (25 WCU / 25 RCU total).
-// PAY_PER_REQUEST is simpler but not free-tier eligible for indefinite use.
+// Kept only so the table definitions below stay valid JavaScript. ensureTable()
+// strips these and creates every table on demand instead — see onDemand() for
+// why the original per-table reasoning about the free tier was wrong.
 const CAPACITY = { ReadCapacityUnits: 5, WriteCapacityUnits: 5 };
 
 const TABLES = [
@@ -516,6 +517,33 @@ const SEEDS = {
   ]
 };
 
+// Strip the provisioned-capacity settings and create on demand instead.
+//
+// The table definitions ask for 5 WCU / 5 RCU each, with the comment that this
+// sits "well within always-free (25 WCU / 25 RCU total)". That reasoning is
+// per-table, but the free allowance is per ACCOUNT — and every secondary index
+// carries its own capacity too. Eighteen tables with twenty indexes between
+// them came to 180 WCU and 180 RCU, seven times the allowance, which billed at
+// about $102 a month. Roughly $37 of that was capacity on tables holding zero
+// rows.
+//
+// On demand also removes the throttling: a sweep writing several hundred
+// obligations at once cannot get through 5 WCU, and no amount of retrying
+// fixes a rate limit. Every other BCL tool in this account is already on
+// demand and they cost about $1 a month between them.
+function onDemand(def) {
+  const out = Object.assign({}, def, { BillingMode: 'PAY_PER_REQUEST' });
+  delete out.ProvisionedThroughput;
+  if (out.GlobalSecondaryIndexes) {
+    out.GlobalSecondaryIndexes = out.GlobalSecondaryIndexes.map(function(g) {
+      const gi = Object.assign({}, g);
+      delete gi.ProvisionedThroughput;   // rejected outright in PAY_PER_REQUEST mode
+      return gi;
+    });
+  }
+  return out;
+}
+
 async function ensureTable(def) {
   try {
     await ddb.send(new DescribeTableCommand({ TableName: def.TableName }));
@@ -524,8 +552,8 @@ async function ensureTable(def) {
   } catch (e) {
     if (e.name !== 'ResourceNotFoundException') throw e;
   }
-  console.log('  → creating table ' + def.TableName);
-  await ddb.send(new CreateTableCommand(def));
+  console.log('  → creating table ' + def.TableName + ' (on demand)');
+  await ddb.send(new CreateTableCommand(onDemand(def)));
   await waitUntilTableExists({ client: ddb, maxWaitTime: 120 }, { TableName: def.TableName });
   console.log('  ✓ table ' + def.TableName + ' ready');
 }

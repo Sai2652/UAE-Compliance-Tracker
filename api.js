@@ -465,7 +465,7 @@ router.get('/manager/dashboard', requireAuth, requireAdmin, asyncH(async functio
     compliance.tasks.list({ overdue: true, limit: 200 }),
     compliance.tasks.list({ dueBefore: todayStr, notStatus: ['completed'], limit: 200 }),
     compliance.tasks.list({ dueBefore: weekStr, notStatus: ['completed'], limit: 200 }),
-    compliance.tasks.list({ status: ['blocked','escalated'], limit: 200 }),
+    compliance.tasks.list({ notStatus: ['completed'], limit: 1000 }).then(function(all){ return all.filter(compliance.isStuck); }),
     compliance.tasks.list({ status: 'ready_for_review', limit: 200 }),
     compliance.tasks.list({ notStatus: ['completed'], limit: 1000 })
   ]);
@@ -681,7 +681,7 @@ router.get('/exceptions', requireAuth, requireAdmin, asyncH(async function(req, 
   var [overdue, blocked, escalated, allOpen] = await Promise.all([
     compliance.tasks.list({ overdue: true, limit: 500 }),
     compliance.tasks.list({ status: 'blocked', limit: 500 }),
-    compliance.tasks.list({ status: 'escalated', limit: 500 }),
+    compliance.tasks.list({ notStatus: ['completed'], limit: 5000 }).then(function(all){ return all.filter(compliance.isEscalated); }),
     compliance.tasks.list({ notStatus: ['completed'], limit: 5000 })
   ]);
   var docsStale = (await compliance.documents.list({ status: 'pending', limit: 1000 })).filter(function(d){

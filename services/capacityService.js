@@ -3,6 +3,9 @@
 // capacity. Default capacity = 20 open tasks per user, overridable per user.
 
 const repos = require('../repositories');
+// isStuck/isEscalated read escalation_level rather than a status of
+// 'escalated', which the sweep no longer sets.
+const compliance = require('../compliance');
 
 const DAY = 24 * 60 * 60 * 1000;
 function daysFromNow(d) { return d ? Math.floor((new Date(d).getTime() - Date.now()) / DAY) : null; }
@@ -50,7 +53,7 @@ function summarizeBucket(bucket, clients) {
   const completed = tasks.filter(t => t.status === 'completed');
   const overdue = open.filter(t => t.due_date && new Date(t.due_date).getTime() < Date.now());
   const awaitingReview = open.filter(t => t.status === 'ready_for_review');
-  const blocked = open.filter(t => t.status === 'blocked' || t.status === 'escalated');
+  const blocked = open.filter(t => compliance.isStuck(t));
   const dueSoon = open.filter(t => { const d = daysFromNow(t.due_date); return d !== null && d >= 0 && d <= 7; });
 
   const completionDurations = completed

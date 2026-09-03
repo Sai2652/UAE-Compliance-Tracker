@@ -88,11 +88,20 @@ async function recordEvent(task, rule) {
     task_id: task.id, rule_id: rule.id, rule_name: rule.name,
     severity: rule.severity, notified: notified
   });
-  // bump task escalation_level + maybe status
-  const patch = { escalation_level: (task.escalation_level || 0) + 1, last_escalated_at: new Date().toISOString() };
-  if (rule.severity >= 2 && !['escalated','blocked','completed'].includes(task.status)) {
-    patch.status = 'escalated';
-  }
+  // Record the escalation WITHOUT touching the work status.
+  //
+  // This used to set status = 'escalated', which overwrote whatever the task
+  // actually was — not_started, in_progress, waiting_documents — so once a
+  // sweep had run you could no longer tell what had been started. With 235
+  // tasks every single one read 'escalated' and the board carried no signal at
+  // all. Escalation is a separate dimension and escalation_level already holds
+  // it, so the two no longer fight over one field.
+  const patch = {
+    escalation_level: (task.escalation_level || 0) + 1,
+    last_escalated_at: new Date().toISOString(),
+    last_escalated_rule: rule.name || null,
+    last_escalated_severity: Number(rule.severity) || 1
+  };
   await compliance.tasks.update(task.id, patch);
   activity.log(0, 'system', 'task_escalated', `Task ${task.id} — ${rule.name}`);
 }
@@ -123,7 +132,10 @@ async function runSweep() {
 async function dailyAdminDigests() {
   const todayStr = new Date().toISOString().slice(0,10);
   const overdue = await compliance.tasks.list({ overdue: true, limit: 500 });
-  const blocked = await compliance.tasks.list({ status: ['blocked','escalated'], limit: 500 });
+  // "Stuck" is now escalation_level plus a hand-set blocked status, which no
+  // status query can express — so list the open tasks and filter.
+  const openTasks = await compliance.tasks.list({ notStatus: ['completed'], limit: 5000 });
+  const blocked = openTasks.filter(compliance.isStuck);
   if (!overdue.length && !blocked.length) return { sent: 0 };
 
   const allUsers = store.users || [];

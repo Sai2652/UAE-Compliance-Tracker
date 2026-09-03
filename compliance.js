@@ -26,6 +26,21 @@ const TASK_STATUSES = [
 ];
 const TERMINAL_STATUSES = ['completed'];
 
+// Has this task been escalated? Read this rather than checking for a status of
+// 'escalated'. The escalation sweep no longer overwrites the work status — it
+// used to, which meant a task's real state (not_started, in_progress, waiting
+// on documents) was destroyed the first time a rule matched. 'escalated' stays
+// in TASK_STATUSES so historic rows still validate, and a status somebody set
+// by hand still counts.
+function isEscalated(task) {
+  if (!task || task.status === 'completed' || task.status === 'reviewed') return false;
+  return Number(task.escalation_level || 0) > 0 || task.status === 'escalated';
+}
+// Escalated or blocked — "this is stuck", which is what most callers mean.
+function isStuck(task) {
+  return !!task && (task.status === 'blocked' || isEscalated(task));
+}
+
 function ddb() {
   const c = getDdb();
   if (!c) throw new Error('DynamoDB not configured');
@@ -409,4 +424,4 @@ const generationRules = {
   }
 };
 
-module.exports = { tasks, comments, documents, config, generationRules, TASK_STATUSES };
+module.exports = { tasks, comments, documents, config, generationRules, TASK_STATUSES, isEscalated, isStuck };

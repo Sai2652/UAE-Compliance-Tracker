@@ -20,6 +20,20 @@ function toDateOnly(d) {
   return dt.toISOString().slice(0,10);
 }
 
+// Work that carries a statutory deadline, where being late means an FTA
+// penalty. Everything else — closing books, issuing a MIS, an internal review —
+// runs to a date the firm set for itself and can move.
+//
+// This distinction has to be in the score. Without it, a stack of internal
+// month-end items from two months ago outranks a CT return due in four weeks
+// simply by being older, and the day's list leads with work that no longer
+// matters over work that carries a fine.
+const STATUTORY_TYPES = [
+  'VAT_Filing', 'CT_Filing', 'VAT_Registration', 'CT_Registration',
+  'VAT_Deregistration', 'CT_Deregistration', 'Audit', 'ESR_Filing', 'UBO_Filing'
+];
+function isStatutory(taskType) { return STATUTORY_TYPES.indexOf(taskType) !== -1; }
+
 // ---------- Priority scoring ----------
 async function computePriorityScore(task, weights, pendingDocsCountByClient) {
   const w = weights;
@@ -38,8 +52,14 @@ async function computePriorityScore(task, weights, pendingDocsCountByClient) {
   if (deadline) {
     const daysToDeadline = daysBetween(deadline, today);
     if (daysToDeadline >= 0 && daysToDeadline <= 14) score += (w.compliance_deadline_within_14d || 40);
+    // A statutory deadline still ahead of us but inside the month is the most
+    // actionable thing on the list: there's time to do it, and a penalty if we
+    // don't. Widen the runway for those beyond the 14-day band above.
+    if (isStatutory(task.task_type) && daysToDeadline >= 0 && daysToDeadline <= 45) {
+      score += (w.statutory_deadline_within_45d || 25);
+    }
   }
-  if (task.status === 'blocked' || task.status === 'escalated') score += (w.blocked || 30);
+  if (task.status === 'blocked' || Number(task.escalation_level || 0) > 0) score += (w.blocked || 30);
 
   const created = new Date(task.created_date);
   const pendingDays = Math.max(0, daysBetween(today, created));
@@ -84,7 +104,10 @@ async function recomputeAllPriorities() {
   for (const t of open) {
     const base = await computePriorityScore(t, weights, byClient);
     const tier = tierByClient[String(t.client_external_id)] || 'B';
-    const score = Math.round(base * (multipliers[tier] || 1.0));
+    // Statutory work is lifted above internal work of the same age. A late
+    // internal month-end matters; a late FTA filing costs money.
+    const statutoryLift = isStatutory(t.task_type) ? (weights.statutory_multiplier || 1.6) : 1.0;
+    const score = Math.round(base * (multipliers[tier] || 1.0) * statutoryLift);
     if (score !== t.priority_score) updates.push({ id: t.id, priority_score: score });
   }
   if (updates.length) await tasks.bulkUpdatePriorities(updates);

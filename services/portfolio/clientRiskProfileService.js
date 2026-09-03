@@ -1,6 +1,9 @@
 // Composite Client Risk Profile — rolls up Compliance, Operational and
 // Responsiveness sub-risks into one band: Low | Medium | High | Critical.
 const repos = require('../../repositories');
+// isStuck/isEscalated read escalation_level rather than a status of
+// 'escalated', which the sweep no longer sets.
+const compliance = require('../../compliance');
 const riskService = require('../riskService');
 const healthScore = require('../../healthScore');
 const clientReadinessService = require('../clientReadinessService');
@@ -45,7 +48,7 @@ async function computeForAll() {
     const open = myTasks.filter(t => t.status !== 'completed');
     const overdue = open.filter(t => t.due_date && new Date(t.due_date).getTime() < Date.now()).length;
     const dueSoon = open.filter(t => { const d = daysUntil(t.due_date); return d != null && d >= 0 && d <= 7; }).length;
-    const openEscalations = open.filter(t => t.escalation_level > 0 || t.status === 'escalated').length;
+    const openEscalations = open.filter(t => compliance.isEscalated(t)).length;
 
     // Compliance Risk: weight by upcoming deadlines, overdue, and missing registrations.
     let complianceRisk = Math.min(100,

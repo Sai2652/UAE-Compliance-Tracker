@@ -7,6 +7,9 @@
 // computed elsewhere.
 
 const repos = require('../../repositories');
+// isStuck/isEscalated read escalation_level rather than a status of
+// 'escalated', which the sweep no longer sets.
+const compliance = require('../../compliance');
 const managerActionListSvc = require('../portfolio/managerActionListService');
 const clientReadinessService = require('../clientReadinessService');
 const capacityService = require('../capacityService');
@@ -227,7 +230,7 @@ function composeTeamHealth(capacity, openTasks, openEscalations) {
   const totalOpen = openTasks.length;
   const overdue = openTasks.filter(t => t.due_date && new Date(t.due_date).getTime() < Date.now()).length;
   const pendingReviews = openTasks.filter(t => t.status === 'ready_for_review').length;
-  const blocked = openTasks.filter(t => t.status === 'blocked' || t.status === 'escalated').length;
+  const blocked = openTasks.filter(t => compliance.isStuck(t)).length;
 
   const byUser = (capacity.rows || []).filter(r => r.userId).map(r => ({
     userId: r.userId, userName: r.userName, band: r.band,

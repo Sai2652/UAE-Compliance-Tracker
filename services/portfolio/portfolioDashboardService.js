@@ -1,6 +1,9 @@
 // Portfolio Dashboard — single composite payload combining every per-client
 // score plus tier into one sortable row. The Portfolio UI reads this directly.
 const repos = require('../../repositories');
+// isStuck/isEscalated read escalation_level rather than a status of
+// 'escalated', which the sweep no longer sets.
+const compliance = require('../../compliance');
 const healthScore = require('../../healthScore');
 const clientReadinessService = require('../clientReadinessService');
 const clientSettings = require('./clientSettingsService');
@@ -46,7 +49,7 @@ async function getDashboard() {
     const h = healthByClient[cid] || { score: null, band: 'unknown' };
     const r = riskByClient[cid] || { riskBand: 'low', overallRisk: 0, complianceRisk: 0, operationalRisk: 0, responsivenessRisk: 0 };
     const s = settingsMap[cid] || { tier: 'B', partnerOwner: null };
-    const escalationsOpen = open.filter(t => t.escalation_level > 0 || t.status === 'escalated').length;
+    const escalationsOpen = open.filter(t => compliance.isEscalated(t)).length;
 
     return {
       clientId: c.id, clientName: c.name, owner: c.assignedTeam || null,

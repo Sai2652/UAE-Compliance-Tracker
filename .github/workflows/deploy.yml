@@ -98,10 +98,6 @@ jobs:
               JwtSecret='${{ secrets.JWT_SECRET }}' \
               S3Bucket=${{ env.ARTIFACT_BUCKET }} \
               DdbPrefix=Uct \
-              SmtpHost='${{ secrets.SMTP_HOST }}' \
-              SmtpPort='${{ secrets.SMTP_PORT }}' \
-              SmtpUser='${{ secrets.SMTP_USER }}' \
-              SmtpPass='${{ secrets.SMTP_PASS }}' \
               AppUrl='${{ secrets.APP_URL }}'
 
       - name: Smoke test

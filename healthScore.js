@@ -43,7 +43,7 @@ function computeFromData(clientId, tasks, docs, obls, recentActivity, weights) {
 
   const openTasks = tasks.filter(t => t.status !== 'completed');
   const overdue = openTasks.filter(t => t.due_date && new Date(t.due_date).getTime() < today);
-  const blocked = openTasks.filter(t => t.status === 'blocked' || t.status === 'escalated');
+  const blocked = openTasks.filter(t => compliance.isStuck(t));
   const reviewStuck = openTasks.filter(t => t.status === 'ready_for_review' && daysAgo(t.last_status_change) > 3);
   const docsStale = docs.filter(d => d.status === 'pending' && daysAgo(d.requested_date) > 7);
   const dueSoonUnstarted = obls.filter(o => {

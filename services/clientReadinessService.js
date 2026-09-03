@@ -15,6 +15,9 @@
 //   9. idle                   — no signal (new/quiet client)
 
 const repos = require('../repositories');
+// isStuck/isEscalated read escalation_level rather than a status of
+// 'escalated', which the sweep no longer sets.
+const compliance = require('../compliance');
 const riskService = require('./riskService');
 const readinessService = require('./readinessService');
 const clientSettingsService = require('./portfolio/clientSettingsService');
@@ -114,7 +117,7 @@ function deriveState(ctx) {
   if (escalation.band === 'red') return 'high_risk';
 
   // 2. Blocked
-  if (openTasks.some(t => t.status === 'blocked' || t.status === 'escalated')) return 'blocked';
+  if (openTasks.some(t => compliance.isStuck(t))) return 'blocked';
 
   // 3. Filing due (workflow with deadline within 7d and not at final step)
   for (const wf of workflows) {

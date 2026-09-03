@@ -28,19 +28,6 @@ Parameters:
   DdbPrefix:
     Type: String
     Default: Uct
-  SmtpHost:
-    Type: String
-    Default: ''
-  SmtpPort:
-    Type: String
-    Default: '587'
-  SmtpUser:
-    Type: String
-    Default: ''
-  SmtpPass:
-    Type: String
-    NoEcho: true
-    Default: ''
   AppUrl:
     Type: String
     Default: ''
@@ -61,10 +48,6 @@ Globals:
         ADMIN_EMAIL: !Ref AdminEmail
         ADMIN_PASSWORD: !Ref AdminPassword
         ADMIN_NAME: !Ref AdminName
-        SMTP_HOST: !Ref SmtpHost
-        SMTP_PORT: !Ref SmtpPort
-        SMTP_USER: !Ref SmtpUser
-        SMTP_PASS: !Ref SmtpPass
         APP_URL: !Ref AppUrl
         IS_LAMBDA: 'true'
 

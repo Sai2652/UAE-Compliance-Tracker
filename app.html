@@ -557,7 +557,11 @@ function calcMetrics(c){
 // ═══════════════════════════════════════════════════════════════
 // STATE
 // ═══════════════════════════════════════════════════════════════
-let state={clients:[],teamMembers:[],activeTab:"morning",selectedClientId:null,detailTab:"overview",search:"",filterStatus:"All",filterTeam:"All",filterReadiness:"All",filterClientTier:"All",sortByTier:false,showModal:null,bulkClients:[],clientReadiness:null,clientReadinessByClient:{},clientReadinessLoadedAt:0,morning:null,morningLoadedAt:0,insightsMenuOpen:false};
+// Opens on Today — the ranked list of what needs doing. It used to open on
+// "morning", a separate Morning Dashboard screen that has no sidebar entry, so
+// the app started on a page with nothing highlighted in the nav and no way back
+// to it once you left. Its content is folded into Today for a lead or manager.
+let state={clients:[],teamMembers:[],activeTab:"priority",selectedClientId:null,detailTab:"overview",search:"",filterStatus:"All",filterTeam:"All",filterReadiness:"All",filterClientTier:"All",sortByTier:false,showModal:null,bulkClients:[],clientReadiness:null,clientReadinessByClient:{},clientReadinessLoadedAt:0,morning:null,morningLoadedAt:0,insightsMenuOpen:false};
 let metricsCache={};
 
 function refreshMetrics(){metricsCache={};state.clients.forEach(c=>{metricsCache[c.id]=calcMetrics(c);});}
@@ -724,11 +728,18 @@ function _renderImpl(){
 // Client Health and Exceptions folded into Risk Center as sub-tabs; Documents
 // dropped from the sidebar (still reachable via /documents; Priority Queue
 // surfaces pending docs directly).
+// Trimmed 2026-09-03 from four entries to one.
+//
+// Portfolio (client tiering plus five invented scores), Risk Center (nine
+// sub-tabs asking what Today already answers) and Team Analytics (capacity
+// planning and 30-day forecasting for a nine-person team) were all built ahead
+// of the data and answered questions nothing was recording. The code is still
+// in the tree and the routes still work — only the sidebar entries are gone —
+// so any of them can come back the moment there's a reason.
+//
+// Reports / MIS stays: it's the monthly pack that goes to clients.
 const INSIGHTS_TABS = [
-  ['portfolio',  'Portfolio',       '🗂️'],
-  ['risk',       'Risk Center',     '🛡️'],
-  ['reports',    'Reports / MIS',   '📊'],
-  ['analytics',  'Team Analytics',  '📈']
+  ['reports',    'Reports / MIS',   '📊']
 ];
 function isInsightTab(k){ return INSIGHTS_TABS.some(t=>t[0]===k); }
 
@@ -742,15 +753,19 @@ function renderHeader(){
 // Left sidebar — main navigation. Shown when no client is opened.
 // When a client is opened, the existing renderSidebar (client detail nav) takes over.
 function renderMainNavSidebar(){
-  // Morning Briefing folded into Priority Queue (shows as a top card there
-  // when the user is admin). AI Assistant is rule-based — not an LLM — so
-  // it's labelled "Copilot" to avoid setting the wrong expectation.
+  // Morning Briefing is folded into the Priority Queue, shown as a top card
+  // there for a lead or the manager.
+  //
+  // Copilot was removed from the sidebar on 2026-09-03. It answered six canned
+  // questions — "which clients need attention today", "who's waiting on
+  // approvals" — by querying the same services this screen already reads, so it
+  // restated Today in a different shape. Deterministic rules, never an LLM,
+  // which is why it was never called AI. The code and its routes remain.
   const primary=[];
   primary.push(['priority','⚡',isAdmin()?'Today':'My Next Priority']);
   primary.push(['dashboard','🏢','Clients']);
   primary.push(['calendar','📅','Calendar']);
   primary.push(['tasks','✓','Tasks']);
-  primary.push(['aiAssist','🧭','Copilot']);
   // A team lead gets the Team view — scoped to their own people.
   if(isAdmin()) primary.push(['team','👥','Team']);
 
@@ -1358,10 +1373,14 @@ function periodSelector(){
 }
 
 function renderReports(){
+  // Ten tabs down to six. Employees, Escalations, Workload and Trends all
+  // needed months of history to say anything and were reporting on an empty
+  // table; Trends in particular cannot trend a single month. Their renderers
+  // and routes are untouched, so they return when there's history to show.
   const tabs=[
     ['summary','Monthly Summary'],['attention','Attention Required'],
-    ['employees','Employees'],['clients','Clients'],['documents','Documents'],
-    ['vat','VAT'],['ct','CT'],['escalations','Escalations'],['workload','Workload'],['trends','Trends']
+    ['clients','Clients'],['documents','Documents'],
+    ['vat','VAT'],['ct','CT']
   ];
   let h=`<div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin-bottom:12px"><div class="nav" style="margin:0">`;
   tabs.forEach(([k,l])=>{ h+=`<button class="nav-btn ${reportsState.subTab===k?'active':''}" data-rt="${k}">${l}</button>`; });

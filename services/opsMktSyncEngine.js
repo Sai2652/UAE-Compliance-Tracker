@@ -14,7 +14,7 @@
 
 var opsMkt = require('./opsMktSync');
 var { OpsMktSyncRepo } = require('../repositories/opsMktSyncRepo');
-var { tracker, activity } = require('../database');
+var { tracker, activity, users } = require('../database');
 var obligationEngine = require('../obligationEngine');
 
 // Add the planned clients to the tracker and seed their obligations.
@@ -70,11 +70,18 @@ async function commit(plan, actor, budgetMs) {
 async function preview(options) {
   var opts = options || {};
   var data = tracker.getData();
+  // Match Ops-Mkt's team member against people who can actually sign in.
+  // This used to match against the old teamMembers name list, which meant a
+  // synced client could land on somebody with no account — work assigned to
+  // a person who cannot open the tool.
+  var assignable = (users.getAll() || [])
+    .filter(function(u) { return u && u.active !== false && u.name; })
+    .map(function(u) { return u.name; });
   return await opsMkt.plan({
     pocs: opts.pocs || [],
     activeOnly: opts.activeOnly !== false,
     existingClients: data.clients || [],
-    teamMembers: data.teamMembers || []
+    teamMembers: assignable
   });
 }
 

@@ -28,12 +28,19 @@ function buildApp() {
     res.sendFile(path.join(__dirname, 'app.html'));
   });
 
+  // The standalone admin page is gone — user management is a page inside the
+  // app now (sidebar → User Management). This route stays only to catch old
+  // bookmarks and send them somewhere useful.
+  //
+  // Worth recording why it went: it tested `decoded.role !== 'admin'`, and
+  // once roles became super_admin / admin / user, a Super Admin failed that
+  // test and was redirected away. The one person who most needed the admin
+  // panel was the one person who could not open it, which is why the 11px ⚙
+  // in the header looked simply broken.
   app.get('/admin', function(req, res) {
     var token = req.cookies ? req.cookies.token : null;
     if (!token) return res.redirect('/login');
-    var decoded = verifyToken(token);
-    if (!decoded || decoded.role !== 'admin') return res.redirect('/');
-    res.sendFile(path.join(__dirname, 'admin.html'));
+    res.redirect('/');
   });
 
   return app;

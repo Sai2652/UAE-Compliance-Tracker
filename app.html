@@ -442,7 +442,25 @@ const fmtDateTime=d=>d?new Date(d).toLocaleDateString("en-GB",{day:"2-digit",mon
 const daysUntil=d=>d?Math.ceil((new Date(d)-today)/864e5):null;
 const esc=s=>{if(s==null)return"";return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#39;");};
 const nowISO=()=>new Date().toISOString();
-function getTeamOptions(){return["Unassigned",...state.teamMembers];}
+// Who a client can be assigned to: the people who actually log in.
+//
+// This used to return state.teamMembers — a second list of bare names kept
+// only in the tracker blob. Clients were assigned to those names while tasks
+// were assigned to login users, so the two never lined up and no workload
+// figure could be trusted. One list now.
+//
+// A name still sitting on a client that matches no user is kept in the
+// options and marked, so that client does not silently jump to Unassigned the
+// first time somebody opens the dropdown. Workload lists them separately as
+// needing a real owner.
+function getAssignableUsers(){
+  return (state.orgPeople||[]).filter(p=>p&&p.active!==false).map(p=>p.name).filter(Boolean);
+}
+function strandedOwners(){
+  const live=getAssignableUsers();
+  return [...new Set((state.clients||[]).map(c=>c.assignedTeam).filter(n=>n&&n!=="Unassigned"&&!live.includes(n)))];
+}
+function getTeamOptions(){return["Unassigned",...getAssignableUsers(),...strandedOwners()];}
 function badgeHTML(s,sm){const c="badge-"+s.toLowerCase().replace(/\s+/g,"-");return`<span class="badge ${c}"${sm?' style="font-size:10px;padding:2px 8px"':''}><span class="dot"></span>${esc(s)}</span>`;}
 function progressHTML(p,h=6){const c=p>=80?'var(--green)':p>=50?'var(--amber)':p>=20?'var(--blue)':'var(--slate)';return`<div class="progress-bar"><div class="progress-track" style="height:${h}px"><div class="progress-fill" style="width:${p}%;background:${c};height:${h}px"></div></div><span class="progress-label" style="color:${c}">${p}%</span></div>`;}
 function selectHTML(n,v,opts,a=""){return`<select class="form-input" data-field="${n}" ${a} style="padding:5px 8px;font-size:12px;max-width:200px">${opts.map(o=>`<option${o===v?' selected':''}>${esc(o)}</option>`).join("")}</select>`;}
@@ -692,15 +710,35 @@ let _renderQueued=false, _renderInProgress=false;
 // Only same-view re-renders should restore the previous .main scroll offset;
 // otherwise a new tab inherits an unrelated Y and looks broken.
 let _lastRenderCtx={activeTab:null,selectedClientId:null,detailTab:null};
+// Renders are coalesced into one pass per frame, but the scheduling has to
+// survive a backgrounded tab.
+//
+// The previous version queued on requestAnimationFrame alone and returned
+// early whenever _renderQueued was set. Browsers pause rAF in a background
+// tab, so switching away while something was loading left the flag set with
+// no callback coming — and because every later render() saw the flag and
+// returned, the UI stopped updating for the rest of the session. It looked
+// like the app had hung; only a reload cleared it. A timer is not throttled
+// the same way, so both are armed and whichever fires first does the work.
+//
+// A render requested while one is running is also queued now rather than
+// dropped on the floor, which was the same class of silent loss.
 function render(){
-  if(_renderInProgress) return;
-  if(_renderQueued) return;
+  if(_renderQueued) return;   // one is already scheduled — it will pick up the latest state
   _renderQueued=true;
-  requestAnimationFrame(()=>{
-    _renderQueued=false;
-    _renderInProgress=true;
-    try{ _renderImpl(); } finally { _renderInProgress=false; }
-  });
+  requestAnimationFrame(_renderFlush);
+  setTimeout(_renderFlush,250);
+}
+function _renderFlush(){
+  if(!_renderQueued) return;          // whichever of rAF/timeout got here first already ran
+  if(_renderInProgress) return;       // leave it queued; the finally below reschedules
+  _renderQueued=false;
+  _renderInProgress=true;
+  try{ _renderImpl(); }
+  finally{
+    _renderInProgress=false;
+    if(_renderQueued) setTimeout(_renderFlush,0);
+  }
 }
 // Capture the currently focused input/textarea/select so an incidental
 // render (loader finishing, metric refresh, etc.) doesn't yank the caret
@@ -771,7 +809,6 @@ function _renderImpl(){
     else {h+=renderMainNavSidebar();h+=`<div class="main">${renderMain()}</div>`;}
     h+=`</div>`;
     if(state.showModal==="addClient")h+=renderAddModal();
-    if(state.showModal==="manageTeam")h+=renderTeamModal();
     if(state.showModal==="opsMkt")h+=renderOpsMktModal();
     if(state.showModal==="addVatReturn")h+=renderAddVatReturnModal();
     if(state.showModal==="addCredential")h+=renderAddCredentialModal();
@@ -829,8 +866,13 @@ function renderHeader(){
   // Fetch is Super Admin only — it pulls a whole First POC's book of clients
   // across from Ops-Mkt, which is a firm-level decision, not a team one.
   const fetchBtn=isSuperAdmin()?`<button class="btn" data-action="openOpsMkt" title="Pull clients across from the Ops-Mkt master tracker">⬇ Fetch clients</button>`:'';
-  const adminBtns=isAdmin()?`<button class="btn" data-action="openManageTeam">👥 Team (${state.teamMembers.length})</button>${fetchBtn}<button class="btn btn-primary" data-action="openAddClient">+ Add Client</button>`:'';
-  return`<div class="header"><div class="logo"><div class="logo-mark">CT</div><div><div class="logo-text">UAE Compliance Tracker</div><div class="logo-sub">Accounting &amp; Tax Ops</div></div></div><div class="header-actions">${adminBtns}${currentUser?`<div style="display:flex;align-items:center;gap:8px;margin-left:8px;padding-left:12px;border-left:1px solid var(--border)"><span style="font-size:12px;color:var(--text-muted)">${esc(currentUser.name)}</span><span style="font-size:9px;padding:2px 6px;border-radius:4px;background:${isAdmin()?'var(--accent-soft)':'var(--bg-elevated)'};color:${isAdmin()?'var(--accent)':'var(--text-muted)'};font-weight:700;text-transform:uppercase" title="${esc(roleLabel(currentUser))}">${esc(roleLabel(currentUser))}</span>${isAdmin()?'<a href="/admin" style="font-size:11px;color:var(--accent);text-decoration:none" title="Admin panel">⚙</a>':''}<button class="btn btn-sm" data-action="logout" style="font-size:11px">Logout</button></div>`:''}</div></div>`;
+  // The "Team (n)" button is gone. It managed a second, parallel list of bare
+  // names that clients were assigned to — separate from the people who
+  // actually log in, so eleven names carried work while three had accounts and
+  // nothing connected the two. People are now one list, managed in User
+  // Management, and clients are assigned to those people.
+  const adminBtns=isAdmin()?`${fetchBtn}<button class="btn btn-primary" data-action="openAddClient">+ Add Client</button>`:'';
+  return`<div class="header"><div class="logo"><div class="logo-mark">CT</div><div><div class="logo-text">UAE Compliance Tracker</div><div class="logo-sub">Accounting &amp; Tax Ops</div></div></div><div class="header-actions">${adminBtns}${currentUser?`<div style="display:flex;align-items:center;gap:8px;margin-left:8px;padding-left:12px;border-left:1px solid var(--border)"><span style="font-size:12px;color:var(--text-muted)">${esc(currentUser.name)}</span><span style="font-size:9px;padding:2px 6px;border-radius:4px;background:${isAdmin()?'var(--accent-soft)':'var(--bg-elevated)'};color:${isAdmin()?'var(--accent)':'var(--text-muted)'};font-weight:700;text-transform:uppercase" title="${esc(roleLabel(currentUser))}">${esc(roleLabel(currentUser))}</span><button class="btn btn-sm" data-action="logout" style="font-size:11px">Logout</button></div>`:''}</div></div>`;
 }
 
 // Left sidebar — main navigation. Shown when no client is opened.
@@ -851,6 +893,15 @@ function renderMainNavSidebar(){
   primary.push(['tasks','✓','Tasks']);
   // A team lead gets the Team view — scoped to their own people.
   if(isAdmin()) primary.push(['team','👥','Team']);
+  // Who is carrying too much this month. Its own item rather than a tab
+  // buried inside Team: "is the work spread evenly" is a question managers
+  // ask on its own, not while browsing a team page.
+  if(isAdmin()) primary.push(['workload','⚖️','Workload']);
+  // User Management replaces the 11px ⚙ that used to sit in the header. That
+  // link went to /admin, which checked for role 'admin' and so bounced the
+  // Super Admin straight back — it had been unopenable for whoever needed it
+  // most.
+  if(isSuperAdmin()) primary.push(['users','👤','User Management']);
 
   const btn=(k,icon,label)=>`<button class="side-nav-btn ${state.activeTab===k?'active':''}" data-nav="${k}"><span class="side-nav-icon">${icon}</span><span class="side-nav-label">${label}</span></button>`;
 
@@ -894,6 +945,8 @@ function renderMain(){
     case"portfolio":return renderPortfolio();
     case"aiAssist":return renderAIAssistant();
     case"morning":return renderMorningDashboard();
+    case"workload":return renderWorkload();
+    case"users":return renderUserManagement();
     default:return isAdmin()?renderMorningDashboard():renderPriorityQueue();
   }
 }
@@ -910,6 +963,42 @@ async function loadMorningDashboard(force){
   });
 }
 
+function greetingFor(){
+  const hr=new Date().getHours();
+  const first=String((currentUser&&currentUser.name)||'').split(/\s+/)[0]||'';
+  const part=hr<12?'Good morning':hr<17?'Good afternoon':'Good evening';
+  return first?`${part}, ${esc(first)}`:part;
+}
+
+// A compact read on who is carrying too much this month, with a way through to
+// the full picture. Deliberately silent when the team is level — a strip that
+// says "everything is fine" every day is a strip nobody reads.
+function renderTodayPressureStrip(){
+  if(!isAdmin())return'';
+  if(!wlState.data&&!wlState.loading){ setTimeout(()=>loadWorkload(true),0); return ''; }
+  const d=wlState.data;
+  if(!d||!d.people||!d.people.length||!d.totals.score)return'';
+  const over=d.people.filter(p=>p.band==='over');
+  const light=d.people.filter(p=>p.band==='light');
+  const stranded=(d.noLoginOwners||[]).length;
+  if(!over.length&&!stranded)return'';
+
+  let msg='';
+  if(over.length){
+    const top=over[0];
+    msg=`<b>${esc(top.name)}</b> has ${top.vat} VAT and ${top.ct} CT return${(top.vat+top.ct)===1?'':'s'} this month — ${Math.round(top.ratio*100)}% of an even share`;
+    if(light.length) msg+=`, while <b>${esc(light[light.length-1].name)}</b> has room`;
+    msg+='.';
+  } else {
+    msg=`${stranded} name${stranded===1?'':'s'} hold${stranded===1?'s':''} clients but cannot sign in.`;
+  }
+  return `<div class="card" style="margin-bottom:14px;border-color:var(--amber-border);display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+    <div style="font-size:20px">⚖️</div>
+    <div style="flex:1;min-width:220px;font-size:13px;line-height:1.5">${msg}</div>
+    <button class="btn btn-sm" data-nav="workload">Balance the month</button>
+  </div>`;
+}
+
 function renderMorningDashboard(){
   if(!isAdmin()) return renderPriorityQueue();
   if(!state.clientReadiness){ setTimeout(ensureReadinessLoaded,0); }
@@ -917,34 +1006,72 @@ function renderMorningDashboard(){
   if(_isLoadErr(state.morning)) return renderLoaderError(state.morning, '⚠️', 'Failed to load morning briefing');
   const d=state.morning;
   const ageSec=Math.floor((Date.now()-new Date(d.generatedAt).getTime())/1000);
-  let h=`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:8px">
-    <div><div style="font-size:20px;font-weight:800">☕ Morning Briefing</div><div style="font-size:11px;color:var(--text-muted)">Generated ${ageSec}s ago · Composed from existing operational data</div></div>
+  // The page used to stack eight sections of equal weight, so on a quiet day
+  // it said "nothing to do" three separate times and on a busy one it gave no
+  // clue what to open first. It now answers one question at the top — does
+  // anything need me today — backs it with three numbers that drive action,
+  // then the work itself. Everything that is context rather than action moved
+  // below a fold.
+  const dl=d.deadlines||{};
+  const th=(d.teamHealth&&d.teamHealth.totals)||{};
+  const overdue=dl.overdueCount||0, dueToday=dl.todayCount||0, next7=dl.next7Count||0;
+  const blocked=th.blockedWork||0, reviews=th.pendingReviews||0;
+  const needsMe=overdue+dueToday+blocked+reviews;
+
+  let h=`<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:14px;flex-wrap:wrap;gap:8px">
+    <div><div style="font-size:20px;font-weight:800">${greetingFor()}</div>
+    <div style="font-size:11px;color:var(--text-muted)">${new Date().toLocaleDateString(undefined,{weekday:'long',day:'numeric',month:'long'})}${Number.isFinite(ageSec)?' · refreshed '+(ageSec<60?ageSec+'s':Math.floor(ageSec/60)+'m')+' ago':''}</div></div>
     <button class="btn btn-sm" id="mb-refresh">↻ Refresh</button>
   </div>`;
 
-  // ---- Section 8: Business Health Snapshot (top of screen — executive context)
-  h+=renderMB_BusinessHealth(d.businessHealth);
+  // ---- The answer, in one line.
+  const verdict = overdue
+    ? {t:overdue+' filing'+(overdue===1?' is':'s are')+' already past due',s:'Start here — everything else can wait.',c:'var(--red)',i:'🔴'}
+    : (dueToday
+      ? {t:dueToday+' thing'+(dueToday===1?'':'s')+' due today',s:blocked?blocked+' other item'+(blocked===1?' is':'s are')+' blocked and waiting on someone.':'Nothing overdue.',c:'var(--amber)',i:'🟠'}
+      : (needsMe
+        ? {t:needsMe+' item'+(needsMe===1?'':'s')+' need attention',s:'Nothing overdue and nothing due today.',c:'var(--blue)',i:'🔵'}
+        : {t:'Nothing needs you today',s:next7?next7+' item'+(next7===1?'':'s')+' due later this week.':'Nothing due this week either.',c:'var(--green)',i:'✅'}));
+  h+=`<div class="card" style="margin-bottom:14px;border-color:${verdict.c}">
+    <div style="display:flex;gap:14px;align-items:center">
+      <div style="font-size:26px;line-height:1">${verdict.i}</div>
+      <div><div style="font-size:17px;font-weight:800;color:${verdict.c};line-height:1.35">${esc(verdict.t)}</div>
+      <div style="font-size:12px;color:var(--text-muted);margin-top:3px">${esc(verdict.s)}</div></div>
+    </div></div>`;
 
-  // ---- Section 5: Filing Readiness chips (clickable)
-  h+=renderMB_ReadinessChips(d.readinessCounts);
+  // ---- The four numbers that decide what to do next. Clickable, because a
+  // number you cannot open is trivia.
+  const tile=(n,label,colour,go)=>`<button class="card" data-mb-go="${go}" style="text-align:left;cursor:pointer;border-color:${n?colour:'var(--border)'};padding:14px 16px;background:var(--bg-card)">
+    <div style="font-size:26px;font-weight:800;color:${n?colour:'var(--text-muted)'};line-height:1">${n}</div>
+    <div style="font-size:11px;color:var(--text-muted);margin-top:3px;text-transform:uppercase;letter-spacing:.05em;font-weight:700">${label}</div></button>`;
+  h+=`<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:14px">
+    ${tile(overdue,'Overdue','var(--red)','overdue')}
+    ${tile(dueToday,'Due today','var(--amber)','overdue')}
+    ${tile(next7,'Due this week','var(--blue)','overdue')}
+    ${tile(blocked,'Blocked','var(--amber)','portfolio_action')}
+  </div>`;
 
-  // ---- Sections 1 + 6 side-by-side
+  // ---- Who is under pressure this month. Folded in here because it is the
+  // other question a manager has every morning, and it was previously only
+  // answerable by counting clients by hand.
+  h+=renderTodayPressureStrip();
+
+  // ---- The work itself.
   h+=`<div style="display:grid;grid-template-columns:2fr 1fr;gap:14px;margin-bottom:14px">`;
   h+=renderMB_TodaysFocus(d.todaysFocus);
   h+=renderMB_ManagerActions(d.managerActions);
   h+=`</div>`;
-
-  // ---- Section 2: Critical Deadlines
   h+=renderMB_Deadlines(d.deadlines);
-
-  // ---- Section 3: Clients Requiring Attention
   h+=renderMB_ClientsAttention(d.clientsAttention);
 
-  // ---- Section 4: Team Health
+  // ---- Context, not action. Present but out of the way, so the top of the
+  // page stays about what to do next.
+  h+=`<details style="margin-top:6px"><summary style="cursor:pointer;font-size:12px;color:var(--text-muted);padding:8px 0">More detail — business health, filing readiness, team and risk</summary><div style="padding-top:10px">`;
+  h+=renderMB_BusinessHealth(d.businessHealth);
+  h+=renderMB_ReadinessChips(d.readinessCounts);
   h+=renderMB_TeamHealth(d.teamHealth);
-
-  // ---- Section 7: Risk Summary (click-throughs at the bottom)
   h+=renderMB_RiskSummary(d.riskSummary);
+  h+=`</div></details>`;
 
   setTimeout(()=>{
     const r=document.getElementById('mb-refresh'); if(r) r.onclick=()=>{ state.morning=null; loadMorningDashboard(true); };
@@ -2826,7 +2953,7 @@ async function openTaskDetail(id){
 async function promptNewTask(){
   const clientOpts=state.clients.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join('');
   const typeOpts=TASK_TYPES.map(t=>`<option value="${t}">${t.replace(/_/g,' ')}</option>`).join('');
-  const userOpts=(state.teamMembers||[]).map(m=>`<option value="${esc(m.name||m)}">${esc(m.name||m)}</option>`).join('');
+  const userOpts=getAssignableUsers().map(m=>`<option value="${esc(m)}">${esc(m)}</option>`).join('');
   const html=`<div style="position:fixed;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:1000" id="nt"><div style="background:var(--bg-card);padding:24px;border-radius:8px;max-width:480px;width:90%"><h3>New Task</h3><div style="display:grid;gap:8px;margin-top:10px"><select id="ntClient" class="form-input">${clientOpts}</select><select id="ntType" class="form-input">${typeOpts}</select><input id="ntTitle" class="form-input" placeholder="Title (optional)"><input id="ntDue" type="date" class="form-input"><input id="ntDeadline" type="date" class="form-input" placeholder="Compliance deadline"><select id="ntOwner" class="form-input"><option value="">— Unassigned —</option>${userOpts}</select></div><div style="display:flex;gap:8px;margin-top:14px;justify-content:flex-end"><button class="btn" id="ntCancel">Cancel</button><button class="btn btn-primary" id="ntSave">Create</button></div></div></div>`;
   document.body.insertAdjacentHTML('beforeend', html);
   document.getElementById('ntCancel').onclick=()=>document.getElementById('nt').remove();
@@ -2860,7 +2987,7 @@ async function promptNewDocument(){
 function renderDashboard(){
   const vc=getVisibleClients();
   const total=vc.length;
-  if(!total&&isAdmin()&&!state.teamMembers.length)return`<div class="empty-state"><div class="empty-state-icon">📋</div><div class="empty-state-title">Welcome to UAE Compliance Tracker</div><div class="empty-state-text">Set up your team, then add clients.</div><div style="display:flex;gap:10px;justify-content:center"><button class="btn" data-action="openManageTeam">👥 Set Up Team</button><button class="btn btn-primary" data-action="openAddClient">+ Add Client</button></div></div>`;
+  if(!total&&isAdmin()&&!getAssignableUsers().length)return`<div class="empty-state"><div class="empty-state-icon">📋</div><div class="empty-state-title">Welcome to UAE Compliance Tracker</div><div class="empty-state-text">Set up your team, then add clients.</div><div style="display:flex;gap:10px;justify-content:center"><button class="btn" data-action="openManageTeam">👥 Set Up Team</button><button class="btn btn-primary" data-action="openAddClient">+ Add Client</button></div></div>`;
   if(!total&&isAdmin())return`<div class="empty-state"><div class="empty-state-icon">📋</div><div class="empty-state-title">No Clients Yet</div><button class="btn btn-primary" data-action="openAddClient">+ Add First Client</button></div>`;
   if(!total&&!isAdmin())return`<div class="empty-state"><div class="empty-state-icon">📋</div><div class="empty-state-title">No Clients Assigned</div><div class="empty-state-text">Your admin hasn't assigned any clients to you yet. Contact your admin for access.</div></div>`;
 
@@ -2945,7 +3072,7 @@ function renderDeadlines(){
 }
 
 function renderTeamView(){
-  if(!state.teamMembers.length)return`<div class="empty-state"><div class="empty-state-icon">👥</div><div class="empty-state-title">No Team Members</div><button class="btn btn-primary" data-action="openManageTeam">👥 Set Up Team</button></div>`;
+  if(!getAssignableUsers().length)return`<div class="empty-state"><div class="empty-state-icon">👥</div><div class="empty-state-title">No Team Members</div><button class="btn btn-primary" data-action="openManageTeam">👥 Set Up Team</button></div>`;
   let h=`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px"><h2 style="font-size:18px;font-weight:800">Team Workload</h2><button class="btn" data-action="openManageTeam">Manage Team</button></div>`;
   const ua=state.clients.filter(c=>c.assignedTeam==="Unassigned");
   if(ua.length)h+=`<div class="alert alert-warning" style="margin-bottom:16px">⚠ ${ua.length} client${ua.length!==1?'s':''} unassigned</div>`;
@@ -2954,8 +3081,8 @@ function renderTeamView(){
   // exactly their team. Somebody with no clients yet won't show until they
   // have one — which is also the honest answer to "what is my team carrying".
   const roster=isSuperAdmin()
-    ? state.teamMembers
-    : state.teamMembers.filter(m=>m===currentUser.name||state.clients.some(c=>c.assignedTeam===m));
+    ? getAssignableUsers()
+    : getAssignableUsers().filter(m=>m===currentUser.name||state.clients.some(c=>c.assignedTeam===m));
   if(!isSuperAdmin()&&!roster.length)h+=`<div class="alert alert-warning" style="margin-bottom:16px">No clients are assigned to your team yet.</div>`;
   h+=`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px">`;
   roster.forEach(member=>{
@@ -3651,6 +3778,281 @@ function processExcelFile(file){
 }
 
 // ═══════════════════════════════════════════════════════════════
+// USER MANAGEMENT
+// ═══════════════════════════════════════════════════════════════
+// One list of people, replacing two.
+//
+// Before this there was a "Team (11)" list of bare names that clients were
+// assigned to, and a separate /admin page holding the three people who
+// actually had logins. Nothing joined them, so a client could be assigned to
+// somebody who could not open the tool, and no workload figure meant
+// anything. The name list is gone; clients are assigned to users.
+//
+// The /admin page this replaces was also unreachable: its route checked for
+// the role 'admin', so a Super Admin got redirected away from their own admin
+// panel — which is why the gear appeared to do nothing.
+const usersState={loading:false,error:'',people:null,orphans:[],working:'',inviteOpen:false};
+
+async function loadOrgPeople(force){
+  if(usersState.loading) return;
+  if(state.orgPeople && !force) return;
+  usersState.loading=true;
+  try{
+    const j=await apiJSON('/api/users/org');
+    state.orgPeople=j.people||[];
+    usersState.people=j.people||[];
+    usersState.orphans=j.orphanOwners||[];
+    usersState.error='';
+  }catch(e){ usersState.error=e.message; }
+  usersState.loading=false;
+  render();
+}
+
+async function userAction(fn,label){
+  usersState.working=label; usersState.error=''; render();
+  try{ await fn(); await loadOrgPeople(true); }
+  catch(e){ usersState.error=e.message; }
+  usersState.working=''; render();
+}
+
+function renderUserManagement(){
+  if(!isSuperAdmin())return`<div class="empty-state"><div class="empty-state-icon">🔒</div><div class="empty-state-title">Super Admin only</div></div>`;
+  if(!state.orgPeople&&!usersState.loading){ setTimeout(()=>loadOrgPeople(true),0); }
+
+  const people=usersState.people||[];
+  const orphans=usersState.orphans||[];
+  const stranded=strandedOwners();
+
+  let h=`<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:16px;flex-wrap:wrap">
+    <div><h2 style="font-size:20px;font-weight:800;margin:0">👤 User Management</h2>
+    <div style="font-size:12px;color:var(--text-muted);margin-top:3px">Everyone who can sign in. Clients are assigned to these people — there is no separate team list any more.</div></div>
+    <div style="display:flex;gap:8px"><button class="btn" data-action="reloadUsers">↻ Refresh</button><button class="btn btn-primary" data-action="toggleInvite">${usersState.inviteOpen?'Cancel':'+ Invite person'}</button></div>
+  </div>`;
+
+  if(usersState.error)h+=`<div class="alert" style="margin-bottom:12px;background:var(--red-bg);border:1px solid var(--red-border);color:var(--red)">${esc(usersState.error)}</div>`;
+  if(usersState.working)h+=`<div class="alert" style="margin-bottom:12px;background:var(--bg-elevated);border:1px solid var(--border)">⏳ ${esc(usersState.working)}</div>`;
+
+  if(usersState.inviteOpen){
+    h+=`<div class="card" style="margin-bottom:14px;border-color:var(--accent-soft)"><div class="card-title">Invite someone</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr auto;gap:10px;align-items:end">
+        <div><div class="form-label">Name</div><input class="form-input" id="invName" placeholder="e.g., Lavanya"></div>
+        <div><div class="form-label">Email</div><input class="form-input" id="invEmail" placeholder="name@bcl.ae"></div>
+        <div><div class="form-label">Role</div><select class="form-input" id="invRole"><option value="user">User</option><option value="admin">Admin (team lead)</option><option value="super_admin">Super Admin</option></select></div>
+        <div><div class="form-label">Reports to</div><select class="form-input" id="invReports"><option value="">— nobody —</option>${people.filter(p=>p.role!=='user').map(p=>`<option value="${p.id}">${esc(p.name)}</option>`).join('')}</select></div>
+        <button class="btn btn-primary" data-action="sendInvite">Send invite</button>
+      </div>
+      <div style="font-size:11px;color:var(--text-muted);margin-top:8px;line-height:1.5">A User sees only their own clients. An Admin is a team lead and sees everyone who reports to them — so give an Admin their reports, or they will see only their own work.</div>
+    </div>`;
+  }
+
+  // Anyone holding clients without an account. This is the loose end left by
+  // folding the two lists into one, so it is stated plainly here rather than
+  // left for somebody to discover when a filing is missed.
+  const strandedNames=[...new Set([...stranded,...orphans.map(o=>o.name)])];
+  if(strandedNames.length){
+    h+=`<div class="card" style="margin-bottom:14px;border-color:var(--amber-border)">
+      <div class="card-title" style="color:var(--amber)">⚠ Holding clients but cannot sign in</div>
+      <div style="font-size:12px;color:var(--text-muted);line-height:1.6;margin-bottom:10px">These names have clients against them but no login, so they cannot see or do that work. Invite them, or move their clients to someone in Workload.</div>
+      <div style="display:flex;flex-wrap:wrap;gap:8px">${strandedNames.map(n=>{
+        const cnt=(state.clients||[]).filter(c=>c.assignedTeam===n).length;
+        return `<span style="display:inline-flex;align-items:center;gap:6px;padding:5px 10px;background:var(--bg-elevated);border:1px solid var(--border);border-radius:20px;font-size:12px"><b>${esc(n)}</b><span style="color:var(--text-muted)">${cnt} client${cnt===1?'':'s'}</span><button class="btn btn-sm" data-action="inviteName" data-name="${esc(n)}" style="font-size:10px;padding:2px 8px">Invite</button></span>`;
+      }).join('')}</div></div>`;
+  }
+
+  if(usersState.loading&&!people.length)h+=`<div style="padding:28px;text-align:center;color:var(--text-muted);font-size:13px">Loading people…</div>`;
+  else if(!people.length)h+=`<div class="empty-state"><div class="empty-state-icon">👤</div><div class="empty-state-title">No users yet</div></div>`;
+  else{
+    h+=`<div class="card" style="overflow-x:auto"><table><thead><tr>
+      <th style="text-align:left">Name</th><th style="text-align:left">Email</th><th style="text-align:left">Role</th>
+      <th style="text-align:left">Reports to</th><th style="text-align:right">Clients</th><th style="text-align:left">Last login</th><th></th></tr></thead><tbody>`;
+    people.forEach(p=>{
+      const isMe=currentUser&&String(currentUser.id)===String(p.id);
+      h+=`<tr${p.active===false?' style="opacity:0.5"':''}>
+        <td style="font-weight:600">${esc(p.name||'(no name set)')}${isMe?' <span style="font-size:10px;color:var(--text-muted)">(you)</span>':''}${p.active===false?' <span style="font-size:10px;color:var(--red)">deactivated</span>':''}</td>
+        <td style="color:var(--text-muted)">${esc(p.email||'—')}</td>
+        <td><select class="form-input" data-user-role="${p.id}" style="padding:3px 6px;font-size:11px;max-width:150px"${isMe?' disabled title="You cannot change your own role"':''}>
+          ${[['user','User'],['admin','Admin (team lead)'],['super_admin','Super Admin']].map(function(r){return `<option value="${r[0]}"${p.role===r[0]?' selected':''}>${r[1]}</option>`;}).join('')}
+        </select></td>
+        <td><select class="form-input" data-user-reports="${p.id}" style="padding:3px 6px;font-size:11px;max-width:140px">
+          <option value="">— nobody —</option>
+          ${people.filter(x=>String(x.id)!==String(p.id)&&x.role!=='user').map(x=>`<option value="${x.id}"${String(p.reports_to)===String(x.id)?' selected':''}>${esc(x.name)}</option>`).join('')}
+        </select>${(p.role==='admin'&&!people.some(x=>String(x.reports_to)===String(p.id)))?`<div style="font-size:10px;color:var(--amber);margin-top:2px">no reports — sees only own clients</div>`:''}</td>
+        <td style="text-align:right;font-weight:700">${p.clientCount||0}</td>
+        <td style="color:var(--text-muted);font-size:11px">${p.last_login?fmtDate(String(p.last_login).slice(0,10)):'never'}</td>
+        <td style="text-align:right;white-space:nowrap">
+          <button class="btn btn-sm" data-action="resetPwd" data-id="${p.id}" data-name="${esc(p.name)}" style="font-size:10px">Reset password</button>
+          ${isMe?'':`<button class="btn btn-sm" data-action="toggleActive" data-id="${p.id}" data-name="${esc(p.name)}" data-active="${p.active===false?'0':'1'}" style="font-size:10px">${p.active===false?'Reactivate':'Deactivate'}</button>`}
+        </td></tr>`;
+    });
+    h+=`</tbody></table></div>`;
+  }
+  return h;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// WORKLOAD — who is carrying too much this month
+// ═══════════════════════════════════════════════════════════════
+// The question managers actually ask: eight VAT returns land on one person
+// this month and two on another — is that right, and what should move?
+//
+// Counts the work itself (VAT returns due, CT returns due, months of books)
+// rather than open tasks, and moves whole clients rather than single tasks.
+// Splitting one client's filings across two people is how they get missed.
+const wlState={loading:false,error:'',data:null,month:'',suggestions:null,selected:new Set(),working:''};
+
+function wlMonthOptions(){
+  // Six months back, six forward — the window a compliance team plans in.
+  const out=[],now=new Date();
+  for(let i=-6;i<=6;i++){
+    const d=new Date(now.getFullYear(),now.getMonth()+i,1);
+    out.push({key:d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0'),label:MONTHS[d.getMonth()]+' '+d.getFullYear()});
+  }
+  return out;
+}
+
+async function loadWorkload(force){
+  if(wlState.loading&&!force) return;
+  wlState.loading=true; wlState.error=''; render();
+  try{
+    const q=wlState.month?('?month='+encodeURIComponent(wlState.month)):'';
+    const d=await apiJSON('/api/team/pressure'+q);
+    wlState.data=d; wlState.month=d.month; wlState.suggestions=null; wlState.selected=new Set();
+  }catch(e){ wlState.error=e.message; wlState.data=null; }
+  wlState.loading=false; render();
+}
+
+async function loadWorkloadSuggestions(){
+  wlState.working='Working out what to move…'; render();
+  try{
+    const q='?max=10'+(wlState.month?('&month='+encodeURIComponent(wlState.month)):'');
+    const s=await apiJSON('/api/team/pressure/suggestions'+q);
+    wlState.suggestions=s;
+    // Pre-tick everything: the whole point is the set, and unticking one is
+    // easier than ticking eight.
+    wlState.selected=new Set((s.moves||[]).map((_,i)=>i));
+  }catch(e){ wlState.error=e.message; }
+  wlState.working=''; render();
+}
+
+async function applyWorkloadMoves(){
+  const all=(wlState.suggestions&&wlState.suggestions.moves)||[];
+  const picked=all.filter((_,i)=>wlState.selected.has(i));
+  if(!picked.length){ alert('Tick at least one move to apply.'); return; }
+  if(!confirm('Move '+picked.length+' client(s) to a different person?\n\nThis changes who owns the client and its corporate tax, and shows up in the activity log.')) return;
+  wlState.working='Moving '+picked.length+' client(s)…'; render();
+  try{
+    const r=await apiJSON('/api/team/pressure/rebalance',{method:'POST',body:JSON.stringify({moves:picked.map(m=>({clientId:m.clientId,toUserId:m.toUserId}))})});
+    await reloadTrackerFromServer();
+    await loadOrgPeople(true);
+    wlState.working=''; wlState.suggestions=null;
+    await loadWorkload(true);
+    alert('Moved '+r.applied.length+' client(s).'+(r.rejected.length?('\n\n'+r.rejected.length+' could not be moved.'):''));
+  }catch(e){ wlState.error=e.message; wlState.working=''; render(); }
+}
+
+function wlBar(p,maxScore){
+  const pct=maxScore>0?Math.round((p.score/maxScore)*100):0;
+  const col=p.band==='over'?'var(--red)':p.band==='light'?'var(--blue)':'var(--green)';
+  return `<div style="height:8px;background:var(--bg-elevated);border-radius:4px;overflow:hidden"><div style="height:100%;width:${pct}%;background:${col};border-radius:4px"></div></div>`;
+}
+
+function renderWorkload(){
+  if(!isAdmin())return`<div class="empty-state"><div class="empty-state-icon">🔒</div><div class="empty-state-title">Managers only</div></div>`;
+  if(!wlState.data&&!wlState.loading){ setTimeout(()=>loadWorkload(true),0); }
+
+  const months=wlMonthOptions();
+  const cur=wlState.month||'';
+  let h=`<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:16px;flex-wrap:wrap">
+    <div><h2 style="font-size:20px;font-weight:800;margin:0">⚖️ Workload</h2>
+    <div style="font-size:12px;color:var(--text-muted);margin-top:3px">What each person is carrying this month, and what to move if it is lopsided.</div></div>
+    <div style="display:flex;gap:8px;align-items:center">
+      <select class="form-input" id="wlMonth" style="max-width:160px">${months.map(m=>`<option value="${m.key}"${m.key===cur?' selected':''}>${m.label}</option>`).join('')}</select>
+      <button class="btn" data-action="wlReload">↻</button>
+    </div></div>`;
+
+  if(wlState.error)h+=`<div class="alert" style="margin-bottom:12px;background:var(--red-bg);border:1px solid var(--red-border);color:var(--red)">${esc(wlState.error)}</div>`;
+  if(wlState.working)h+=`<div class="alert" style="margin-bottom:12px;background:var(--bg-elevated);border:1px solid var(--border)">⏳ ${esc(wlState.working)}</div>`;
+  if(wlState.loading&&!wlState.data)return h+`<div style="padding:28px;text-align:center;color:var(--text-muted);font-size:13px">Working out this month's load…</div>`;
+
+  const d=wlState.data;
+  if(!d)return h;
+  const people=d.people||[];
+  if(!people.length)return h+`<div class="empty-state"><div class="empty-state-icon">👥</div><div class="empty-state-title">Nobody to show</div><div style="font-size:12px;color:var(--text-muted)">Invite people in User Management first.</div></div>`;
+
+  const maxScore=Math.max(1,...people.map(p=>p.score));
+  const over=people.filter(p=>p.band==='over');
+  const light=people.filter(p=>p.band==='light');
+
+  // The headline, in a sentence. A manager should be able to read one line and
+  // know whether to act — the table below is for when the answer is yes.
+  const verdict = !d.totals.score
+    ? {t:'Nothing due this month.',c:'var(--text-muted)',i:'○'}
+    : over.length
+      ? {t:over.map(p=>p.name).join(' and ')+(over.length>1?' are':' is')+' carrying well above an even share'+(light.length?', while '+light.map(p=>p.name).join(' and ')+(light.length>1?' have':' has')+' room.':'.'),c:'var(--red)',i:'⚠'}
+      : {t:'The month is evenly spread across the team.',c:'var(--green)',i:'✓'};
+  h+=`<div class="card" style="margin-bottom:14px;border-color:${verdict.c}">
+    <div style="display:flex;gap:12px;align-items:flex-start">
+      <div style="font-size:22px;line-height:1">${verdict.i}</div>
+      <div style="flex:1">
+        <div style="font-size:15px;font-weight:700;color:${verdict.c};line-height:1.45">${esc(verdict.t)}</div>
+        <div style="font-size:12px;color:var(--text-muted);margin-top:5px">${d.totals.vat} VAT return${d.totals.vat===1?'':'s'} · ${d.totals.ct} CT return${d.totals.ct===1?'':'s'} · ${d.totals.books} month${d.totals.books===1?'':'s'} of books, across ${people.length} ${people.length===1?'person':'people'}. An even share is about ${d.totals.fairShare} points each.</div>
+      </div>
+      ${over.length?`<button class="btn btn-primary" data-action="wlSuggest">Suggest moves</button>`:''}
+    </div></div>`;
+
+  h+=`<div class="card" style="margin-bottom:14px;overflow-x:auto"><table><thead><tr>
+    <th style="text-align:left">Person</th><th style="text-align:right">VAT</th><th style="text-align:right">CT</th><th style="text-align:right">Books</th>
+    <th style="text-align:right">Load</th><th style="text-align:left;min-width:150px">Share of the month</th><th style="text-align:left">Clients</th></tr></thead><tbody>`;
+  people.forEach(p=>{
+    const col=p.band==='over'?'var(--red)':p.band==='light'?'var(--blue)':'var(--green)';
+    const label=p.band==='over'?'over':p.band==='light'?'has room':'even';
+    h+=`<tr>
+      <td style="font-weight:600">${esc(p.name)}${p.vatNeedsSetup?`<div style="font-size:10px;color:var(--amber)">${p.vatNeedsSetup} VAT client${p.vatNeedsSetup===1?'':'s'} with no periods set up</div>`:''}</td>
+      <td style="text-align:right;font-weight:700${p.vat?'':';opacity:0.35'}">${p.vat}</td>
+      <td style="text-align:right;font-weight:700${p.ct?'':';opacity:0.35'}">${p.ct}</td>
+      <td style="text-align:right${p.books?'':';opacity:0.35'}">${p.books}</td>
+      <td style="text-align:right;font-weight:800">${p.score}</td>
+      <td>${wlBar(p,maxScore)}<div style="font-size:10px;color:${col};margin-top:3px;font-weight:600">${Math.round(p.ratio*100)}% of an even share · ${label}</div></td>
+      <td style="color:var(--text-muted)">${p.clients}</td></tr>`;
+  });
+  if(d.unassigned&&d.unassigned.clients){
+    h+=`<tr><td style="font-weight:600;color:var(--amber)">Unassigned</td><td style="text-align:right">${d.unassigned.vat}</td><td style="text-align:right">${d.unassigned.ct}</td><td style="text-align:right">${d.unassigned.books}</td><td style="text-align:right;font-weight:800">${d.unassigned.score}</td><td colspan="2" style="font-size:11px;color:var(--amber)">Nobody owns these — assign them</td></tr>`;
+  }
+  h+=`</tbody></table>
+    <div style="font-size:11px;color:var(--text-muted);margin-top:10px;line-height:1.5">Load weights one CT return as ${d.weights.ct}, one VAT return as ${d.weights.vat} and one month of books as ${d.weights.books} — a CT return is the heaviest single job of the year, a month of books the smallest unit. A VAT-registered client whose return periods have not been set up still counts, because the work is real even though no row exists yet.</div></div>`;
+
+  (d.noLoginOwners||[]).length && (h+=`<div class="card" style="margin-bottom:14px;border-color:var(--amber-border)">
+    <div class="card-title" style="color:var(--amber)">⚠ Work held by people without a login</div>
+    <div style="font-size:12px;color:var(--text-muted);line-height:1.6;margin-bottom:8px">Not counted above, because these names cannot sign in and do it. Invite them in User Management or move their clients.</div>
+    ${d.noLoginOwners.map(o=>`<div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--border);font-size:12px"><b>${esc(o.name)}</b><span style="color:var(--text-muted)">${o.clients} client${o.clients===1?'':'s'} · ${o.vat} VAT · ${o.ct} CT</span></div>`).join('')}</div>`);
+
+  const sg=wlState.suggestions;
+  if(sg){
+    if(!sg.moves||!sg.moves.length){
+      h+=`<div class="card"><div style="font-size:13px;color:var(--text-muted)">${esc(sg.note||'Nothing worth moving.')}</div></div>`;
+    }else{
+      h+=`<div class="card" style="border-color:var(--accent-soft)">
+        <div class="card-title">Suggested moves</div>
+        <div style="font-size:12px;color:var(--text-muted);line-height:1.6;margin-bottom:10px">Whole clients, moved from the busiest person to the one with most room. Untick anything you would rather keep where it is.</div>
+        <table><thead><tr><th style="width:28px"></th><th style="text-align:left">Client</th><th style="text-align:left">From</th><th style="text-align:left">To</th><th style="text-align:right">Load</th><th style="text-align:left">Closes the gap</th></tr></thead><tbody>`;
+      sg.moves.forEach((m,i)=>{
+        h+=`<tr><td><input type="checkbox" data-wl-move="${i}"${wlState.selected.has(i)?' checked':''}></td>
+          <td style="font-weight:600">${esc(m.clientName)}<div style="font-size:10px;color:var(--text-muted)">${[m.vat?m.vat+' VAT':'',m.ct?m.ct+' CT':'',m.books?m.books+' books':''].filter(Boolean).join(' · ')}</div></td>
+          <td>${esc(m.fromName)}</td><td style="font-weight:600">${esc(m.toName)}</td>
+          <td style="text-align:right;font-weight:700">${m.score}</td>
+          <td style="font-size:11px;color:var(--text-muted)">${m.gapBefore} → <b style="color:var(--green)">${m.gapAfter}</b></td></tr>`;
+      });
+      h+=`</tbody></table>
+        <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">
+          <button class="btn" data-action="wlClearSuggest">Discard</button>
+          <button class="btn btn-primary" data-action="wlApply">Apply ${wlState.selected.size} move${wlState.selected.size===1?'':'s'}</button>
+        </div></div>`;
+    }
+  }
+  return h;
+}
+
+// ═══════════════════════════════════════════════════════════════
 // FETCH CLIENTS FROM OPS-MKT
 // ═══════════════════════════════════════════════════════════════
 // Ops-Mkt is where a client first exists — the moment the firm signs it, it
@@ -3867,9 +4269,6 @@ function renderAddModal(){
   return h;
 }
 
-function renderTeamModal(){
-  return`<div class="modal-overlay" data-action="closeModal"><div class="modal" onclick="event.stopPropagation()"><div class="modal-title">Manage Team</div>${state.teamMembers.length?`<div class="tm-list">${state.teamMembers.map((m,i)=>`<div class="tm-item"><span class="tm-item-name">${esc(m)}</span><span class="tm-item-count">${state.clients.filter(c=>c.assignedTeam===m).length} clients</span><button class="tm-remove" data-action="removeTeamMember" data-idx="${i}">✕</button></div>`).join("")}</div>`:`<div style="padding:20px;text-align:center;background:var(--bg-elevated);border-radius:var(--radius);margin:12px 0;font-size:13px;color:var(--text-muted)">No team members</div>`}<div style="display:flex;gap:8px;margin-top:8px"><input class="form-input" id="tmName" placeholder="Enter name..." style="flex:1"><button class="btn btn-primary" data-action="addTeamMember">Add</button></div><div class="modal-actions" style="margin-top:24px"><button class="btn" data-action="closeModal">Done</button></div></div></div>`;
-}
 
 // 5) VAT Return Add Modal
 function renderAddVatReturnModal(){
@@ -3958,7 +4357,43 @@ function bindEvents(){
   document.querySelectorAll("[data-action]").forEach(el=>{
     const a=el.dataset.action;
     if(a==="openAddClient")el.onclick=()=>{state.showModal="addClient";state.bulkClients=[];render();};
-    if(a==="openManageTeam")el.onclick=()=>{state.showModal="manageTeam";render();};
+    // ---- User Management
+    if(a==="reloadUsers")el.onclick=()=>loadOrgPeople(true);
+    if(a==="toggleInvite")el.onclick=()=>{usersState.inviteOpen=!usersState.inviteOpen;render();};
+    if(a==="inviteName")el.onclick=()=>{
+      // Pre-fill the invite from a name that already holds clients, so the
+      // spelling matches and their existing clients stay with them.
+      usersState.inviteOpen=true;render();
+      setTimeout(()=>{const f=document.getElementById("invName");if(f){f.value=el.dataset.name;f.focus();}},0);
+    };
+    if(a==="sendInvite")el.onclick=()=>{
+      const name=document.getElementById("invName")?.value?.trim();
+      const email=document.getElementById("invEmail")?.value?.trim();
+      const role=document.getElementById("invRole")?.value||"user";
+      const reports_to=document.getElementById("invReports")?.value||null;
+      if(!name||!email){alert("Name and email are both needed.");return;}
+      userAction(async()=>{
+        await apiJSON('/api/invite',{method:'POST',body:JSON.stringify({name,email,role,reports_to:reports_to||null})});
+        usersState.inviteOpen=false;
+        alert('Invite sent to '+email+'.');
+      },'Sending the invite…');
+    };
+    if(a==="resetPwd")el.onclick=()=>{
+      if(!confirm('Send a password reset to '+el.dataset.name+'?'))return;
+      userAction(async()=>{ await apiJSON('/api/users/'+el.dataset.id+'/reset-password',{method:'POST',body:JSON.stringify({})}); alert('Reset sent.'); },'Sending the reset…');
+    };
+    if(a==="toggleActive")el.onclick=()=>{
+      const on=el.dataset.active==='1';
+      if(!confirm((on?'Deactivate ':'Reactivate ')+el.dataset.name+'?'+(on?'\n\nThey keep their clients — move those in Workload if somebody else should pick them up.':'')))return;
+      userAction(async()=>{ await apiJSON('/api/users/'+el.dataset.id+'/'+(on?'deactivate':'activate'),{method:'PUT',body:JSON.stringify({})}); },on?'Deactivating…':'Reactivating…');
+    };
+
+    // ---- Workload
+    if(a==="wlReload")el.onclick=()=>loadWorkload(true);
+    if(a==="wlSuggest")el.onclick=()=>loadWorkloadSuggestions();
+    if(a==="wlClearSuggest")el.onclick=()=>{wlState.suggestions=null;wlState.selected=new Set();render();};
+    if(a==="wlApply")el.onclick=()=>applyWorkloadMoves();
+
     if(a==="openOpsMkt")el.onclick=()=>{state.showModal="opsMkt";opsState.preview=null;opsState.error='';render();loadOpsMkt();};
     if(a==="opsPreview")el.onclick=()=>previewOpsMkt();
     if(a==="opsFetch")el.onclick=()=>runOpsMktFetch();
@@ -4011,8 +4446,6 @@ function bindEvents(){
     if(a==="downloadTemplate")el.onclick=(e)=>{e.preventDefault();generateTemplateXLSX();};
 
     // Team
-    if(a==="addTeamMember")el.onclick=()=>{const n=document.getElementById("tmName")?.value?.trim();if(!n)return;if(state.teamMembers.includes(n)){alert("Exists");return;}state.teamMembers.push(n);updateAndSave();setTimeout(()=>{const i=document.getElementById("tmName");if(i)i.focus();},0);};
-    if(a==="removeTeamMember")el.onclick=()=>{const idx=parseInt(el.dataset.idx);const nm=state.teamMembers[idx];if(!confirm(`Remove "${nm}"?`))return;state.clients.forEach(c=>{if(c.assignedTeam===nm)c.assignedTeam="Unassigned";if(c.ct.assignedPerson===nm)c.ct.assignedPerson="Unassigned";});state.teamMembers.splice(idx,1);updateAndSave();};
 
     // 5) VAT Return
     if(a==="saveVatReturn")el.onclick=()=>{
@@ -4067,6 +4500,29 @@ function bindEvents(){
   // Enter keys
   const tmI=document.getElementById("tmName");if(tmI)tmI.onkeydown=(e)=>{if(e.key==="Enter"){e.preventDefault();document.querySelector('[data-action="addTeamMember"]')?.click();}};
   const bcI=document.getElementById("bcName");if(bcI)bcI.onkeydown=(e)=>{if(e.key==="Enter"){e.preventDefault();document.querySelector('[data-action="addToList"]')?.click();}};
+
+  // Role and reporting line are saved together — the endpoint takes both, and
+  // promoting somebody to team lead without saying who reports to them makes
+  // a lead with an empty team.
+  document.querySelectorAll("[data-user-role]").forEach(el=>{el.onchange=()=>{
+    const id=el.dataset.userRole;
+    const rep=document.querySelector('[data-user-reports="'+id+'"]');
+    userAction(async()=>{ await apiJSON('/api/users/'+id+'/role',{method:'PUT',body:JSON.stringify({role:el.value,reports_to:rep&&rep.value?rep.value:null})}); },'Saving the role…');
+  };});
+  document.querySelectorAll("[data-user-reports]").forEach(el=>{el.onchange=()=>{
+    const id=el.dataset.userReports;
+    const rl=document.querySelector('[data-user-role="'+id+'"]');
+    userAction(async()=>{ await apiJSON('/api/users/'+id+'/role',{method:'PUT',body:JSON.stringify({role:rl?rl.value:undefined,reports_to:el.value||null})}); },'Saving the reporting line…');
+  };});
+
+  // Workload month picker and move ticks.
+  const wlm=document.getElementById("wlMonth");
+  if(wlm)wlm.onchange=()=>{wlState.month=wlm.value;loadWorkload(true);};
+  document.querySelectorAll("[data-wl-move]").forEach(el=>{el.onchange=()=>{
+    const i=parseInt(el.dataset.wlMove,10);
+    if(el.checked)wlState.selected.add(i);else wlState.selected.delete(i);
+    render();
+  };});
 
   // Ops-Mkt fetch modal: POC ticks, the active-only filter and the nightly
   // switch. Ticking a POC clears any preview on screen — it described a
@@ -4257,11 +4713,17 @@ document.addEventListener("keydown",(e)=>{
   try{
     const s=await loadData();
     if(s&&typeof s==="object"){
+      // teamMembers is still read and written back untouched so the old list
+      // is not destroyed, but nothing in the UI uses it any more — people come
+      // from the login users below.
       if(Array.isArray(s.teamMembers))state.teamMembers=s.teamMembers;
       if(Array.isArray(s.clients))state.clients=s.clients;
       refreshMetrics();render();
     }
   }catch(e){console.warn("Load error:",e);}
+  // Who clients can be assigned to. Every assignment dropdown reads this, so
+  // it loads at boot rather than when User Management is first opened.
+  if(isAdmin()){ try{ await loadOrgPeople(true); }catch(e){ console.warn("People load error:",e); } }
 })();
 </script>
 </body>

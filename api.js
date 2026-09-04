@@ -30,6 +30,7 @@ const { obligations } = require('./obligations');
 const obligationEngine = require('./obligationEngine');
 const opsMktSync = require('./services/opsMktSync');
 const opsMktEngine = require('./services/opsMktSyncEngine');
+const pressureService = require('./services/pressureService');
 const healthScore = require('./healthScore');
 const slaMonitor = require('./slaMonitor');
 const escalationEngine = require('./escalationEngine');
@@ -307,6 +308,61 @@ router.put('/tracker', requireAuth, asyncH(async function(req, res) {
     }
   } catch (e) { console.error('[obligationEngine] hook error:', e.message); }
   res.json({ ok: true });
+}));
+
+// ---------- Workload pressure ----------
+// Who is carrying too much this month, counted as the work itself — VAT
+// returns due, CT returns due, months of books — rather than as a flat count
+// of open tasks. See services/pressureService.js for why that distinction
+// matters.
+router.get('/team/pressure', requireAuth, requireAdmin, asyncH(async function(req, res) {
+  res.json(pressureService.getPressure({
+    month: req.query.month || undefined,
+    users: users.getAll(),
+    viewer: req.user
+  }));
+}));
+
+router.get('/team/pressure/suggestions', requireAuth, requireAdmin, asyncH(async function(req, res) {
+  var p = pressureService.getPressure({ month: req.query.month || undefined, users: users.getAll(), viewer: req.user });
+  res.json(Object.assign({ month: p.month }, pressureService.suggestRebalance(p, parseInt(req.query.max, 10) || 10)));
+}));
+
+// Apply moves. Each move reassigns a whole client, which is the only unit that
+// makes sense — splitting one client's filings across two people is how they
+// get missed.
+router.post('/team/pressure/rebalance', requireAuth, requireSuperAdmin, asyncH(async function(req, res) {
+  var moves = (req.body && req.body.moves) || [];
+  if (!Array.isArray(moves) || !moves.length) return res.status(400).json({ error: 'No moves supplied.' });
+
+  var data = tracker.getData();
+  var all = users.getAll();
+  var applied = [], rejected = [];
+
+  var next = (data.clients || []).map(function(c) { return c; });
+  moves.forEach(function(m) {
+    var target = all.find(function(u) { return String(u.id) === String(m.toUserId); });
+    var client = next.find(function(c) { return String(c.id) === String(m.clientId); });
+    if (!target) { rejected.push({ clientId: m.clientId, reason: 'unknown target user' }); return; }
+    if (target.active === false) { rejected.push({ clientId: m.clientId, reason: 'target user is deactivated' }); return; }
+    if (!client) { rejected.push({ clientId: m.clientId, reason: 'client no longer exists' }); return; }
+    var from = client.assignedTeam || 'Unassigned';
+    client.assignedTeam = target.name;
+    // The CT owner tracks the client owner unless somebody set it deliberately
+    // to the previous owner, in which case it would otherwise be left behind.
+    if (client.ct && (!client.ct.assignedPerson || client.ct.assignedPerson === from)) client.ct.assignedPerson = target.name;
+    client.lastUpdated = new Date().toISOString().slice(0, 10);
+    client.lastUpdatedBy = req.user.name;
+    applied.push({ clientId: client.id, clientName: client.name, from: from, to: target.name });
+  });
+
+  if (applied.length) {
+    await tracker.saveData(next, data.teamMembers || [], req.user.name);
+    activity.log(req.user.id, req.user.name, 'workload_rebalance',
+      'Moved ' + applied.length + ' client(s): ' + applied.slice(0, 8).map(function(a) { return a.clientName + ' ' + a.from + '→' + a.to; }).join(', ') +
+      (applied.length > 8 ? ' and ' + (applied.length - 8) + ' more' : ''));
+  }
+  res.json({ applied: applied, rejected: rejected });
 }));
 
 // ---------- Ops-Mkt client sync ----------

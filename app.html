@@ -2987,7 +2987,7 @@ async function promptNewDocument(){
 function renderDashboard(){
   const vc=getVisibleClients();
   const total=vc.length;
-  if(!total&&isAdmin()&&!getAssignableUsers().length)return`<div class="empty-state"><div class="empty-state-icon">📋</div><div class="empty-state-title">Welcome to UAE Compliance Tracker</div><div class="empty-state-text">Set up your team, then add clients.</div><div style="display:flex;gap:10px;justify-content:center"><button class="btn" data-action="openManageTeam">👥 Set Up Team</button><button class="btn btn-primary" data-action="openAddClient">+ Add Client</button></div></div>`;
+  if(!total&&isAdmin()&&!getAssignableUsers().length)return`<div class="empty-state"><div class="empty-state-icon">📋</div><div class="empty-state-title">Welcome to UAE Compliance Tracker</div><div class="empty-state-text">Set up your team, then add clients.</div><div style="display:flex;gap:10px;justify-content:center"><button class="btn" data-nav="users">👤 Set up people</button><button class="btn btn-primary" data-action="openAddClient">+ Add Client</button></div></div>`;
   if(!total&&isAdmin())return`<div class="empty-state"><div class="empty-state-icon">📋</div><div class="empty-state-title">No Clients Yet</div><button class="btn btn-primary" data-action="openAddClient">+ Add First Client</button></div>`;
   if(!total&&!isAdmin())return`<div class="empty-state"><div class="empty-state-icon">📋</div><div class="empty-state-title">No Clients Assigned</div><div class="empty-state-text">Your admin hasn't assigned any clients to you yet. Contact your admin for access.</div></div>`;
 
@@ -3072,8 +3072,8 @@ function renderDeadlines(){
 }
 
 function renderTeamView(){
-  if(!getAssignableUsers().length)return`<div class="empty-state"><div class="empty-state-icon">👥</div><div class="empty-state-title">No Team Members</div><button class="btn btn-primary" data-action="openManageTeam">👥 Set Up Team</button></div>`;
-  let h=`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px"><h2 style="font-size:18px;font-weight:800">Team Workload</h2><button class="btn" data-action="openManageTeam">Manage Team</button></div>`;
+  if(!getAssignableUsers().length)return`<div class="empty-state"><div class="empty-state-icon">👥</div><div class="empty-state-title">No people yet</div>${isSuperAdmin()?`<button class="btn btn-primary" data-nav="users">👤 Set up people</button>`:`<div style="font-size:12px;color:var(--text-muted)">Ask a Super Admin to add people.</div>`}</div>`;
+  let h=`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px"><h2 style="font-size:18px;font-weight:800">Team Workload</h2><button class="btn" data-nav="users">Manage people</button></div>`;
   const ua=state.clients.filter(c=>c.assignedTeam==="Unassigned");
   if(ua.length)h+=`<div class="alert alert-warning" style="margin-bottom:16px">⚠ ${ua.length} client${ua.length!==1?'s':''} unassigned</div>`;
   // A team lead sees their own people, not the whole firm. The server already
@@ -4498,7 +4498,6 @@ function bindEvents(){
   });
 
   // Enter keys
-  const tmI=document.getElementById("tmName");if(tmI)tmI.onkeydown=(e)=>{if(e.key==="Enter"){e.preventDefault();document.querySelector('[data-action="addTeamMember"]')?.click();}};
   const bcI=document.getElementById("bcName");if(bcI)bcI.onkeydown=(e)=>{if(e.key==="Enter"){e.preventDefault();document.querySelector('[data-action="addToList"]')?.click();}};
 
   // Role and reporting line are saved together — the endpoint takes both, and

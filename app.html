@@ -3882,6 +3882,7 @@ function renderUserManagement(){
         <td style="text-align:right;white-space:nowrap">
           <button class="btn btn-sm" data-action="resetPwd" data-id="${p.id}" data-name="${esc(p.name)}" style="font-size:10px">Reset password</button>
           ${isMe?'':`<button class="btn btn-sm" data-action="toggleActive" data-id="${p.id}" data-name="${esc(p.name)}" data-active="${p.active===false?'0':'1'}" style="font-size:10px">${p.active===false?'Reactivate':'Deactivate'}</button>`}
+          ${isMe?'':`<button class="btn btn-sm" data-action="deleteUser" data-id="${p.id}" data-name="${esc(p.name||'(no name set)')}" data-clients="${p.clientCount||0}" style="font-size:10px;color:var(--red);border-color:var(--red-border)" title="Remove this person entirely. Deactivate is usually what you want.">Delete</button>`}
         </td></tr>`;
     });
     h+=`</tbody></table></div>`;
@@ -4386,6 +4387,32 @@ function bindEvents(){
       const on=el.dataset.active==='1';
       if(!confirm((on?'Deactivate ':'Reactivate ')+el.dataset.name+'?'+(on?'\n\nThey keep their clients — move those in Workload if somebody else should pick them up.':'')))return;
       userAction(async()=>{ await apiJSON('/api/users/'+el.dataset.id+'/'+(on?'deactivate':'activate'),{method:'PUT',body:JSON.stringify({})}); },on?'Deactivating…':'Reactivating…');
+    };
+    if(a==="deleteUser")el.onclick=()=>{
+      const name=el.dataset.name, held=parseInt(el.dataset.clients||'0',10);
+      // Deleting is permanent and there's no undo, so make the person type the
+      // name. A yes/no box is too easy to click past on the wrong row.
+      const typed=prompt(
+        'Delete '+name+' permanently?\n\n'+
+        'This removes the account and their sign-in. It cannot be undone —\n'+
+        'use Deactivate instead if they might come back.\n\n'+
+        (held?('They hold '+held+' client'+(held===1?'':'s')+'. Deleting leaves those\nclients with an owner who no longer exists — reassign them in\nWorkload first if you can.\n\n'):'')+
+        'Type the name to confirm:');
+      if(typed===null) return;
+      if(typed.trim()!==name.trim()){ alert('That did not match "'+name+'" — nothing was deleted.'); return; }
+      userAction(async()=>{
+        let r;
+        try{
+          r=await apiJSON('/api/users/'+el.dataset.id,{method:'DELETE'});
+        }catch(e){
+          // The server refuses a delete that would strand clients unless we say
+          // we accept it. Ask once more, naming the number, then repeat.
+          if(String(e&&e.message||'').indexOf('holds_clients')<0) throw e;
+          if(!confirm(name+' still holds clients.\n\nDelete anyway and leave them unassigned?')) return;
+          r=await apiJSON('/api/users/'+el.dataset.id+'?orphanClients=yes',{method:'DELETE'});
+        }
+        if(r&&r.clientsOrphaned) alert(name+' deleted. '+r.clientsOrphaned+' client'+(r.clientsOrphaned===1?' is':'s are')+' now unassigned — reassign in Workload.');
+      },'Deleting…');
     };
 
     // ---- Workload

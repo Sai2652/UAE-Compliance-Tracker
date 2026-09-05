@@ -225,9 +225,53 @@ router.get('/users/org', requireAuth, requireAdmin, function(req, res) {
 });
 router.put('/users/:id/deactivate', requireAuth, requireSuperAdmin, function(req, res) { users.deactivate(req.params.id); res.json({ ok: true }); });
 router.put('/users/:id/activate', requireAuth, requireSuperAdmin, function(req, res) { users.activate(req.params.id); res.json({ ok: true }); });
+// Delete a person outright. Deactivate is the safer option and the one the UI
+// offers first — this exists for records that should never have been there, like
+// an invite sent to the wrong address.
 router.delete('/users/:id', requireAuth, requireSuperAdmin, function(req, res) {
-  if (parseInt(req.params.id) === req.user.id) return res.status(400).json({ error: 'Cannot delete yourself' });
-  users.delete(req.params.id); res.json({ ok: true });
+  var id = parseInt(req.params.id, 10);
+  if (id === req.user.id) return res.status(400).json({ error: 'You cannot delete your own account' });
+
+  var target = users.findById(id);
+  if (!target) return res.status(404).json({ error: 'No such user' });
+
+  // Never leave the firm without a Super Admin — nobody could restore access,
+  // including to their own account.
+  if (roles.isSuperAdmin(target)) {
+    var others = users.getAll().filter(function(u) {
+      return roles.isSuperAdmin(u) && u.active === 1 && String(u.id) !== String(id);
+    });
+    if (!others.length) return res.status(400).json({ error: 'This is the only Super Admin — promote somebody else first' });
+  }
+
+  // Clients are assigned by name, so deleting the account does not move their
+  // work — it strands it with an owner who can no longer sign in. Refuse unless
+  // the caller has explicitly accepted that, which the UI asks about by name.
+  var clients = (tracker.getData().clients || []).filter(function(c) { return c.assignedTeam === target.name; });
+  if (clients.length && req.query.orphanClients !== 'yes') {
+    return res.status(409).json({
+      error: 'holds_clients',
+      clientCount: clients.length,
+      name: target.name,
+      message: target.name + ' still holds ' + clients.length + ' client' + (clients.length === 1 ? '' : 's') +
+               '. Reassign them in Workload first, or confirm to delete anyway and leave them unassigned.'
+    });
+  }
+
+  // Anyone reporting to them would be left pointing at a manager that no longer
+  // exists, which silently collapses their visibility. Move them up a level.
+  var orphanedReports = users.getAll().filter(function(u) { return String(u.reports_to) === String(id); });
+  orphanedReports.forEach(function(u) {
+    users.setRoleAndManager(u.id, null, target.reports_to != null ? target.reports_to : null);
+  });
+
+  users.delete(id);
+  activity.log(req.user.id, req.user.name, 'user_deleted',
+    target.name + ' (' + (target.email || 'no email') + ')' +
+    (clients.length ? ' — ' + clients.length + ' client(s) left unassigned' : '') +
+    (orphanedReports.length ? ' — ' + orphanedReports.length + ' report(s) moved up' : ''));
+
+  res.json({ ok: true, clientsOrphaned: clients.length, reportsMoved: orphanedReports.length });
 });
 router.put('/users/:id/reset-password', requireAuth, requireSuperAdmin, function(req, res) {
   if (!req.body.password || req.body.password.length < 6) return res.status(400).json({ error: 'Min 6 characters' });

@@ -35,6 +35,11 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # Checkout is shallow by default, which leaves git log with a single
+          # commit — the Updates page then shows one line however much shipped.
+          # 60 is enough history for the changelog without cloning everything.
+          fetch-depth: 60
 
       - name: Setup Node
         uses: actions/setup-node@v4

@@ -855,6 +855,119 @@ function _renderImpl(){
 // so any of them can come back the moment there's a reason.
 //
 // Reports / MIS stays: it's the monthly pack that goes to clients.
+// ---- Updates -------------------------------------------------------------
+// The page is served from a Lambda and cached by the browser, so somebody can
+// sit on a tab for days and never see a deploy. We stamp the build into
+// version.json at deploy time, read it once at boot to fix what this page IS,
+// then poll. When the deployed sha stops matching the one we loaded with, the
+// running page is out of date and the sidebar says so.
+//
+// Nothing reloads on its own — losing half-typed work to a surprise refresh is
+// worse than running a build that's an hour old. The user presses the button.
+const versionState={
+  loaded:null,        // the build this page was served from — never changes
+  latest:null,        // what the server reports now
+  commits:[],
+  updateAvailable:false,
+  checkedAt:null,
+  seenKey:'uct_last_seen_sha'
+};
+
+async function readVersion(){
+  try{
+    const r=await fetch('/version.json?_='+Date.now(),{cache:'no-store'});
+    if(!r.ok) return null;
+    return await r.json();
+  }catch(e){ return null; }
+}
+
+async function checkVersion(){
+  const v=await readVersion();
+  if(!v) return;
+  versionState.checkedAt=new Date().toISOString();
+  versionState.commits=Array.isArray(v.commits)?v.commits:[];
+  versionState.latest=v;
+  // The first successful read defines the build we are running. Every later
+  // read is compared against it.
+  if(!versionState.loaded){ versionState.loaded=v; return; }
+  const was=versionState.updateAvailable;
+  versionState.updateAvailable=!!(v.sha&&versionState.loaded.sha&&v.sha!==versionState.loaded.sha);
+  if(versionState.updateAvailable!==was) render();
+}
+
+function startVersionWatch(){
+  checkVersion();
+  // Every five minutes. A deploy takes about a minute, so this is soon enough
+  // to be useful without pestering the server.
+  setInterval(checkVersion, 5*60*1000);
+}
+
+// Commits shipped since the build this page is running — what "new" means.
+function commitsSinceLoaded(){
+  const all=versionState.commits||[];
+  const mine=versionState.loaded&&versionState.loaded.sha;
+  if(!mine) return all;
+  const i=all.findIndex(c=>c.sha===mine);
+  return i<=0?(i===0?[]:all):all.slice(0,i);
+}
+
+function renderUpdates(){
+  const v=versionState.latest;
+  const fresh=commitsSinceLoaded();
+  const upd=versionState.updateAvailable;
+  let h=`<h2 style="font-size:18px;font-weight:800;margin-bottom:4px">Updates</h2>
+    <div style="font-size:12px;color:var(--text-muted);margin-bottom:16px">What has changed in the tracker, newest first.</div>`;
+
+  if(!v){
+    return h+`<div class="empty-state"><div class="empty-state-icon">📦</div><div class="empty-state-title">Checking…</div></div>`;
+  }
+
+  if(upd){
+    h+=`<div class="card" style="border-color:var(--accent);background:var(--accent-soft);margin-bottom:16px">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap">
+        <div>
+          <div style="font-weight:800;font-size:15px">A newer version is ready</div>
+          <div style="font-size:12px;color:var(--text-muted);margin-top:2px">
+            ${fresh.length?`${fresh.length} change${fresh.length===1?'':'s'} since this page was opened.`:'This page is running an older build.'}
+            Reloading is safe — finish anything half-typed first.
+          </div>
+        </div>
+        <button class="btn btn-primary" data-action="applyUpdate">Update now</button>
+      </div></div>`;
+  }else{
+    h+=`<div class="card" style="margin-bottom:16px;display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap">
+      <div><div style="font-weight:700">You are up to date</div>
+      <div style="font-size:12px;color:var(--text-muted);margin-top:2px">Version <span style="font-family:var(--mono)">${esc(v.shortSha||'dev')}</span>${v.deployedAt?` · deployed ${fmtDateTime(v.deployedAt)}`:''}</div></div>
+      <button class="btn btn-sm" data-action="checkUpdate">Check again</button>
+    </div>`;
+  }
+
+  const list=(versionState.commits||[]).slice(0,30);
+  if(!list.length){
+    h+=`<div class="card" style="color:var(--text-muted);font-size:13px">No change history available for this build.</div>`;
+    return h;
+  }
+
+  const mine=versionState.loaded&&versionState.loaded.sha;
+  let seenOwn=false;
+  h+=`<div class="card" style="padding:0;overflow:hidden"><div style="display:grid">`;
+  list.forEach((c,i)=>{
+    const isRunning=c.sha===mine;
+    const isNew=!seenOwn&&!isRunning&&!!mine;
+    if(isRunning) seenOwn=true;
+    h+=`<div style="padding:12px 16px;${i?'border-top:1px solid var(--border);':''}${isNew?'background:var(--accent-soft)':''}">
+      <div style="display:flex;gap:10px;align-items:baseline;flex-wrap:wrap">
+        ${isNew?`<span style="font-size:9px;font-weight:700;color:var(--accent);letter-spacing:.06em">NEW</span>`:''}
+        <span style="font-size:13.5px;flex:1;min-width:200px">${esc(c.subject||'')}</span>
+        <span style="font-size:11px;color:var(--text-muted);font-family:var(--mono)">${c.date?fmtDate(String(c.date).slice(0,10)):''}</span>
+      </div>
+      ${isRunning?`<div style="font-size:10px;color:var(--text-muted);margin-top:3px">— you are running this version —</div>`:''}
+    </div>`;
+  });
+  h+=`</div></div>`;
+  return h;
+}
+
 const INSIGHTS_TABS = [
   ['reports',    'Reports / MIS',   '📊']
 ];
@@ -918,7 +1031,15 @@ function renderMainNavSidebar(){
       ${INSIGHTS_TABS.map(([k,l,icon])=>btn(k,icon,l)).join('')}`;
   }
   const isLight=document.documentElement.classList.contains('theme-light');
+  // Updates sits in the footer, above the theme toggle — it's a thing you check
+  // occasionally, not part of the daily flow. The dot is the whole point: it
+  // appears only when the running page is behind what's deployed.
+  const upd=versionState.updateAvailable;
   h+=`<div class="side-nav-footer">
+    <button class="side-nav-btn ${state.activeTab==='updates'?'active':''}" data-nav="updates" title="${upd?'A newer version is available':'What has changed recently'}">
+      <span class="side-nav-icon">${upd?'🔔':'📦'}</span>
+      <span class="side-nav-label">Updates${upd?` <span style="display:inline-block;margin-left:4px;padding:1px 6px;border-radius:8px;background:var(--accent);color:#fff;font-size:9px;font-weight:700;vertical-align:1px">NEW</span>`:''}</span>
+    </button>
     <button class="side-nav-btn" data-action="toggleTheme" title="Toggle light/dark theme">
       <span class="side-nav-icon">${isLight?'🌙':'☀️'}</span>
       <span class="side-nav-label">${isLight?'Dark theme':'Light theme'}</span>
@@ -941,6 +1062,7 @@ function renderMain(){
     case"command":return renderCommandCenter();
     case"analytics":return renderAnalytics();
     case"risk":return renderRiskCenter();
+    case"updates":return renderUpdates();
     case"reports":return renderReports();
     case"portfolio":return renderPortfolio();
     case"aiAssist":return renderAIAssistant();
@@ -4430,6 +4552,18 @@ function bindEvents(){
     if(a==="closeModal")el.onclick=()=>{state.showModal=null;render();};
     if(a==="backToList")el.onclick=()=>{state.selectedClientId=null;render();};
     if(a==="logout")el.onclick=()=>{logout();};
+    if(a==="applyUpdate")el.onclick=()=>{
+      // Remember what we're moving to, so the next boot doesn't immediately
+      // announce the same update again before its first poll lands.
+      try{ localStorage.setItem(versionState.seenKey, (versionState.latest&&versionState.latest.sha)||''); }catch(e){}
+      location.reload();
+    };
+    if(a==="checkUpdate")el.onclick=async()=>{
+      el.disabled=true; el.textContent='Checking…';
+      await checkVersion();
+      render();
+      if(!versionState.updateAvailable){ el.disabled=false; el.textContent='Check again'; }
+    };
     if(a==="toggleTheme")el.onclick=()=>{
       const isLight=document.documentElement.classList.toggle('theme-light');
       try{ localStorage.setItem('theme', isLight?'light':'dark'); }catch(e){}
@@ -4750,6 +4884,8 @@ document.addEventListener("keydown",(e)=>{
   // Who clients can be assigned to. Every assignment dropdown reads this, so
   // it loads at boot rather than when User Management is first opened.
   if(isAdmin()){ try{ await loadOrgPeople(true); }catch(e){ console.warn("People load error:",e); } }
+  // Establishes which build this page is, then watches for a newer one.
+  startVersionWatch();
 })();
 </script>
 </body>

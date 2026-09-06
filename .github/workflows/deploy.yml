@@ -45,6 +45,28 @@ jobs:
       - name: Install prod dependencies
         run: npm ci --omit=dev --omit=optional
 
+      # Stamp the build so the app can tell it is running an old copy and offer
+      # to reload. Written into the zip, so every deploy mints a new value.
+      # Merge commits are dropped — they say nothing a person wants to read.
+      - name: Stamp version.json
+        run: |
+          node -e "
+            const cp = require('child_process');
+            const log = cp.execSync('git log -40 --no-merges --pretty=format:%H%x1f%s%x1f%aI').toString();
+            const commits = log.split('\n').filter(Boolean).map(function (l) {
+              const p = l.split('\x1f');
+              return { sha: p[0], subject: p[1], date: p[2] };
+            });
+            const sha = cp.execSync('git rev-parse HEAD').toString().trim();
+            require('fs').writeFileSync('version.json', JSON.stringify({
+              sha: sha,
+              shortSha: sha.slice(0, 7),
+              deployedAt: new Date().toISOString(),
+              commits: commits
+            }, null, 2));
+            console.log('stamped ' + sha.slice(0, 7) + ' with ' + commits.length + ' commit(s)');
+          "
+
       - name: Package Lambda zip
         run: |
           zip -r app.zip . \

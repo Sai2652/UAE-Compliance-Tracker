@@ -7,3 +7,7 @@ samconfig.toml
 *.log
 .DS_Store
 .backups/
+
+# Stamped by the deploy workflow, never committed — a stale committed copy
+# would make every deploy look like it changed nothing.
+version.json

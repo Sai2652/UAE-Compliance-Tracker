@@ -173,12 +173,22 @@ Resources:
   # Cognito groups mirror the three roles. Group membership drives
   # authorisation server-side (auth.js reads cognito:groups from the JWT)
   # while custom:role carries the same value for convenience in the client.
+  # Prime Admin — firm-wide owner. One or two of these ever. Sees every
+  # Super Admin's downline; no scoping applied. Can invite any role.
+  PrimeAdminGroup:
+    Type: AWS::Cognito::UserPoolGroup
+    Properties:
+      GroupName: prime_admin
+      UserPoolId: !Ref UserPool
+      Description: Firm-wide owner. Sees every Super Admin's downline and can invite any role.
+      Precedence: 0
+
   SuperAdminGroup:
     Type: AWS::Cognito::UserPoolGroup
     Properties:
       GroupName: super_admin
       UserPoolId: !Ref UserPool
-      Description: Firm-wide admin. Can invite anyone; sees every team.
+      Description: Line-of-business owner. Sees own downline (Admins they invited + their Users + all clients).
       Precedence: 1
 
   AdminGroup:

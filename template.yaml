@@ -65,8 +65,132 @@ Globals:
         IS_LAMBDA: 'true'
         OPSMKT_CLUSTER_ARN: !Ref OpsMktClusterArn
         OPSMKT_SECRET_ARN: !Ref OpsMktSecretArn
+        # Cognito wiring — read by auth.js (verifier + admin SDK calls) and by
+        # api.js /invite (AdminCreateUser). Populated at deploy time from the
+        # UserPool + Client resources below.
+        COGNITO_USER_POOL_ID: !Ref UserPool
+        COGNITO_CLIENT_ID: !Ref UserPoolClient
+        COGNITO_REGION: !Ref AWS::Region
 
 Resources:
+  # ---------- Cognito User Pool ----------
+  # Fresh-app assumption: no legacy users to migrate. Cognito owns identity;
+  # DynamoDB Users table is retired in Batch C6 once every reader has been
+  # ported to Cognito's ListUsers / GetUser. Custom attributes carry the
+  # firm's own concepts (role + reporting line) so the JWT claims are enough
+  # to authorise on the server without a second lookup.
+  UserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: uct-users
+      # Email is the sign-in handle; usernames stay auto-generated so a
+      # user can change their email later without breaking the audit trail.
+      UsernameAttributes: [email]
+      AutoVerifiedAttributes: [email]
+      Schema:
+        - Name: email
+          Required: true
+          Mutable: true
+          AttributeDataType: String
+        - Name: name
+          Required: true
+          Mutable: true
+          AttributeDataType: String
+        - Name: role
+          Mutable: true
+          AttributeDataType: String
+          StringAttributeConstraints: { MinLength: '1', MaxLength: '32' }
+        - Name: reports_to
+          Mutable: true
+          AttributeDataType: String
+          StringAttributeConstraints: { MinLength: '1', MaxLength: '128' }
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 8
+          RequireUppercase: true
+          RequireLowercase: true
+          RequireNumbers: true
+          RequireSymbols: false
+          TemporaryPasswordValidityDays: 7
+      AdminCreateUserConfig:
+        AllowAdminCreateUserOnly: true  # No self sign-up; invites only
+        InviteMessageTemplate:
+          EmailSubject: 'You are invited to BCL — Accounting & Compliance Tracker'
+          EmailMessage: |
+            <div style="font-family:Inter,sans-serif;max-width:520px;margin:0 auto">
+              <div style="background:#2f2a55;padding:22px;border-radius:12px 12px 0 0;text-align:center">
+                <div style="color:#fff;font-weight:800;font-size:20px;letter-spacing:0.04em">BCL</div>
+                <div style="color:rgba(255,255,255,0.75);font-size:11px;margin-top:4px">Accounting &amp; Compliance Tracker</div>
+              </div>
+              <div style="background:#f8f9fc;padding:22px;border:1px solid #e2e2ea;border-top:none;border-radius:0 0 12px 12px">
+                <p>You have been invited to BCL Accounting &amp; Compliance Tracker.</p>
+                <p><strong>Username:</strong> {username}</p>
+                <p><strong>Temporary password:</strong> {####}</p>
+                <p>Open the app and sign in. You will be asked to set your own password on first login.</p>
+                <p style="font-size:11px;color:#8b8ca3;margin-top:24px">If you did not expect this invite, ignore this email — the temporary password expires in 7 days.</p>
+              </div>
+            </div>
+      MfaConfiguration: 'OFF'
+      # Cognito default sender is used for now (no SES domain verified yet).
+      # Deliverable but capped at 50 emails/day — enough for internal firm
+      # invites. Move to SES once bcl.ae / bclworkspace.in is verified.
+      EmailConfiguration:
+        EmailSendingAccount: COGNITO_DEFAULT
+      UserPoolTags:
+        Project: uae-compliance-tracker
+        ManagedBy: CloudFormation
+
+  UserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      UserPoolId: !Ref UserPool
+      ClientName: uct-web
+      GenerateSecret: false  # Public browser client
+      ExplicitAuthFlows:
+        - ALLOW_USER_SRP_AUTH        # Login (SRP is what amazon-cognito-identity-js uses)
+        - ALLOW_ADMIN_USER_PASSWORD_AUTH  # For the server-side admin flow (first-login password change)
+        - ALLOW_REFRESH_TOKEN_AUTH
+      AccessTokenValidity: 60
+      IdTokenValidity: 60
+      RefreshTokenValidity: 30
+      TokenValidityUnits: { AccessToken: minutes, IdToken: minutes, RefreshToken: days }
+      PreventUserExistenceErrors: ENABLED
+      ReadAttributes:
+        - email
+        - email_verified
+        - name
+        - custom:role
+        - custom:reports_to
+      WriteAttributes:
+        - name
+
+  # Cognito groups mirror the three roles. Group membership drives
+  # authorisation server-side (auth.js reads cognito:groups from the JWT)
+  # while custom:role carries the same value for convenience in the client.
+  SuperAdminGroup:
+    Type: AWS::Cognito::UserPoolGroup
+    Properties:
+      GroupName: super_admin
+      UserPoolId: !Ref UserPool
+      Description: Firm-wide admin. Can invite anyone; sees every team.
+      Precedence: 1
+
+  AdminGroup:
+    Type: AWS::Cognito::UserPoolGroup
+    Properties:
+      GroupName: admin
+      UserPoolId: !Ref UserPool
+      Description: Team lead. Can invite users; sees their own reports and clients.
+      Precedence: 5
+
+  UserGroup:
+    Type: AWS::Cognito::UserPoolGroup
+    Properties:
+      GroupName: user
+      UserPoolId: !Ref UserPool
+      Description: Staff. Sees only the clients assigned to them.
+      Precedence: 10
+
   # ---------- API Lambda (Express via serverless-express) ----------
   ApiFunction:
     Type: AWS::Serverless::Function
@@ -108,6 +232,29 @@ Resources:
             - Effect: Allow
               Action: ['secretsmanager:GetSecretValue']
               Resource: !Sub 'arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:rds!cluster-*'
+        # Cognito admin actions — invite (AdminCreateUser), promote/demote
+        # (AdminAddUserToGroup / AdminRemoveUserFromGroup), deactivate
+        # (AdminDisableUser), password reset (AdminResetUserPassword),
+        # listing (ListUsers / ListUsersInGroup). Scoped to this pool only.
+        - Statement:
+            - Effect: Allow
+              Action:
+                - 'cognito-idp:AdminCreateUser'
+                - 'cognito-idp:AdminGetUser'
+                - 'cognito-idp:AdminUpdateUserAttributes'
+                - 'cognito-idp:AdminDeleteUser'
+                - 'cognito-idp:AdminDisableUser'
+                - 'cognito-idp:AdminEnableUser'
+                - 'cognito-idp:AdminResetUserPassword'
+                - 'cognito-idp:AdminSetUserPassword'
+                - 'cognito-idp:AdminAddUserToGroup'
+                - 'cognito-idp:AdminRemoveUserFromGroup'
+                - 'cognito-idp:AdminListGroupsForUser'
+                - 'cognito-idp:AdminInitiateAuth'
+                - 'cognito-idp:AdminRespondToAuthChallenge'
+                - 'cognito-idp:ListUsers'
+                - 'cognito-idp:ListUsersInGroup'
+              Resource: !GetAtt UserPool.Arn
       Events:
         Root:
           Type: HttpApi
@@ -250,3 +397,12 @@ Outputs:
   ApiUrl:
     Description: Public URL of the API (also serves the app HTML at /)
     Value: !Sub 'https://${ServerlessHttpApi}.execute-api.${AWS::Region}.amazonaws.com'
+  UserPoolId:
+    Description: Cognito User Pool ID — feeds COGNITO_USER_POOL_ID env var and the browser client
+    Value: !Ref UserPool
+  UserPoolClientId:
+    Description: Cognito App Client ID — used by the browser to sign in
+    Value: !Ref UserPoolClient
+  CognitoRegion:
+    Description: Region the User Pool lives in
+    Value: !Ref AWS::Region

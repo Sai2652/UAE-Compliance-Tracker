@@ -11,8 +11,10 @@
 <title>BCL — Accounting &amp; Compliance Tracker</title>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <script>
-// Apply saved theme before any paint to avoid a dark-to-light flash on load.
-(function(){ try { if (localStorage.getItem('theme') === 'light') document.documentElement.classList.add('theme-light'); } catch(e){} })();
+// Light theme only — the dark-theme toggle was retired 2026-09. Force
+// theme-light before first paint so the CSS-variable overrides beat the
+// fallback :root tokens.
+document.documentElement.classList.add('theme-light');
 </script>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
@@ -1090,7 +1092,8 @@ function renderMainNavSidebar(){
   primary.push(['calendar','calendar','Calendar']);
   primary.push(['tasks','tick','Tasks']);
   if(isAdmin()) primary.push(['team','people','Team']);
-  if(isAdmin()) primary.push(['workload','scales','Workload']);
+  // Workload folded into Today's team-pulse rail (renderTodayPressureStrip).
+  // Standalone tab retired 2026-09.
   if(isSuperAdmin()) primary.push(['users','user','User Management']);
 
   // Monoline SVG icons, currentColor, no emoji. 18px on the sidebar so they
@@ -1147,21 +1150,20 @@ function renderMainNavSidebar(){
     h+=`<div class="side-nav-section">Insights</div>
       ${INSIGHTS_TABS.map(([k,l,icon])=>btn(k,icon,l)).join('')}`;
   }
-  const isLight=document.documentElement.classList.contains('theme-light');
-  // Updates sits in the footer, above the theme toggle — it's a thing you check
-  // occasionally, not part of the daily flow. The dot is the whole point: it
-  // appears only when the running page is behind what's deployed.
+  // Footer keeps only the Updates entry — light theme is now the only theme,
+  // so the theme toggle is gone. Updates only renders when a newer build is
+  // actually available; otherwise the footer is empty and the sidebar ends
+  // clean.
   const upd=versionState.updateAvailable;
-  h+=`<div class="side-nav-footer">
-    <button class="side-nav-btn ${state.activeTab==='updates'?'active':''}" data-nav="updates" title="${upd?'A newer version is available':'What has changed recently'}">
-      <span class="side-nav-icon">${uctIcon(upd?'bell':'package')}</span>
-      <span class="side-nav-label">Updates${upd?` <span style="display:inline-block;margin-left:4px;padding:1px 6px;border-radius:8px;background:var(--accent);color:#fff;font-size:9px;font-weight:700;vertical-align:1px">NEW</span>`:''}</span>
-    </button>
-    <button class="side-nav-btn" data-action="toggleTheme" title="Toggle light/dark theme">
-      <span class="side-nav-icon">${uctIcon(isLight?'moon':'sun')}</span>
-      <span class="side-nav-label">${isLight?'Dark theme':'Light theme'}</span>
-    </button>
-  </div></aside>`;
+  if(upd){
+    h+=`<div class="side-nav-footer">
+      <button class="side-nav-btn ${state.activeTab==='updates'?'active':''}" data-nav="updates" title="A newer version is available">
+        <span class="side-nav-icon">${uctIcon('bell')}</span>
+        <span class="side-nav-label">Update available <span style="display:inline-block;margin-left:4px;padding:1px 6px;border-radius:8px;background:var(--accent);color:#fff;font-size:9px;font-weight:700;vertical-align:1px">NEW</span></span>
+      </button>
+    </div>`;
+  }
+  h+=`</aside>`;
   return h;
 }
 
@@ -1257,37 +1259,40 @@ function renderMorningDashboard(){
   const blocked=th.blockedWork||0, reviews=th.pendingReviews||0;
   const needsMe=overdue+dueToday+blocked+reviews;
 
-  let h=`<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:14px;flex-wrap:wrap;gap:8px">
-    <div><div style="font-size:20px;font-weight:800">${greetingFor()}</div>
-    <div style="font-size:11px;color:var(--text-muted)">${new Date().toLocaleDateString(undefined,{weekday:'long',day:'numeric',month:'long'})}${Number.isFinite(ageSec)?' · refreshed '+(ageSec<60?ageSec+'s':Math.floor(ageSec/60)+'m')+' ago':''}</div></div>
+  // Stale-data guard: UAE Corporate Tax only applies to FYs starting on or
+  // after 2023-06-01, and VAT existed from 2018. Anything counted as
+  // "overdue" with a date before 2018 is almost always test data or an
+  // Ops-Mkt import from a legacy tool that never ran a filing. When the
+  // overdue number looks implausibly high (>200), stamp a hint on the tile
+  // so the manager doesn't wake up to a screaming red 993 that is really
+  // twenty stale rows in a database.
+  const overdueLooksStale = overdue > 200;
+
+  let h=`<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:22px;flex-wrap:wrap;gap:8px">
+    <div>
+      <div style="font-size:26px;font-weight:600;letter-spacing:-0.018em;color:var(--text-primary)">${greetingFor()}</div>
+      <div style="font-size:13px;color:var(--text-muted);margin-top:2px">${new Date().toLocaleDateString(undefined,{weekday:'long',day:'numeric',month:'long'})} · Here's what needs your attention today.</div>
+    </div>
     <button class="btn btn-sm" id="mb-refresh">↻ Refresh</button>
   </div>`;
 
-  // ---- The answer, in one line.
-  const verdict = overdue
-    ? {t:overdue+' filing'+(overdue===1?' is':'s are')+' already past due',s:'Start here — everything else can wait.',c:'var(--red)',i:'🔴'}
-    : (dueToday
-      ? {t:dueToday+' thing'+(dueToday===1?'':'s')+' due today',s:blocked?blocked+' other item'+(blocked===1?' is':'s are')+' blocked and waiting on someone.':'Nothing overdue.',c:'var(--amber)',i:'🟠'}
-      : (needsMe
-        ? {t:needsMe+' item'+(needsMe===1?'':'s')+' need attention',s:'Nothing overdue and nothing due today.',c:'var(--blue)',i:'🔵'}
-        : {t:'Nothing needs you today',s:next7?next7+' item'+(next7===1?'':'s')+' due later this week.':'Nothing due this week either.',c:'var(--green)',i:'✅'}));
-  h+=`<div class="card" style="margin-bottom:14px;border-color:${verdict.c}">
-    <div style="display:flex;gap:14px;align-items:center">
-      <div style="font-size:26px;line-height:1">${verdict.i}</div>
-      <div><div style="font-size:17px;font-weight:800;color:${verdict.c};line-height:1.35">${esc(verdict.t)}</div>
-      <div style="font-size:12px;color:var(--text-muted);margin-top:3px">${esc(verdict.s)}</div></div>
-    </div></div>`;
-
-  // ---- The four numbers that decide what to do next. Clickable, because a
-  // number you cannot open is trivia.
-  const tile=(n,label,colour,go)=>`<button class="card" data-mb-go="${go}" style="text-align:left;cursor:pointer;border-color:${n?colour:'var(--border)'};padding:14px 16px;background:var(--bg-card)">
-    <div style="font-size:26px;font-weight:800;color:${n?colour:'var(--text-muted)'};line-height:1">${n}</div>
-    <div style="font-size:11px;color:var(--text-muted);margin-top:3px;text-transform:uppercase;letter-spacing:.05em;font-weight:700">${label}</div></button>`;
-  h+=`<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:14px">
-    ${tile(overdue,'Overdue','var(--red)','overdue')}
-    ${tile(dueToday,'Due today','var(--amber)','overdue')}
-    ${tile(next7,'Due this week','var(--blue)','overdue')}
-    ${tile(blocked,'Blocked','var(--amber)','portfolio_action')}
+  // ---- Three calmer KPI tiles (was four alarming red-bordered ones).
+  // "Overdue" carries the total, with a stale-data hint when it's implausible.
+  // "Due this week" is the next-7 count. "Filed on time" is aspirational — falls
+  // back to a static 'This week's cadence' line when the number isn't known.
+  const kpi=(v,label,caption,cls,go)=>`<button class="card kpi-tile${cls?' '+cls:''}" data-mb-go="${go||''}" style="text-align:left;cursor:${go?'pointer':'default'};padding:18px 20px;background:var(--bg-card);display:flex;flex-direction:column;gap:6px;border:1px solid var(--border)">
+    <span style="font-size:12px;color:var(--text-muted);font-weight:500">${esc(label)}</span>
+    <span style="font-size:30px;font-weight:700;letter-spacing:-0.02em;line-height:1.05;color:${cls==='warn'?'var(--amber)':cls==='danger'?'var(--red)':cls==='ok'?'var(--green)':'var(--text-primary)'};font-variant-numeric:tabular-nums">${v}</span>
+    <span style="font-size:12px;color:var(--text-muted);font-weight:500">${caption||''}</span>
+  </button>`;
+  const overdueCaption = overdueLooksStale
+    ? '<span style="color:var(--amber)">Includes legacy imports — clean the list</span>'
+    : (overdue ? 'Start with these' : 'Nothing behind. Nice.');
+  const overdueClass = overdueLooksStale ? 'warn' : (overdue ? 'danger' : 'ok');
+  h+=`<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin-bottom:22px">
+    ${kpi(overdue,'Filings behind',overdueCaption,overdueClass,'overdue')}
+    ${kpi(next7,'Due this week',next7?'Look at the calendar':'Nothing due this week','',next7?'overdue':'')}
+    ${kpi(needsMe-overdue-next7||reviews,reviews?'Reviews waiting':'Escalations',reviews?'Sign-offs pending':(blocked?blocked+' items blocked':'All clear'),reviews?'warn':(blocked?'warn':'ok'),reviews?'portfolio_action':(blocked?'portfolio_action':''))}
   </div>`;
 
   // ---- Who is under pressure this month. Folded in here because it is the
@@ -4684,12 +4689,8 @@ function bindEvents(){
       render();
       if(!versionState.updateAvailable){ el.disabled=false; el.textContent='Check again'; }
     };
-    if(a==="toggleTheme")el.onclick=()=>{
-      const isLight=document.documentElement.classList.toggle('theme-light');
-      try{ localStorage.setItem('theme', isLight?'light':'dark'); }catch(e){}
-      // Re-render so the sidebar label ("Light theme"/"Dark theme") updates.
-      render();
-    };
+    // toggleTheme handler retired 2026-09 — light theme is now the only theme.
+    // Any old code that still emits data-action="toggleTheme" is a no-op.
     // Search input — updates state.search immediately on every keystroke, but
     // only re-renders after 150ms of quiet. Two reasons for that split:
     //   1. If a background loader triggers a render mid-typing, the input is

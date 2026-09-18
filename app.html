@@ -8,7 +8,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>UAE Compliance Tracker</title>
+<title>BCL — Accounting &amp; Compliance Tracker</title>
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <script>
 // Apply saved theme before any paint to avoid a dark-to-light flash on load.
@@ -19,14 +19,22 @@
 :root{
 --bg-deep:#080b12;--bg-base:#0c1018;--bg-card:#111722;--bg-card-hover:#151c2a;
 --bg-elevated:#1a2234;--bg-input:#0e1420;
---border:#1c2538;--border-light:#243048;--border-focus:#3d7aed;
+--border:#1c2538;--border-light:#243048;--border-focus:#6958c2;
 --text-primary:#e8ecf4;--text-secondary:#8a95aa;--text-muted:#5a6578;
---accent:#3d7aed;--accent-soft:#3d7aed22;
+/* Brand purple family — from the BCL mark. Replaces the previous #3d7aed
+   blue accent so the tool shares AutoLedger's visual identity. --blue stays
+   as a semantic colour for in-progress badges (not the brand). */
+--accent:#6958c2;--accent-soft:#6958c222;
 --green:#22c55e;--green-bg:#22c55e18;--green-border:#22c55e33;
 --amber:#f59e0b;--amber-bg:#f59e0b18;--amber-border:#f59e0b33;
 --red:#ef4444;--red-bg:#ef444418;--red-border:#ef444433;
 --blue:#3d7aed;--blue-bg:#3d7aed18;
 --slate:#64748b;--slate-bg:#64748b18;
+/* Sidebar chrome — always deep purple regardless of theme, mirroring the
+   AutoLedger midnight bar so the two tools read as one product. */
+--sidebar-bg:#2f2a55;--sidebar-hover:rgba(255,255,255,0.10);--sidebar-active:#3b3566;
+--sidebar-text:rgba(255,255,255,0.80);--sidebar-strong:#ffffff;--sidebar-faint:rgba(255,255,255,0.50);
+--sidebar-line:rgba(255,255,255,0.14);--sidebar-chip:rgba(255,255,255,0.14);
 --radius:8px;--radius-lg:12px;--radius-xl:16px;
 --font:'Plus Jakarta Sans',system-ui,sans-serif;
 --mono:'IBM Plex Mono',monospace;
@@ -36,19 +44,19 @@
 html.theme-light{
 --bg-deep:#f4f6fb;--bg-base:#eef1f7;--bg-card:#ffffff;--bg-card-hover:#f4f6fb;
 --bg-elevated:#e8ecf4;--bg-input:#ffffff;
---border:#dde3ee;--border-light:#c8d0dd;--border-focus:#2d6adc;
+--border:#dde3ee;--border-light:#c8d0dd;--border-focus:#4d3fa0;
 --text-primary:#0c1018;--text-secondary:#3d4658;--text-muted:#6b7488;
---accent:#2d6adc;--accent-soft:#3d7aed14;
+--accent:#4d3fa0;--accent-soft:#4d3fa014;
 --green:#16a34a;--green-bg:#16a34a14;--green-border:#16a34a44;
 --amber:#c2410c;--amber-bg:#f59e0b18;--amber-border:#f59e0b55;
 --red:#dc2626;--red-bg:#ef444414;--red-border:#ef444455;
 --blue:#2d6adc;--blue-bg:#3d7aed12;
 --slate:#475569;--slate-bg:#64748b18;
+/* Sidebar stays midnight even in light theme — chrome is theme-independent. */
 }
 html.theme-light ::-webkit-scrollbar-thumb{background:#c8d0dd}
 html.theme-light .modal{box-shadow:0 20px 60px rgba(15,23,42,0.18)}
 html.theme-light .modal-overlay{background:rgba(15,23,42,0.35)}
-html.theme-light .logo-mark{color:#ffffff}
 html.theme-light .btn-primary{color:#ffffff}
 /* Smoother tab-switch: color/background transitions on every interactive surface */
 html{color-scheme:dark}
@@ -68,10 +76,15 @@ input,select,textarea,button{font-family:inherit}
 ::-webkit-scrollbar-thumb{background:#243048;border-radius:3px}
 .app{display:flex;flex-direction:column;height:100vh}
 .header{background:var(--bg-card);border-bottom:1px solid var(--border);padding:8px 24px;min-height:56px;display:flex;align-items:center;gap:16px;flex-shrink:0;z-index:100;flex-wrap:wrap}
-.logo{display:flex;align-items:center;gap:10px;margin-right:4px}
-.logo-mark{width:32px;height:32px;border-radius:8px;background:linear-gradient(135deg,#3d7aed,#22c55e);display:flex;align-items:center;justify-content:center;font-weight:800;font-size:13px;color:#080b12}
-.logo-text{font-weight:800;font-size:15px;color:var(--text-primary)}
-.logo-sub{font-size:10px;color:var(--text-muted);font-weight:500;letter-spacing:0.5px;text-transform:uppercase}
+.logo{display:none}
+.logo-mark,.logo-text,.logo-sub{display:none}
+/* Sidebar brand — BCL mark + name; sits at the top of .side-nav. */
+.side-nav-brand{display:flex;align-items:center;gap:12px;padding:18px 16px 14px;border-bottom:1px solid var(--sidebar-line);color:var(--sidebar-strong)}
+.side-nav-brand .bcl-mark{width:34px;height:34px;flex-shrink:0;color:var(--sidebar-strong)}
+.side-nav-brand .bcl-mark svg{display:block;width:100%;height:100%}
+.side-nav-brand .bcl-stack{display:flex;flex-direction:column;line-height:1.15;min-width:0}
+.side-nav-brand .bcl-title{font-weight:800;font-size:18px;color:var(--sidebar-strong);letter-spacing:0.04em}
+.side-nav-brand .bcl-name{font-size:11px;color:var(--sidebar-text);opacity:0.85;margin-top:3px;font-weight:500}
 .nav{display:flex;flex-wrap:wrap;gap:2px;background:var(--bg-deep);border-radius:8px;padding:3px;margin-left:8px;max-width:100%;overflow-x:auto;scrollbar-width:thin}
 .nav::-webkit-scrollbar{height:6px}
 .nav::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
@@ -79,14 +92,15 @@ input,select,textarea,button{font-family:inherit}
 .nav-btn:hover{color:var(--text-secondary)}
 .nav-btn.active{background:var(--bg-elevated);color:var(--text-primary)}
 /* Left main-nav sidebar — replaces the old top-of-header tabs. Big click targets. */
-.side-nav{width:236px;background:var(--bg-base);border-right:1px solid var(--border);display:flex;flex-direction:column;flex-shrink:0;overflow-y:auto;padding-bottom:8px}
-.side-nav-section{padding:14px 16px 6px;font-size:10px;font-weight:800;color:var(--text-muted);text-transform:uppercase;letter-spacing:1.2px}
-.side-nav-btn{display:flex;align-items:center;gap:11px;padding:11px 14px;margin:1px 8px;border-radius:8px;background:transparent;border:1px solid transparent;color:var(--text-secondary);font-size:13px;font-weight:600;cursor:pointer;text-align:left;width:calc(100% - 16px);transition:background-color 0.15s ease,color 0.15s ease,border-color 0.15s ease;font-family:inherit}
-.side-nav-btn:hover{background:var(--bg-card-hover);color:var(--text-primary)}
-.side-nav-btn.active{background:var(--bg-elevated);color:var(--text-primary);border-color:var(--border-light)}
-.side-nav-icon{font-size:16px;width:20px;text-align:center;flex-shrink:0;line-height:1}
+.side-nav{width:244px;background:var(--sidebar-bg);color:var(--sidebar-text);border-right:1px solid var(--sidebar-line);display:flex;flex-direction:column;flex-shrink:0;overflow-y:auto;padding-bottom:8px}
+.side-nav-section{padding:16px 18px 8px;font-size:10px;font-weight:800;color:var(--sidebar-faint);text-transform:uppercase;letter-spacing:1.4px}
+.side-nav-btn{display:flex;align-items:center;gap:11px;padding:11px 14px;margin:1px 10px;border-radius:8px;background:transparent;border:1px solid transparent;color:var(--sidebar-text);font-size:13px;font-weight:600;cursor:pointer;text-align:left;width:calc(100% - 20px);transition:background-color 0.15s ease,color 0.15s ease,border-color 0.15s ease;font-family:inherit}
+.side-nav-btn:hover{background:var(--sidebar-hover);color:var(--sidebar-strong)}
+.side-nav-btn.active{background:var(--sidebar-active);color:var(--sidebar-strong);border-color:transparent}
+.side-nav-icon{font-size:16px;width:20px;text-align:center;flex-shrink:0;line-height:1;opacity:0.9}
+.side-nav-btn.active .side-nav-icon{opacity:1}
 .side-nav-label{flex:1;line-height:1.2}
-.side-nav-footer{margin-top:auto;padding:10px 8px 4px;border-top:1px solid var(--border);display:flex;flex-direction:column;gap:4px}
+.side-nav-footer{margin-top:auto;padding:10px 8px 4px;border-top:1px solid var(--sidebar-line);display:flex;flex-direction:column;gap:4px}
 .side-nav-footer .side-nav-btn{margin:0 8px}
 .header-actions{margin-left:auto;display:flex;gap:8px;align-items:center}
 .body-wrap{display:flex;flex:1;overflow:hidden}
@@ -1018,7 +1032,19 @@ function renderMainNavSidebar(){
 
   const btn=(k,icon,label)=>`<button class="side-nav-btn ${state.activeTab===k?'active':''}" data-nav="${k}"><span class="side-nav-icon">${icon}</span><span class="side-nav-label">${label}</span></button>`;
 
+  // BCL mark — 19 dots at their real coordinates from bcl-logo.png. Uses
+  // currentColor so it flips white on the dark sidebar and would flip ink
+  // on a light one, without a second asset. Ported verbatim from
+  // AutoLedger's AlBclMark so both tools carry the same visual identity.
+  const BCL_MARK_SVG = `<svg viewBox="0 0 100 100" fill="currentColor" aria-hidden="true"><circle cx="7.56" cy="48.94" r="5.42"/><circle cx="12.11" cy="71.91" r="4.85"/><circle cx="13.14" cy="29.75" r="6.13"/><circle cx="28.64" cy="87.05" r="4.21"/><circle cx="29.1" cy="13.43" r="6.7"/><circle cx="30.85" cy="61.98" r="5.49"/><circle cx="31.47" cy="39.26" r="5.99"/><circle cx="50.04" cy="7.56" r="7.13"/><circle cx="50.05" cy="72.05" r="4.85"/><circle cx="50.06" cy="48.94" r="6.56"/><circle cx="50.06" cy="28.24" r="6.63"/><circle cx="50.06" cy="92.44" r="3.71"/><circle cx="67.74" cy="39.73" r="7.2"/><circle cx="67.91" cy="62.1" r="4.21"/><circle cx="70.4" cy="87.01" r="3"/><circle cx="70.42" cy="13.38" r="7.56"/><circle cx="85.68" cy="71.48" r="2.5"/><circle cx="85.87" cy="30.3" r="7.56"/><circle cx="90.49" cy="51.33" r="7.49"/></svg>`;
   let h=`<aside class="side-nav">
+    <div class="side-nav-brand">
+      <span class="bcl-mark">${BCL_MARK_SVG}</span>
+      <div class="bcl-stack">
+        <span class="bcl-title">BCL</span>
+        <span class="bcl-name">Accounting &amp; Compliance Tracker</span>
+      </div>
+    </div>
     <div class="side-nav-section">Main</div>
     ${primary.map(([k,i,l])=>btn(k,i,l)).join('')}`;
   // Insights is Super Admin only. Every screen above this point returns data

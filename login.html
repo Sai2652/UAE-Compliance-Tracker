@@ -150,8 +150,16 @@
 <!-- amazon-cognito-identity-js UMD build. Loaded from cdnjs (Artifact
      CSP allowlist matches Amplify's).  Provides the global
      window.AmazonCognitoIdentity — pinned to the same version AutoLedger
-     runs so both tools stay lock-step. -->
-<script src="https://cdnjs.cloudflare.com/ajax/libs/amazon-cognito-identity-js/6.3.7/amazon-cognito-identity.min.js"></script>
+     runs so both tools stay lock-step.
+     onload/onerror handlers set flags so the boot IIFE below waits for
+     the SDK to be ready instead of racing the browser's script loader. -->
+<script>
+  window.__cognitoSdkReady = false;
+  window.__cognitoSdkFailed = false;
+</script>
+<script src="https://cdn.jsdelivr.net/npm/amazon-cognito-identity-js@6.3.7/dist/amazon-cognito-identity.min.js"
+        onload="window.__cognitoSdkReady=true"
+        onerror="window.__cognitoSdkFailed=true"></script>
 <script>
 (function(){
   // ─── Boot: fetch mode from /api/auth/config ──────────────────────
@@ -159,17 +167,51 @@
   var POOL = null;
   var challengedUser = null;  // Kept between sign-in and NEW_PASSWORD_REQUIRED
 
-  fetch('/api/auth/config').then(r => r.json()).then(function(cfg){
-    CFG = cfg;
-    if (cfg.mode === 'cognito') {
-      POOL = new AmazonCognitoIdentity.CognitoUserPool({ UserPoolId: cfg.userPoolId, ClientId: cfg.clientId });
-    } else {
-      // Legacy mode: the sign-in form POSTs the old JWT endpoint. We still
-      // render the same page — the code below has a legacy branch.
-    }
-  }).catch(function(e){
-    show('signin-msg', 'error', 'Could not reach the server. Refresh and try again.');
-  });
+  // Wait for the Cognito SDK <script> above to load before we try to
+  // instantiate CognitoUserPool. The old code raced the CDN and, when the
+  // SDK global wasn't ready yet, the "new AmazonCognitoIdentity..." call
+  // threw synchronously — caught by the fetch's .catch — which surfaced
+  // as the misleading "Could not reach the server" message even though
+  // the server was fine.
+  function waitForSdk(timeoutMs){
+    return new Promise(function(resolve, reject){
+      var start = Date.now();
+      (function tick(){
+        if (window.AmazonCognitoIdentity) return resolve();
+        if (window.__cognitoSdkFailed) return reject(new Error('Cognito SDK failed to load from cdnjs. Check your network / any ad-blockers.'));
+        if (Date.now() - start > (timeoutMs || 8000)) return reject(new Error('Cognito SDK timed out loading.'));
+        setTimeout(tick, 50);
+      })();
+    });
+  }
+
+  fetch('/api/auth/config')
+    .then(function(r){
+      if (!r.ok) throw new Error('HTTP ' + r.status + ' fetching /api/auth/config');
+      return r.json();
+    })
+    .then(function(cfg){
+      CFG = cfg;
+      if (cfg.mode === 'cognito') {
+        return waitForSdk().then(function(){
+          POOL = new AmazonCognitoIdentity.CognitoUserPool({ UserPoolId: cfg.userPoolId, ClientId: cfg.clientId });
+        });
+      }
+      // Legacy mode: no Cognito SDK needed; sign-in form POSTs the old JWT endpoint.
+    })
+    .catch(function(e){
+      var msg = (e && e.message) ? String(e.message) : 'Unknown error.';
+      // Distinguish network/config failures from SDK loading failures so
+      // the user can act on the actual problem instead of "refresh and try
+      // again" for everything.
+      if (/fetching \/api\/auth\/config|Failed to fetch|NetworkError/i.test(msg)) {
+        show('signin-msg', 'error', 'Could not reach the server. Refresh and try again.');
+      } else if (/Cognito SDK/i.test(msg)) {
+        show('signin-msg', 'error', msg);
+      } else {
+        show('signin-msg', 'error', 'Startup error: ' + msg);
+      }
+    });
 
   // ─── Pane switching ────────────────────────────────────────────
   var PANES = ['signin', 'newpw', 'forgot', 'confirm'];

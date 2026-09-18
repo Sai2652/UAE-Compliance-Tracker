@@ -88,6 +88,11 @@ Resources:
       UsernameAttributes: [email]
       AutoVerifiedAttributes: [email]
       Schema:
+        # Standard email + name attributes: declared here only to mark them
+        # required. Cognito complains if we also try to list them in the
+        # client's WriteAttributes when they conflict with UsernameAttributes,
+        # so keep the Schema minimal and let the client's default attribute
+        # policy handle read/write.
         - Name: email
           Required: true
           Mutable: true
@@ -96,6 +101,8 @@ Resources:
           Required: true
           Mutable: true
           AttributeDataType: String
+        # Custom attributes carry firm-specific data (role + reporting line).
+        # Prefixed with custom: on the wire — Cognito adds that automatically.
         - Name: role
           Mutable: true
           AttributeDataType: String
@@ -155,14 +162,13 @@ Resources:
       RefreshTokenValidity: 30
       TokenValidityUnits: { AccessToken: minutes, IdToken: minutes, RefreshToken: days }
       PreventUserExistenceErrors: ENABLED
-      ReadAttributes:
-        - email
-        - email_verified
-        - name
-        - custom:role
-        - custom:reports_to
-      WriteAttributes:
-        - name
+      # Explicit ReadAttributes / WriteAttributes were rejected on first
+      # apply ("Invalid write attributes"). Leaving them unset makes Cognito
+      # use the default policy: the client can read + write every attribute
+      # declared as Mutable in the Schema (email, name, custom:role,
+      # custom:reports_to). Role attribute writes are still admin-only
+      # because the frontend never has admin credentials — only server-side
+      # invite/promote paths in cognito.js do.
 
   # Cognito groups mirror the three roles. Group membership drives
   # authorisation server-side (auth.js reads cognito:groups from the JWT)

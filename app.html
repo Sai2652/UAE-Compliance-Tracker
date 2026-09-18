@@ -19,39 +19,45 @@
 :root{
 --bg-deep:#080b12;--bg-base:#0c1018;--bg-card:#111722;--bg-card-hover:#151c2a;
 --bg-elevated:#1a2234;--bg-input:#0e1420;
---border:#1c2538;--border-light:#243048;--border-focus:#6958c2;
+--border:#1c2538;--border-light:#243048;--border-focus:#4d3fa0;
 --text-primary:#e8ecf4;--text-secondary:#8a95aa;--text-muted:#5a6578;
-/* Brand purple family — from the BCL mark. Replaces the previous #3d7aed
-   blue accent so the tool shares AutoLedger's visual identity. --blue stays
-   as a semantic colour for in-progress badges (not the brand). */
---accent:#6958c2;--accent-soft:#6958c222;
---green:#22c55e;--green-bg:#22c55e18;--green-border:#22c55e33;
---amber:#f59e0b;--amber-bg:#f59e0b18;--amber-border:#f59e0b33;
---red:#ef4444;--red-bg:#ef444418;--red-border:#ef444433;
---blue:#3d7aed;--blue-bg:#3d7aed18;
---slate:#64748b;--slate-bg:#64748b18;
+/* Brand purple family — aligned to AutoLedger's live values. --accent used
+   for focus rings + text emphasis; primary buttons use --bar (#2f2a55)
+   directly so both tools' primary CTAs are visually identical. */
+--accent:#4d3fa0;--accent-soft:rgba(77,63,160,0.14);
+--green:#1a9464;--green-bg:rgba(34,179,120,0.10);--green-border:rgba(34,179,120,0.30);
+--amber:#b56a22;--amber-bg:rgba(216,134,63,0.10);--amber-border:rgba(216,134,63,0.30);
+--red:#e0424a;--red-bg:rgba(247,82,90,0.10);--red-border:rgba(247,82,90,0.30);
+/* --blue kept as legacy semantic but remapped to the accent purple so
+   "in progress" reads as brand, not indigo. Delete when every old class
+   binding has moved off it. */
+--blue:#4d3fa0;--blue-bg:rgba(77,63,160,0.10);
+--slate:#51556b;--slate-bg:rgba(34,37,54,0.08);
 /* Sidebar chrome — always deep purple regardless of theme, mirroring the
    AutoLedger midnight bar so the two tools read as one product. */
 --sidebar-bg:#2f2a55;--sidebar-hover:rgba(255,255,255,0.10);--sidebar-active:#3b3566;
 --sidebar-text:rgba(255,255,255,0.80);--sidebar-strong:#ffffff;--sidebar-faint:rgba(255,255,255,0.50);
 --sidebar-line:rgba(255,255,255,0.14);--sidebar-chip:rgba(255,255,255,0.14);
---radius:8px;--radius-lg:12px;--radius-xl:16px;
+--radius:8px;--radius-md:10px;--radius-lg:14px;--radius-xl:16px;
 --font:'Inter',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;
---mono:'IBM Plex Mono',monospace;
+/* Kept for legacy readers; new code uses --font with font-variant-numeric:
+   tabular-nums so numbers align without a separate mono face — matches
+   AutoLedger's typography exactly. */
+--mono:'Inter',system-ui,sans-serif;
 --transition:0.2s cubic-bezier(0.4,0,0.2,1);
 }
 /* Light theme — variable overrides only, no structural changes. */
 html.theme-light{
 --bg-deep:#f4f6fb;--bg-base:#eef1f7;--bg-card:#ffffff;--bg-card-hover:#f4f6fb;
 --bg-elevated:#e8ecf4;--bg-input:#ffffff;
---border:#dde3ee;--border-light:#c8d0dd;--border-focus:#4d3fa0;
---text-primary:#0c1018;--text-secondary:#3d4658;--text-muted:#6b7488;
---accent:#4d3fa0;--accent-soft:#4d3fa014;
---green:#16a34a;--green-bg:#16a34a14;--green-border:#16a34a44;
---amber:#c2410c;--amber-bg:#f59e0b18;--amber-border:#f59e0b55;
---red:#dc2626;--red-bg:#ef444414;--red-border:#ef444455;
---blue:#2d6adc;--blue-bg:#3d7aed12;
---slate:#475569;--slate-bg:#64748b18;
+--border:#ebeaf2;--border-light:#dcd8ea;--border-focus:#4d3fa0;
+--text-primary:#222536;--text-secondary:#51556b;--text-muted:#6a6e85;
+--accent:#4d3fa0;--accent-soft:rgba(77,63,160,0.10);
+--green:#1a9464;--green-bg:rgba(34,179,120,0.10);--green-border:rgba(34,179,120,0.30);
+--amber:#b56a22;--amber-bg:rgba(216,134,63,0.10);--amber-border:rgba(216,134,63,0.30);
+--red:#e0424a;--red-bg:rgba(247,82,90,0.10);--red-border:rgba(247,82,90,0.30);
+--blue:#4d3fa0;--blue-bg:rgba(77,63,160,0.10);
+--slate:#51556b;--slate-bg:rgba(34,37,54,0.08);
 /* Sidebar stays midnight even in light theme — chrome is theme-independent. */
 }
 html.theme-light ::-webkit-scrollbar-thumb{background:#c8d0dd}
@@ -69,7 +75,7 @@ body,.header,.nav,.nav-btn,.btn,.card,.stat-card,.form-input,.main,.sidebar,.mod
 .skeleton-row{height:64px;margin-bottom:8px}
 .skeleton-card{height:120px;margin-bottom:12px}
 html{font-size:14px}
-body{font-family:var(--font);background:var(--bg-deep);color:var(--text-primary);min-height:100vh;overflow-x:hidden;line-height:1.5}
+body{font-family:var(--font);background:var(--bg-deep);color:var(--text-primary);min-height:100vh;overflow-x:hidden;line-height:1.5;font-variant-numeric:tabular-nums}
 input,select,textarea,button{font-family:inherit}
 ::-webkit-scrollbar{width:6px;height:6px}
 ::-webkit-scrollbar-track{background:transparent}
@@ -97,7 +103,9 @@ input,select,textarea,button{font-family:inherit}
 .side-nav-btn{display:flex;align-items:center;gap:11px;padding:11px 14px;margin:1px 10px;border-radius:8px;background:transparent;border:1px solid transparent;color:var(--sidebar-text);font-size:13px;font-weight:600;cursor:pointer;text-align:left;width:calc(100% - 20px);transition:background-color 0.15s ease,color 0.15s ease,border-color 0.15s ease;font-family:inherit}
 .side-nav-btn:hover{background:var(--sidebar-hover);color:var(--sidebar-strong)}
 .side-nav-btn.active{background:var(--sidebar-active);color:var(--sidebar-strong);border-color:transparent}
-.side-nav-icon{font-size:16px;width:20px;text-align:center;flex-shrink:0;line-height:1;opacity:0.9}
+.side-nav-icon{width:20px;height:20px;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;opacity:0.85;color:var(--sidebar-text)}
+.side-nav-btn:hover .side-nav-icon,.side-nav-btn.active .side-nav-icon{opacity:1;color:var(--sidebar-strong)}
+.side-nav-icon svg{display:block;width:18px;height:18px}
 .side-nav-btn.active .side-nav-icon{opacity:1}
 .side-nav-label{flex:1;line-height:1.2}
 .side-nav-footer{margin-top:auto;padding:10px 8px 4px;border-top:1px solid var(--sidebar-line);display:flex;flex-direction:column;gap:4px}
@@ -122,31 +130,39 @@ input,select,textarea,button{font-family:inherit}
 .sidebar .btn-danger:hover{background:rgba(220,38,38,0.35);color:#fff}
 .sidebar h1,.sidebar h2,.sidebar h3,.sidebar strong{color:var(--sidebar-strong)}
 .main{flex:1;overflow-y:auto;padding:24px;background:var(--bg-deep)}
-.btn{padding:7px 14px;border-radius:var(--radius);border:1px solid var(--border);background:var(--bg-elevated);color:var(--text-secondary);font-size:12px;font-weight:600;cursor:pointer;transition:var(--transition);display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
-.btn:hover{border-color:var(--border-light);color:var(--text-primary);background:var(--bg-card-hover)}
-.btn-primary{background:var(--accent);border-color:var(--accent);color:#fff}
-.btn-primary:hover{background:#2d6adc}
-.btn-danger{color:var(--red);border-color:var(--red-border)}
-.btn-danger:hover{background:var(--red-bg)}
-.btn-sm{padding:4px 10px;font-size:11px}
-.card{background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-lg);padding:20px;margin-bottom:16px}
-.card-title{font-size:14px;font-weight:700;color:var(--text-primary);display:flex;align-items:center;gap:8px;margin-bottom:14px}
+.btn{padding:9px 16px;border-radius:var(--radius-md);border:1px solid var(--border);background:var(--bg-card);color:var(--text-primary);font-size:12px;font-weight:700;letter-spacing:0.01em;cursor:pointer;transition:var(--transition);display:inline-flex;align-items:center;gap:6px;white-space:nowrap;font-family:inherit}
+.btn:hover{border-color:var(--border-light);background:var(--bg-card-hover)}
+/* Primary uses --bar (#2f2a55 sidebar purple), solid, no gradient — AL exact. */
+.btn-primary{background:var(--sidebar-bg);border-color:var(--sidebar-bg);color:#fff;padding:10px 20px;font-size:13px;box-shadow:0 1px 2px rgba(47,42,85,0.24)}
+.btn-primary:hover{background:var(--sidebar-active);border-color:var(--sidebar-active);color:#fff}
+.btn-danger{color:var(--red);border-color:var(--red-border);background:transparent}
+.btn-danger:hover{background:var(--red-bg);color:var(--red)}
+.btn-sm{padding:6px 12px;font-size:11px}
+/* Card recipe — AL 14px radius, airier padding, soft brand shadow. */
+.card{background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-lg);padding:22px 24px;margin-bottom:14px;box-shadow:0 2px 12px rgba(34,37,54,0.06)}
+html.theme-light .card{box-shadow:0 2px 12px rgba(34,37,54,0.06),inset 0 1px 0 rgba(255,255,255,0.9)}
+.card-title{font-size:14px;font-weight:800;letter-spacing:-0.01em;color:var(--text-primary);display:flex;align-items:center;gap:8px;margin-bottom:16px}
 .stat-grid{display:grid;gap:12px;margin-bottom:20px}
 .stat-grid.cols-6{grid-template-columns:repeat(6,1fr)}
-.stat-card{background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-lg);padding:16px;text-align:center}
-.stat-value{font-size:26px;font-weight:800;font-family:var(--mono);letter-spacing:-1px;line-height:1}
-.stat-label{font-size:10px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.8px;margin-top:6px}
-.badge{display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:20px;font-size:11px;font-weight:600;white-space:nowrap;border:1px solid transparent}
-.badge-not-started{background:var(--slate-bg);color:var(--slate)}.badge-in-progress{background:var(--blue-bg);color:var(--blue)}.badge-completed{background:var(--green-bg);color:var(--green)}.badge-blocked{background:var(--red-bg);color:var(--red)}.badge-not-applicable{background:var(--bg-elevated);color:var(--text-muted)}
+.stat-card{background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-lg);padding:18px 20px;text-align:left;box-shadow:0 2px 12px rgba(34,37,54,0.06)}
+/* Stats: Inter tabular-nums, sentence-case labels — AL parity. Left-aligned. */
+.stat-value{font-size:28px;font-weight:700;letter-spacing:-0.02em;line-height:1.1;font-variant-numeric:tabular-nums;color:var(--text-primary)}
+.stat-label{font-size:12px;font-weight:500;color:var(--text-muted);letter-spacing:0;margin-top:4px}
+/* Badges — AL: radius 10 (not full-pill), 11/700, 0.02em, 1px tinted border. */
+.badge{display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:10px;font-size:11px;font-weight:700;letter-spacing:0.02em;white-space:nowrap;border:1px solid transparent}
+.badge-not-started{background:var(--slate-bg);color:var(--slate);border-color:var(--border)}.badge-in-progress{background:var(--accent-soft);color:var(--accent);border-color:var(--accent-soft)}.badge-completed{background:var(--green-bg);color:var(--green);border-color:var(--green-border)}.badge-blocked{background:var(--red-bg);color:var(--red);border-color:var(--red-border)}.badge-not-applicable{background:var(--bg-elevated);color:var(--text-muted);border-color:var(--border)}
 .badge .dot{width:6px;height:6px;border-radius:50%;flex-shrink:0}
-.badge-not-started .dot{background:var(--slate)}.badge-in-progress .dot{background:var(--blue)}.badge-completed .dot{background:var(--green)}.badge-blocked .dot{background:var(--red)}.badge-not-applicable .dot{background:var(--text-muted)}
-.progress-bar{display:flex;align-items:center;gap:8px}
-.progress-track{flex:1;height:6px;background:var(--bg-deep);border-radius:3px;overflow:hidden}
-.progress-fill{height:100%;border-radius:3px;transition:width 0.5s ease}
-.progress-label{font-size:11px;font-weight:700;font-family:var(--mono);min-width:36px;text-align:right}
+.badge-not-started .dot{background:var(--slate)}.badge-in-progress .dot{background:var(--accent)}.badge-completed .dot{background:var(--green)}.badge-blocked .dot{background:var(--red)}.badge-not-applicable .dot{background:var(--text-muted)}
+.progress-bar{display:flex;align-items:center;gap:10px}
+/* Track 10px (AL) — up from 6px, easier to read. Fill uses --accent by default. */
+.progress-track{flex:1;height:10px;background:#f0f1fa;border-radius:5px;overflow:hidden}
+html:not(.theme-light) .progress-track{background:var(--bg-deep)}
+.progress-fill{height:100%;border-radius:5px;background:var(--accent);transition:width 0.35s cubic-bezier(0.34,1.56,0.64,1)}
+.progress-label{font-size:13px;font-weight:700;font-variant-numeric:tabular-nums;min-width:40px;text-align:right;color:var(--text-primary)}
 .form-group{margin-bottom:14px}
-.form-label{display:block;font-size:10px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:5px}
-.form-input{width:100%;background:var(--bg-input);color:var(--text-primary);border:1px solid var(--border);border-radius:var(--radius);padding:8px 12px;font-size:13px;outline:none;transition:var(--transition)}
+/* Labels — sentence case, 12/500. The old 10px UPPERCASE / 0.8px was AL's biggest visual mismatch. */
+.form-label{display:block;font-size:12px;font-weight:500;color:var(--text-secondary);letter-spacing:0;text-transform:none;margin-bottom:6px}
+.form-input{width:100%;background:var(--bg-input);color:var(--text-primary);border:1px solid var(--border);border-radius:var(--radius);padding:9px 12px;font-size:13px;outline:none;transition:border-color 0.15s;font-family:inherit}
 .form-input:focus{border-color:var(--border-focus);box-shadow:0 0 0 3px var(--accent-soft)}
 .form-input::placeholder{color:var(--text-muted)}
 select.form-input{cursor:pointer;appearance:auto}
@@ -154,21 +170,25 @@ textarea.form-input{resize:vertical;min-height:60px}
 .toggle{position:relative;width:36px;height:20px;cursor:pointer;display:inline-block}
 .toggle input{opacity:0;width:0;height:0}
 .toggle-track{position:absolute;inset:0;background:var(--bg-elevated);border:1px solid var(--border);border-radius:10px;transition:var(--transition)}
-.toggle input:checked+.toggle-track{background:var(--green);border-color:var(--green)}
+/* Toggle "on" — accent purple, not green (green means "success", not "state") */
+.toggle input:checked+.toggle-track{background:var(--accent);border-color:var(--accent)}
 .toggle-thumb{position:absolute;top:3px;left:3px;width:14px;height:14px;background:#fff;border-radius:50%;transition:var(--transition)}
 .toggle input:checked~.toggle-thumb{left:19px}
 table{width:100%;border-collapse:collapse}
-th{padding:10px 14px;text-align:left;font-size:10px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.8px;background:var(--bg-base);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:5}
-td{padding:12px 14px;border-bottom:1px solid var(--border);font-size:13px;vertical-align:middle}
+/* Table headers — AL: 10/800 UPPER, tracked 0.08em, transparent background. */
+th{padding:11px 20px;text-align:left;font-size:10px;font-weight:800;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.08em;background:var(--bg-card);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:5}
+td{padding:12px 20px;border-bottom:1px solid var(--border);font-size:13px;vertical-align:middle;color:var(--text-primary)}
 tbody tr{transition:var(--transition)}
 tbody tr:hover{background:var(--bg-card-hover)}
-.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.65);z-index:1000;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(4px)}
-.modal{background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-xl);padding:28px;width:500px;max-width:92vw;max-height:85vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,0.5)}
-.modal-title{font-size:17px;font-weight:800;margin-bottom:20px;color:var(--text-primary)}
+.modal-overlay{position:fixed;inset:0;background:rgba(34,37,54,0.55);z-index:1000;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(4px)}
+/* Modal — AL: 14px radius, softer bigger shadow, larger title. */
+.modal{background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-lg);padding:24px 28px;width:520px;max-width:92vw;max-height:85vh;overflow-y:auto;box-shadow:0 32px 80px rgba(0,0,0,0.30),0 0 0 1px rgba(0,0,0,0.05)}
+html.theme-light .modal{box-shadow:0 32px 80px rgba(34,37,54,0.24),0 0 0 1px rgba(34,37,54,0.05)}
+.modal-title{font-size:20px;font-weight:700;letter-spacing:-0.01em;margin-bottom:6px;color:var(--text-primary)}
 .modal-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:20px}
-.alert{padding:12px 16px;border-radius:var(--radius);font-size:12px;margin-bottom:12px;display:flex;align-items:flex-start;gap:8px;line-height:1.5}
+.alert{padding:12px 16px;border-radius:var(--radius-md);font-size:13px;font-weight:600;margin-bottom:12px;display:flex;align-items:flex-start;gap:8px;line-height:1.5}
 .alert-warning{background:var(--amber-bg);border:1px solid var(--amber-border);color:var(--amber)}
-.alert-info{background:var(--blue-bg);border:1px solid transparent;color:var(--blue)}
+.alert-info{background:var(--accent-soft);border:1px solid var(--accent);color:var(--accent)}
 .filter-bar{display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap;align-items:center}
 .search-input{max-width:280px}
 .deadline-item{display:flex;align-items:center;gap:16px;padding:10px 16px;background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius);margin-bottom:6px;cursor:pointer}
@@ -1034,7 +1054,7 @@ function renderUpdates(){
 }
 
 const INSIGHTS_TABS = [
-  ['reports',    'Reports / MIS',   '📊']
+  ['reports',    'Reports / MIS',   'chart-bar']
 ];
 function isInsightTab(k){ return INSIGHTS_TABS.some(t=>t[0]===k); }
 
@@ -1065,23 +1085,43 @@ function renderMainNavSidebar(){
   // restated Today in a different shape. Deterministic rules, never an LLM,
   // which is why it was never called AI. The code and its routes remain.
   const primary=[];
-  primary.push(['priority','⚡',isAdmin()?'Today':'My Next Priority']);
-  primary.push(['dashboard','🏢','Clients']);
-  primary.push(['calendar','📅','Calendar']);
-  primary.push(['tasks','✓','Tasks']);
-  // A team lead gets the Team view — scoped to their own people.
-  if(isAdmin()) primary.push(['team','👥','Team']);
-  // Who is carrying too much this month. Its own item rather than a tab
-  // buried inside Team: "is the work spread evenly" is a question managers
-  // ask on its own, not while browsing a team page.
-  if(isAdmin()) primary.push(['workload','⚖️','Workload']);
-  // User Management replaces the 11px ⚙ that used to sit in the header. That
-  // link went to /admin, which checked for role 'admin' and so bounced the
-  // Super Admin straight back — it had been unopenable for whoever needed it
-  // most.
-  if(isSuperAdmin()) primary.push(['users','👤','User Management']);
+  primary.push(['priority','bolt',isAdmin()?'Today':'My Next Priority']);
+  primary.push(['dashboard','building','Clients']);
+  primary.push(['calendar','calendar','Calendar']);
+  primary.push(['tasks','tick','Tasks']);
+  if(isAdmin()) primary.push(['team','people','Team']);
+  if(isAdmin()) primary.push(['workload','scales','Workload']);
+  if(isSuperAdmin()) primary.push(['users','user','User Management']);
 
-  const btn=(k,icon,label)=>`<button class="side-nav-btn ${state.activeTab===k?'active':''}" data-nav="${k}"><span class="side-nav-icon">${icon}</span><span class="side-nav-label">${label}</span></button>`;
+  // Monoline SVG icons, currentColor, no emoji. 18px on the sidebar so they
+  // match the label baseline; scaled via viewBox 0 0 20 20 same as AutoLedger's
+  // AlUiIcon set.
+  const iconSize = 18;
+  const uctIcon = (name)=>{
+    const P = 'width="'+iconSize+'" height="'+iconSize+'" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="display:block"';
+    switch(name){
+      case 'bolt':      return `<svg ${P}><path d="M11.5 2.5 4.5 11.4h4.2L8 17.5l7-8.9h-4.2z"/></svg>`;
+      case 'building':  return `<svg ${P}><rect x="3.4" y="3.4" width="13.2" height="13.2" rx="1.4"/><path d="M7 6.6h1.6M11.4 6.6h1.6M7 10h1.6M11.4 10h1.6M7 13.4h6"/></svg>`;
+      case 'calendar':  return `<svg ${P}><rect x="3.4" y="4.6" width="13.2" height="12" rx="1.6"/><path d="M3.4 8.4h13.2M7 3.4v2.6M13 3.4v2.6"/></svg>`;
+      case 'tick':      return `<svg ${P}><path d="M4 10.6l3.4 3.4 8.6-8.6"/></svg>`;
+      case 'people':    return `<svg ${P}><circle cx="7.2" cy="8.6" r="2.6"/><path d="M2.4 16.6c0-2.7 2.1-4.4 4.8-4.4s4.8 1.7 4.8 4.4"/><circle cx="14" cy="7.4" r="2.2"/><path d="M13 12.4c2.6 0 4.6 1.6 4.6 4.2"/></svg>`;
+      case 'scales':    return `<svg ${P}><path d="M10 3.4v13.2M4.6 5h10.8M4.6 5l-2.2 4.8h4.4zM15.4 5l-2.2 4.8h4.4zM6.4 16.6h7.2"/><path d="M2.4 9.8a2.2 2.2 0 0 0 4.4 0M13.2 9.8a2.2 2.2 0 0 0 4.4 0"/></svg>`;
+      case 'user':      return `<svg ${P}><circle cx="10" cy="7" r="3"/><path d="M3.4 17c0-3.2 2.7-5.4 6.6-5.4s6.6 2.2 6.6 5.4"/></svg>`;
+      case 'shield':    return `<svg ${P}><path d="M10 2.6l6.4 2v5c0 4-2.9 7-6.4 7.8-3.5-.8-6.4-3.8-6.4-7.8v-5z"/></svg>`;
+      case 'folders':   return `<svg ${P}><path d="M2.6 6.4h5l1.4 1.6h8.4v8.4H2.6z"/><path d="M5.4 6.4V4.6h4l1.4 1.6h5.6V8"/></svg>`;
+      case 'chart-bar': return `<svg ${P}><path d="M3.4 16.6h13.2M5.6 13.4v-4M9 13.4v-8M12.4 13.4v-6M15.8 13.4v-3"/></svg>`;
+      case 'chart-line':return `<svg ${P}><path d="M3.4 15.4l4.2-4 3.2 2.6 6-6.4"/><path d="M12 7.6h4.6v4.6"/></svg>`;
+      case 'compass':   return `<svg ${P}><circle cx="10" cy="10" r="7"/><path d="M13.2 6.8l-1.6 4.4-4.4 1.6 1.6-4.4z"/></svg>`;
+      case 'sun':       return `<svg ${P}><circle cx="10" cy="10" r="3.4"/><path d="M10 2.6v2M10 15.4v2M17.4 10h-2M4.6 10h-2M15.3 4.7l-1.4 1.4M6.1 13.9l-1.4 1.4M15.3 15.3l-1.4-1.4M6.1 6.1L4.7 4.7"/></svg>`;
+      case 'moon':      return `<svg ${P}><path d="M16.4 12.4A6.4 6.4 0 1 1 7.6 3.6a5 5 0 0 0 8.8 8.8z"/></svg>`;
+      case 'bell':      return `<svg ${P}><path d="M5 13.4V9.4a5 5 0 0 1 10 0v4L16.6 15H3.4z"/><path d="M8.4 17.2a1.8 1.8 0 0 0 3.2 0"/></svg>`;
+      case 'package':   return `<svg ${P}><path d="M3 6l7-3.4L17 6v8L10 17.4 3 14zM10 10.4l7-4.4M10 10.4L3 6M10 10.4v7"/></svg>`;
+      case 'download':  return `<svg ${P}><path d="M10 3.4v9.2M6.4 9.4L10 12.8l3.6-3.4M3.4 15.4h13.2v1.2H3.4z"/></svg>`;
+      case 'plus':      return `<svg ${P}><path d="M10 3.4v13.2M3.4 10h13.2"/></svg>`;
+      default: return '';
+    }
+  };
+  const btn=(k,name,label)=>`<button class="side-nav-btn ${state.activeTab===k?'active':''}" data-nav="${k}"><span class="side-nav-icon">${uctIcon(name)}</span><span class="side-nav-label">${label}</span></button>`;
 
   // BCL mark — 19 dots at their real coordinates from bcl-logo.png. Uses
   // currentColor so it flips white on the dark sidebar and would flip ink
@@ -1114,11 +1154,11 @@ function renderMainNavSidebar(){
   const upd=versionState.updateAvailable;
   h+=`<div class="side-nav-footer">
     <button class="side-nav-btn ${state.activeTab==='updates'?'active':''}" data-nav="updates" title="${upd?'A newer version is available':'What has changed recently'}">
-      <span class="side-nav-icon">${upd?'🔔':'📦'}</span>
+      <span class="side-nav-icon">${uctIcon(upd?'bell':'package')}</span>
       <span class="side-nav-label">Updates${upd?` <span style="display:inline-block;margin-left:4px;padding:1px 6px;border-radius:8px;background:var(--accent);color:#fff;font-size:9px;font-weight:700;vertical-align:1px">NEW</span>`:''}</span>
     </button>
     <button class="side-nav-btn" data-action="toggleTheme" title="Toggle light/dark theme">
-      <span class="side-nav-icon">${isLight?'🌙':'☀️'}</span>
+      <span class="side-nav-icon">${uctIcon(isLight?'moon':'sun')}</span>
       <span class="side-nav-label">${isLight?'Dark theme':'Light theme'}</span>
     </button>
   </div></aside>`;
@@ -1610,7 +1650,9 @@ function renderAIInsight(){
 // ═══════════════════════════════════════════════════════════════
 const portfolioState={ subTab:'dashboard', dashboard:null, insights:null, alerts:null, actionList:null, sortBy:'overallRisk', sortDir:'desc' };
 
-const TIER_META={ A:{ color:'var(--red)', label:'A · High Priority'}, B:{ color:'var(--accent)', label:'B · Standard'}, C:{ color:'var(--text-muted)', label:'C · Low Priority'} };
+// Two tiers only. C tier was dropped 2026-09; anything historically stored
+// as C legacy-maps to B so the badge still renders.
+const TIER_META={ A:{ color:'var(--red)', label:'A · High Priority'}, B:{ color:'var(--accent)', label:'B · Standard'} };
 function tierBadge(tier){
   const m=TIER_META[tier]||TIER_META.B;
   return `<span style="display:inline-block;padding:2px 8px;border-radius:10px;background:var(--bg-elevated);color:${m.color};font-weight:700;font-size:11px">Tier ${esc(tier||'B')}</span>`;
@@ -2118,23 +2160,25 @@ function readinessOrder(state){ return (READINESS_STATE_META[state]||READINESS_S
 // default), prominent for A. Priority order in any row: risk → readiness → tier.
 const TIER_MINI_META = {
   A: { color: 'var(--red)',        bg: 'rgba(239,68,68,0.12)', weight: 800 },
-  B: { color: 'var(--text-muted)', bg: 'var(--bg-elevated)',   weight: 600 },
-  C: { color: 'var(--text-muted)', bg: 'var(--bg-elevated)',   weight: 600 }
+  B: { color: 'var(--text-muted)', bg: 'var(--bg-elevated)',   weight: 600 }
 };
+// Legacy readers may still hand us 'C'; treat it as B so the badge still
+// renders and doesn't break historical rows in the DB.
+function normalizeTier(t){ return t==='A' ? 'A' : 'B'; }
 function tierBadgeMini(tier){
-  const t=tier||'B'; const m=TIER_MINI_META[t]||TIER_MINI_META.B;
+  const t=normalizeTier(tier); const m=TIER_MINI_META[t];
   return `<span title="Tier ${esc(t)}" style="display:inline-block;min-width:18px;padding:1px 5px;border-radius:4px;background:${m.bg};color:${m.color};font-size:10px;font-weight:${m.weight};text-align:center;letter-spacing:0.5px">${esc(t)}</span>`;
 }
 function tierFor(clientId){
   const map=state.clientReadinessByClient||{};
-  const r=map[String(clientId)]; return r ? (r.tier || 'B') : null;
+  const r=map[String(clientId)]; return r ? normalizeTier(r.tier || 'B') : null;
 }
 function tierForName(name){
   if(!state.clientReadiness) return null;
   const row=(state.clientReadiness.clients||[]).find(r=>r.clientName===name);
-  return row ? (row.tier || 'B') : null;
+  return row ? normalizeTier(row.tier || 'B') : null;
 }
-function tierOrder(t){ return t==='A'?0:t==='B'?1:t==='C'?2:3; }
+function tierOrder(t){ return normalizeTier(t)==='A' ? 0 : 1; }
 
 // Cache keyed in `state` so existing render() refreshes pick it up.
 async function ensureReadinessLoaded(force){
@@ -2415,9 +2459,8 @@ function openTierEditor(clientId, currentSettings){
       <div style="display:grid;gap:10px;font-size:13px">
         <label>Tier
           <select id="tierSel" class="form-input">
-            <option value="A" ${currentSettings.tier==='A'?'selected':''}>A — High Priority (× ${TIER_META.A?'1.5':''})</option>
-            <option value="B" ${currentSettings.tier==='B'?'selected':''}>B — Standard (× 1.0)</option>
-            <option value="C" ${currentSettings.tier==='C'?'selected':''}>C — Low Priority (× 0.75)</option>
+            <option value="A" ${currentSettings.tier==='A'?'selected':''}>A — High Priority (× 1.5)</option>
+            <option value="B" ${(!currentSettings.tier||currentSettings.tier==='B'||currentSettings.tier==='C')?'selected':''}>B — Standard (× 1.0)</option>
           </select>
         </label>
         <label>Partner Owner<input id="tierOwner" class="form-input" placeholder="e.g. Partner Name" value="${esc(currentSettings.partnerOwner||'')}"></label>

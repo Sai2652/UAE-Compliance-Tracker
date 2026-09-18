@@ -39,11 +39,13 @@ function buildApp() {
   app.get('/signup', function(req, res) { res.sendFile(path.join(__dirname, 'signup.html')); });
   app.get('/reset-password', function(req, res) { res.sendFile(path.join(__dirname, 'reset-password.html')); });
 
+  // Serve the app shell unconditionally. Cognito tokens live in localStorage
+  // on the browser (not a cookie the server can read cheaply), so the
+  // authoritative auth check has moved into the SPA — it hits /api/auth/me
+  // on boot and redirects to /login if the token is missing or expired.
+  // Legacy JWT-in-cookie users still work because the same /api/auth/me
+  // handles either mode through requireAuth.
   app.get('/', function(req, res) {
-    var token = req.cookies ? req.cookies.token : null;
-    if (!token) return res.redirect('/login');
-    var decoded = verifyToken(token);
-    if (!decoded) return res.redirect('/login');
     res.sendFile(path.join(__dirname, 'app.html'));
   });
 

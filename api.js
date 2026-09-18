@@ -24,6 +24,7 @@ function myClientById(req, id) {
   return myClients(req).find(function(c) { return String(c.id) === String(id); }) || null;
 }
 const { sendInviteEmail, sendResetEmail } = require('./email');
+const cognito = require('./cognito');
 const compliance = require('./compliance');
 const taskEngine = require('./taskEngine');
 const { obligations } = require('./obligations');
@@ -51,7 +52,36 @@ const briefingService = require('./services/briefingService');
 const followUpService = require('./services/followUpService');
 const router = express.Router();
 
+// ─── /auth/config ────────────────────────────────────────────────
+// Browser fetches this on boot to know which Cognito pool + client to talk
+// to. When Cognito isn't configured yet, mode:'legacy' tells the browser
+// to fall back to the /auth/login POST + cookie flow below.
+router.get('/auth/config', function(req, res) {
+  if (cognito.isConfigured()) {
+    var c = cognito.config();
+    res.json({ mode: 'cognito', userPoolId: c.userPoolId, clientId: c.clientId, region: c.region });
+  } else {
+    res.json({ mode: 'legacy' });
+  }
+});
+
+// ─── /auth/logout — always the same ──────────────────────────────
+router.post('/auth/logout', function(req, res) { res.clearCookie('token'); res.json({ ok: true }); });
+
+// ─── /auth/me — reads req.user which requireAuth already normalised ──
+router.get('/auth/me', requireAuth, function(req, res) {
+  res.json({ user: { id: req.user.id, email: req.user.email, name: req.user.name, role: req.user.role, reports_to: req.user.reports_to || null } });
+});
+
+// ─── /auth/login — legacy JWT flow only ──────────────────────────
+// Under Cognito, the browser signs in via SRP directly against Cognito and
+// hits /auth/me with the resulting access token. This endpoint stays alive
+// only to keep the legacy fallback working while the CFN full_stack deploy
+// hasn't yet propagated the Cognito env vars. Deleted in Batch C6.
 router.post('/auth/login', function(req, res) {
+  if (cognito.isConfigured()) {
+    return res.status(400).json({ error: 'Cognito is on — sign in through the Cognito SDK on the browser, not this endpoint.' });
+  }
   var email = req.body.email; var password = req.body.password;
   if (!email || !password) return res.status(400).json({ error: 'Email and password required' });
   var user = users.findByEmail(email.toLowerCase().trim());
@@ -64,16 +94,24 @@ router.post('/auth/login', function(req, res) {
   res.json({ token: token, user: { id: user.id, email: user.email, name: user.name, role: user.role } });
 });
 
-router.post('/auth/logout', function(req, res) { res.clearCookie('token'); res.json({ ok: true }); });
-
-router.get('/auth/me', requireAuth, function(req, res) {
-  res.json({ user: { id: req.user.id, email: req.user.email, name: req.user.name, role: req.user.role } });
-});
-
+// ─── /auth/forgot-password ───────────────────────────────────────
+// Cognito path: AdminResetUserPassword — Cognito emails the confirmation
+// code, browser calls /auth/reset-password with { email, code, newPassword }.
+// Legacy path: unchanged Resend flow.
 router.post('/auth/forgot-password', async function(req, res) {
   var email = req.body.email;
   if (!email) return res.status(400).json({ error: 'Email required' });
-  var user = users.findByEmail(email.toLowerCase().trim());
+  var cleanEmail = email.toLowerCase().trim();
+  if (cognito.isConfigured()) {
+    try {
+      await cognito.resetPassword(cleanEmail);
+    } catch (e) {
+      // UserNotFoundException is silenced to avoid enumeration.
+      if (e.name !== 'UserNotFoundException') console.warn('[cognito reset]', e.message);
+    }
+    return res.json({ message: 'If that email exists, a reset code has been sent.' });
+  }
+  var user = users.findByEmail(cleanEmail);
   if (!user) return res.json({ message: 'If that email exists, a reset link has been sent.' });
   var token = crypto.randomBytes(32).toString('hex');
   var expires = new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString();
@@ -84,13 +122,19 @@ router.post('/auth/forgot-password', async function(req, res) {
   else { res.json({ message: 'Email failed. Use this link:', resetUrl: resetUrl }); }
 });
 
+// Legacy verify — used by the legacy reset-password page. Cognito uses a
+// code (not a token) so its verify step is client-side.
 router.get('/auth/reset-password/verify/:token', function(req, res) {
+  if (cognito.isConfigured()) return res.json({ mode: 'cognito' }); // page renders the Cognito confirm-code form
   var user = users.findByInviteToken(req.params.token);
   if (!user) return res.status(400).json({ error: 'Invalid or expired reset link' });
   res.json({ email: user.email, name: user.name });
 });
 
+// Legacy reset-password. Cognito's confirm-forgot flow runs client-side and
+// doesn't hit this endpoint.
 router.post('/auth/reset-password', function(req, res) {
+  if (cognito.isConfigured()) return res.status(400).json({ error: 'Cognito is on — use the confirm-code flow on the reset page.' });
   var token = req.body.token; var password = req.body.password;
   if (!token || !password) return res.status(400).json({ error: 'Token and password required' });
   if (password.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters' });
@@ -102,10 +146,61 @@ router.post('/auth/reset-password', function(req, res) {
   res.json({ ok: true });
 });
 
-router.post('/invite', requireAuth, requireSuperAdmin, async function(req, res) {
+// ─── /auth/complete-new-password ─────────────────────────────────
+// First-login flow. Cognito's AdminCreateUser stamps the account as
+// FORCE_CHANGE_PASSWORD; the browser hits this endpoint with the temp
+// password from the invite email + a fresh chosen password. Server runs
+// the two-step admin auth flow and returns the resulting AccessToken /
+// IdToken / RefreshToken so the browser can sign in without a second POST.
+router.post('/auth/complete-new-password', async function(req, res) {
+  if (!cognito.isConfigured()) return res.status(400).json({ error: 'Cognito is not configured on this Lambda yet — run the full_stack deploy.' });
+  var email = req.body.email; var tempPassword = req.body.tempPassword; var newPassword = req.body.newPassword; var name = req.body.name;
+  if (!email || !tempPassword || !newPassword) return res.status(400).json({ error: 'email, tempPassword, newPassword required' });
+  if (newPassword.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters' });
+  try {
+    var tokens = await cognito.completeNewPassword({ email: String(email).toLowerCase().trim(), tempPassword: tempPassword, newPassword: newPassword, name: name });
+    if (!tokens) return res.status(400).json({ error: 'Could not complete new-password flow — try again from the invite email.' });
+    res.json({
+      accessToken: tokens.AccessToken,
+      idToken: tokens.IdToken,
+      refreshToken: tokens.RefreshToken,
+      expiresIn: tokens.ExpiresIn
+    });
+  } catch (e) {
+    res.status(400).json({ error: (e && e.message) || 'Password change failed' });
+  }
+});
+
+// ─── /invite ──────────────────────────────────────────────────────
+// Two-tier authorisation:
+//   * super_admin: can invite any role (super_admin, admin, user).
+//   * admin:       can invite ONLY users (never another admin or a super_admin).
+//   * user:        cannot invite.
+//
+// Cognito's AdminCreateUser sends the invite email natively using the
+// template baked into template.yaml. Legacy mode falls back to Resend.
+router.post('/invite', requireAuth, requireAdmin, async function(req, res) {
   var email = req.body.email; var name = req.body.name;
+  var requestedRole = (req.body.role || 'user').toLowerCase();
+  var reportsTo = req.body.reports_to || req.body.reportsTo || null;
   if (!email || !name) return res.status(400).json({ error: 'Email and name required' });
-  var cleanEmail = email.toLowerCase().trim();
+  if (!['super_admin', 'admin', 'user'].includes(requestedRole)) return res.status(400).json({ error: 'Invalid role' });
+  // Admins can only invite Users. Only Super Admins can create Admins or Super Admins.
+  if (!roles.isSuperAdmin(req.user) && requestedRole !== 'user') {
+    return res.status(403).json({ error: 'Admins can only invite Users. Ask a Super Admin to promote a User to Admin.' });
+  }
+  var cleanEmail = String(email).toLowerCase().trim();
+  if (cognito.isConfigured()) {
+    try {
+      var created = await cognito.invite({ email: cleanEmail, name: name, role: requestedRole, reportsTo: reportsTo });
+      activity.log(req.user.id, req.user.name, 'invite_sent', 'Invited ' + name + ' as ' + requestedRole);
+      return res.json({ ok: true, message: 'Invite sent to ' + cleanEmail + ' — they will receive a temporary password by email.', user: created });
+    } catch (e) {
+      if (e.name === 'UsernameExistsException') return res.status(400).json({ error: 'A user with that email already exists.' });
+      return res.status(500).json({ error: (e && e.message) || 'Invite failed' });
+    }
+  }
+  // Legacy path
   var existing = users.findByEmail(cleanEmail);
   if (existing && existing.active) return res.status(400).json({ error: 'User already exists and is active' });
   var token = crypto.randomBytes(32).toString('hex');
@@ -121,13 +216,17 @@ router.post('/invite', requireAuth, requireSuperAdmin, async function(req, res) 
   }
 });
 
+// Legacy invite-verify + signup — Cognito's first-login flow uses
+// /auth/complete-new-password instead. Kept live for the legacy path.
 router.get('/invite/verify/:token', function(req, res) {
+  if (cognito.isConfigured()) return res.json({ mode: 'cognito' });
   var user = users.findByInviteToken(req.params.token);
   if (!user) return res.status(400).json({ error: 'Invalid or expired invite link' });
   res.json({ email: user.email, name: user.name });
 });
 
 router.post('/invite/signup', function(req, res) {
+  if (cognito.isConfigured()) return res.status(400).json({ error: 'Cognito is on — use /auth/complete-new-password with the temp password from the invite email.' });
   var token = req.body.token; var password = req.body.password; var name = req.body.name;
   if (!token || !password) return res.status(400).json({ error: 'Token and password required' });
   if (password.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters' });

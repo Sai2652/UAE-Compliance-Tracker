@@ -72,6 +72,12 @@ async function verifyAccessToken(token) {
 // shape the rest of the app has always used. Group membership is the
 // authoritative source for role (custom:role attribute is a mirror for the
 // browser).
+//
+// Access tokens don't carry the `email` or `name` attributes — only sub,
+// username, groups, custom:*. Callers that need the display name (the
+// /auth/me endpoint, for example) should enrich this via getUser(email)
+// which hits AdminGetUser. userFromToken keeps a UUID fallback so any
+// caller that only wants role + id doesn't pay for that lookup.
 function userFromToken(payload) {
   const groups = payload['cognito:groups'] || [];
   // Precedence: super_admin > admin > user. Same order as the group
@@ -81,8 +87,9 @@ function userFromToken(payload) {
   else if (groups.includes('admin')) role = 'admin';
   return {
     id: payload.sub,       // Cognito's stable user id
-    email: payload.email || payload.username || '',
-    name: payload.name || payload.username || '',
+    username: payload.username || payload.sub,  // cognito username (may equal sub)
+    email: payload.email || '',
+    name: payload.name || '',
     role,
     groups,
     reports_to: payload['custom:reports_to'] || null,

@@ -69,9 +69,21 @@ router.get('/auth/config', function(req, res) {
 router.post('/auth/logout', function(req, res) { res.clearCookie('token'); res.json({ ok: true }); });
 
 // ─── /auth/me — reads req.user which requireAuth already normalised ──
-router.get('/auth/me', requireAuth, function(req, res) {
-  res.json({ user: { id: req.user.id, email: req.user.email, name: req.user.name, role: req.user.role, reports_to: req.user.reports_to || null } });
-});
+// Access tokens don't carry email/name — for Cognito users we enrich by
+// hitting AdminGetUser once per boot so the greeting shows "Sai" instead
+// of the raw UUID. AdminGetUser cost: one Cognito call per browser boot.
+router.get('/auth/me', requireAuth, asyncH(async function(req, res) {
+  let user = req.user;
+  if (cognito.isConfigured() && (!user.name || !user.email)) {
+    try {
+      const full = await cognito.getUser(user.username || user.id);
+      if (full) {
+        user = { ...user, email: full.email || user.email, name: full.name || user.name };
+      }
+    } catch (_) { /* enrichment is best-effort; fall back to whatever the token had */ }
+  }
+  res.json({ user: { id: user.id, email: user.email || '', name: user.name || user.email || 'Unknown', role: user.role, reports_to: user.reports_to || null } });
+}));
 
 // ─── /auth/login — legacy JWT flow only ──────────────────────────
 // Under Cognito, the browser signs in via SRP directly against Cognito and

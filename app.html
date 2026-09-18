@@ -9,7 +9,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>BCL — Accounting &amp; Compliance Tracker</title>
-<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <script>
 // Apply saved theme before any paint to avoid a dark-to-light flash on load.
 (function(){ try { if (localStorage.getItem('theme') === 'light') document.documentElement.classList.add('theme-light'); } catch(e){} })();
@@ -36,7 +36,7 @@
 --sidebar-text:rgba(255,255,255,0.80);--sidebar-strong:#ffffff;--sidebar-faint:rgba(255,255,255,0.50);
 --sidebar-line:rgba(255,255,255,0.14);--sidebar-chip:rgba(255,255,255,0.14);
 --radius:8px;--radius-lg:12px;--radius-xl:16px;
---font:'Plus Jakarta Sans',system-ui,sans-serif;
+--font:'Inter',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;
 --mono:'IBM Plex Mono',monospace;
 --transition:0.2s cubic-bezier(0.4,0,0.2,1);
 }
@@ -104,9 +104,23 @@ input,select,textarea,button{font-family:inherit}
 .side-nav-footer .side-nav-btn{margin:0 8px}
 .header-actions{margin-left:auto;display:flex;gap:8px;align-items:center}
 .body-wrap{display:flex;flex:1;overflow:hidden}
-.sidebar{width:260px;background:var(--bg-base);border-right:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden;flex-shrink:0}
-.sidebar-header{padding:16px;border-bottom:1px solid var(--border)}
-.sidebar-footer{padding:12px;border-top:1px solid var(--border)}
+/* Client-detail sidebar — same midnight chrome as the main .side-nav so
+   the whole app carries one visual identity, not two. */
+.sidebar{width:260px;background:var(--sidebar-bg);color:var(--sidebar-text);border-right:1px solid var(--sidebar-line);display:flex;flex-direction:column;overflow:hidden;flex-shrink:0}
+.sidebar-header{padding:16px;border-bottom:1px solid var(--sidebar-line);color:var(--sidebar-strong)}
+.sidebar-footer{padding:12px;border-top:1px solid var(--sidebar-line)}
+/* Anything in the client-detail sidebar that used --text-* tokens should
+   now read against the dark ground. Overrides live in nested selectors so
+   any element that explicitly sets a colour still wins. */
+.sidebar .form-label{color:var(--sidebar-faint)}
+.sidebar .badge-in-progress,.sidebar .badge-not-started,.sidebar .badge-completed,.sidebar .badge-blocked,.sidebar .badge-not-applicable{background:var(--sidebar-chip);color:var(--sidebar-strong);border-color:var(--sidebar-line)}
+.sidebar .progress-track{background:rgba(255,255,255,0.10)}
+.sidebar .progress-label{color:var(--sidebar-strong)}
+.sidebar .btn{background:var(--sidebar-hover);border-color:var(--sidebar-line);color:var(--sidebar-strong)}
+.sidebar .btn:hover{background:var(--sidebar-active);border-color:transparent;color:var(--sidebar-strong)}
+.sidebar .btn-danger{color:#ffb4b4;border-color:rgba(255,120,120,0.35);background:rgba(220,38,38,0.20)}
+.sidebar .btn-danger:hover{background:rgba(220,38,38,0.35);color:#fff}
+.sidebar h1,.sidebar h2,.sidebar h3,.sidebar strong{color:var(--sidebar-strong)}
 .main{flex:1;overflow-y:auto;padding:24px;background:var(--bg-deep)}
 .btn{padding:7px 14px;border-radius:var(--radius);border:1px solid var(--border);background:var(--bg-elevated);color:var(--text-secondary);font-size:12px;font-weight:600;cursor:pointer;transition:var(--transition);display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
 .btn:hover{border-color:var(--border-light);color:var(--text-primary);background:var(--bg-card-hover)}
@@ -160,9 +174,9 @@ tbody tr:hover{background:var(--bg-card-hover)}
 .deadline-item{display:flex;align-items:center;gap:16px;padding:10px 16px;background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius);margin-bottom:6px;cursor:pointer}
 .deadline-item:hover{border-color:var(--border-light);background:var(--bg-card-hover)}
 .detail-nav{display:flex;flex-direction:column;gap:2px;padding:8px}
-.detail-nav-btn{padding:8px 12px;border-radius:var(--radius);border:none;background:transparent;color:var(--text-muted);font-size:12px;font-weight:600;cursor:pointer;transition:var(--transition);text-align:left}
-.detail-nav-btn:hover{color:var(--text-secondary);background:var(--bg-card)}
-.detail-nav-btn.active{color:var(--text-primary);background:var(--bg-elevated)}
+.detail-nav-btn{padding:10px 12px;border-radius:var(--radius);border:none;background:transparent;color:var(--sidebar-text);font-size:13px;font-weight:600;cursor:pointer;transition:var(--transition);text-align:left;font-family:inherit}
+.detail-nav-btn:hover{color:var(--sidebar-strong);background:var(--sidebar-hover)}
+.detail-nav-btn.active{color:var(--sidebar-strong);background:var(--sidebar-active)}
 .doc-row{display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--border)}
 .doc-row:last-child{border-bottom:none}
 .doc-toggle-btn{padding:4px 12px;border-radius:6px;border:1px solid var(--border);background:transparent;color:var(--text-muted);font-size:11px;font-weight:600;cursor:pointer;transition:var(--transition)}

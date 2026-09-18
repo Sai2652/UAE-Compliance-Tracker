@@ -377,6 +377,32 @@ function launchPortal(cid,idx){
 
 const STORAGE_KEY="uae_compliance_v4";
 
+// Cognito auth wiring: monkey-patch window.fetch to attach the access token
+// from localStorage as an Authorization: Bearer header on every same-origin
+// API call. Sits above cookie-based auth so a redirect from /login flows
+// straight into the app without the cookie needing to arrive first (which
+// occasionally races the boot fetch on cold pages). Legacy JWT-in-cookie
+// still works because the token/cookie pair is set alongside localStorage
+// in login.html.
+(function(){
+  const _origFetch = window.fetch.bind(window);
+  window.fetch = function(input, init){
+    const url = (typeof input === 'string') ? input : (input && input.url) || '';
+    // Only touch calls to our own API surface — never third-party fetches.
+    if (!/^\/(api|auth)\//.test(url) && url.indexOf(window.location.origin + '/api/') !== 0 && url.indexOf(window.location.origin + '/auth/') !== 0) {
+      return _origFetch(input, init);
+    }
+    let token = null;
+    try { token = localStorage.getItem('cognito_access_token'); } catch(_){}
+    if (!token) return _origFetch(input, init);
+    const opts = init ? Object.assign({}, init) : {};
+    const h = new Headers(opts.headers || {});
+    if (!h.has('Authorization')) h.set('Authorization', 'Bearer ' + token);
+    opts.headers = h;
+    return _origFetch(input, opts);
+  };
+})();
+
 // ═══════════════════════════════════════════════════════════════
 // STORAGE
 // ═══════════════════════════════════════════════════════════════

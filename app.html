@@ -547,6 +547,14 @@ const nowISO=()=>new Date().toISOString();
 function getAssignableUsers(){
   return (state.orgPeople||[]).filter(p=>p&&p.active!==false).map(p=>p.name).filter(Boolean);
 }
+// Team-workload roster — only Admin + User roles. Super Admins and Prime
+// Admins are managers, not workload-carrying team members, so they should
+// not show as cards on the Team page (they appeared as "Sai · 0 clients").
+function getTeamMembers(){
+  return (state.orgPeople||[])
+    .filter(p=>p && p.active!==false && p.role !== 'super_admin' && p.role !== 'prime_admin')
+    .map(p=>p.name).filter(Boolean);
+}
 function strandedOwners(){
   const live=getAssignableUsers();
   return [...new Set((state.clients||[]).map(c=>c.assignedTeam).filter(n=>n&&n!=="Unassigned"&&!live.includes(n)))];
@@ -3331,9 +3339,11 @@ function renderTeamView(){
   // scoped state.clients to their branch, so the owners appearing in it are
   // exactly their team. Somebody with no clients yet won't show until they
   // have one — which is also the honest answer to "what is my team carrying".
+  // Roster is Admin + User only. Super/Prime Admins don't carry a workload;
+  // they invite people and drop out of the "who is doing what" question.
   const roster=isSuperAdmin()
-    ? getAssignableUsers()
-    : getAssignableUsers().filter(m=>m===currentUser.name||state.clients.some(c=>c.assignedTeam===m));
+    ? getTeamMembers()
+    : getTeamMembers().filter(m=>m===currentUser.name||state.clients.some(c=>c.assignedTeam===m));
   if(!isSuperAdmin()&&!roster.length)h+=`<div class="alert alert-warning" style="margin-bottom:16px">No clients are assigned to your team yet.</div>`;
   h+=`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px">`;
   roster.forEach(member=>{
@@ -4561,10 +4571,14 @@ function getFilteredClients(){
 }
 function renderClientTierFilterSelect(){
   const cur=state.filterClientTier||'All';
-  const counts=(state.clientReadiness&&state.clientReadiness.tierCounts)||{A:0,B:0,C:0};
+  // Legacy readiness services still emit a C bucket — fold it into B so the
+  // count reflects the two-tier model. Server-side clean-up happens in the
+  // next readiness recompute.
+  const raw=(state.clientReadiness&&state.clientReadiness.tierCounts)||{A:0,B:0,C:0};
+  const counts={A:raw.A||0, B:(raw.B||0)+(raw.C||0)};
   let h=`<select class="form-input" data-action="filterClientTier" style="min-width:130px">`;
   h+=`<option value="All" ${cur==='All'?'selected':''}>All Tiers</option>`;
-  ['A','B','C'].forEach(t=>{ h+=`<option value="${t}" ${cur===t?'selected':''}>Tier ${t} (${counts[t]||0})</option>`; });
+  ['A','B'].forEach(t=>{ h+=`<option value="${t}" ${cur===t?'selected':''}>Tier ${t} (${counts[t]||0})</option>`; });
   h+=`</select>`;
   return h;
 }

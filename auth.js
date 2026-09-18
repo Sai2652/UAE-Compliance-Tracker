@@ -66,17 +66,25 @@ async function requireAuth(req, res, next) {
   }
 }
 
-// "Admin or above" — team lead or manager. Data scoping happens per-endpoint
-// in roles.js; this only gates the management surfaces.
+// "Admin or above" — Admin, Super Admin, or Prime Admin. Data scoping happens
+// per-endpoint in roles.js; this only gates the management surfaces.
 function requireAdmin(req, res, next) {
   if (!roles.atLeast(req.user, 'admin')) return res.status(403).json({ error: 'Admin access required' });
   next();
 }
 
-// Firm-wide settings, promotions, invites of admins/super_admins.
+// "Super Admin or above" — Super Admin or Prime Admin. Gates settings that
+// span a whole downline (invite an Admin, edit a Super Admin's book etc.).
 function requireSuperAdmin(req, res, next) {
-  if (!roles.isSuperAdmin(req.user)) return res.status(403).json({ error: 'Super Admin access required' });
+  if (!roles.atLeast(req.user, 'super_admin')) return res.status(403).json({ error: 'Super Admin access required' });
   next();
 }
 
-module.exports = { generateToken, verifyToken, requireAuth, requireAdmin, requireSuperAdmin, extractToken };
+// Firm-wide power — inviting Super Admins, editing prime_admin settings.
+// Only the founder.
+function requirePrimeAdmin(req, res, next) {
+  if (!roles.isPrimeAdmin(req.user)) return res.status(403).json({ error: 'Prime Admin access required' });
+  next();
+}
+
+module.exports = { generateToken, verifyToken, requireAuth, requireAdmin, requireSuperAdmin, requirePrimeAdmin, extractToken };

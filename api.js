@@ -196,11 +196,20 @@ router.post('/invite', requireAuth, requireAdmin, async function(req, res) {
   var requestedRole = (req.body.role || 'user').toLowerCase();
   var reportsTo = req.body.reports_to || req.body.reportsTo || null;
   if (!email || !name) return res.status(400).json({ error: 'Email and name required' });
-  if (!['super_admin', 'admin', 'user'].includes(requestedRole)) return res.status(400).json({ error: 'Invalid role' });
-  // Admins can only invite Users. Only Super Admins can create Admins or Super Admins.
-  if (!roles.isSuperAdmin(req.user) && requestedRole !== 'user') {
-    return res.status(403).json({ error: 'Admins can only invite Users. Ask a Super Admin to promote a User to Admin.' });
+  if (!['prime_admin', 'super_admin', 'admin', 'user'].includes(requestedRole)) return res.status(400).json({ error: 'Invalid role' });
+  // Invite matrix — Prime → any, Super → Admin+User, Admin → User only.
+  if (!roles.canInvite(req.user, requestedRole)) {
+    var youAre = roles.labelOf(req.user.role);
+    var they = roles.labelOf(requestedRole);
+    return res.status(403).json({ error: youAre + 's cannot invite ' + they + 's. Ask a higher-level admin to do this.' });
   }
+  // A Super Admin inviting an Admin: the new Admin reports to them (unless
+  // caller explicitly names someone else). A Super Admin inviting a User:
+  // must name a reports_to (an Admin under this Super Admin). Prime Admin
+  // invitees never have a reports_to.
+  if (roles.isSuperAdmin(req.user) && requestedRole === 'admin' && !reportsTo) reportsTo = req.user.id;
+  if (roles.isLead(req.user) && requestedRole === 'user' && !reportsTo) reportsTo = req.user.id;
+  if (requestedRole === 'prime_admin') reportsTo = null;
   var cleanEmail = String(email).toLowerCase().trim();
   if (cognito.isConfigured()) {
     try {

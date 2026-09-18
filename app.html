@@ -443,6 +443,17 @@ async function loadCurrentUser(){
 
 async function logout(){
   await fetch('/api/auth/logout', { method: 'POST' });
+  // Cognito tokens live in localStorage — clear them so a share-a-browser
+  // scenario doesn't leave the next user with a stale session. Also clear
+  // the token cookie explicitly (POST /api/auth/logout does this too, but
+  // being explicit avoids a race with the redirect below).
+  try {
+    localStorage.removeItem('cognito_access_token');
+    localStorage.removeItem('cognito_id_token');
+    localStorage.removeItem('cognito_refresh_token');
+    localStorage.removeItem('cognito_user_email');
+  } catch(_){}
+  document.cookie = 'token=; path=/; max-age=0';
   window.location.href = '/login';
 }
 
@@ -3985,11 +3996,11 @@ function renderUserManagement(){
       <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr auto;gap:10px;align-items:end">
         <div><div class="form-label">Name</div><input class="form-input" id="invName" placeholder="e.g., Lavanya"></div>
         <div><div class="form-label">Email</div><input class="form-input" id="invEmail" placeholder="name@bcl.ae"></div>
-        <div><div class="form-label">Role</div><select class="form-input" id="invRole"><option value="user">User</option><option value="admin">Admin (team lead)</option><option value="super_admin">Super Admin</option></select></div>
+        <div><div class="form-label">Role</div><select class="form-input" id="invRole"><option value="user">User</option><option value="admin">Admin</option><option value="super_admin">Super Admin</option></select></div>
         <div><div class="form-label">Reports to</div><select class="form-input" id="invReports"><option value="">— nobody —</option>${people.filter(p=>p.role!=='user').map(p=>`<option value="${p.id}">${esc(p.name)}</option>`).join('')}</select></div>
         <button class="btn btn-primary" data-action="sendInvite">Send invite</button>
       </div>
-      <div style="font-size:11px;color:var(--text-muted);margin-top:8px;line-height:1.5">A User sees only their own clients. An Admin is a team lead and sees everyone who reports to them — so give an Admin their reports, or they will see only their own work.</div>
+      <div style="font-size:11px;color:var(--text-muted);margin-top:8px;line-height:1.5">A User sees only their own clients. An Admin sees everyone who reports to them — so assign an Admin their reports, or they will see only their own work.</div>
     </div>`;
   }
 
@@ -4019,7 +4030,7 @@ function renderUserManagement(){
         <td style="font-weight:600">${esc(p.name||'(no name set)')}${isMe?' <span style="font-size:10px;color:var(--text-muted)">(you)</span>':''}${p.active===false?' <span style="font-size:10px;color:var(--red)">deactivated</span>':''}</td>
         <td style="color:var(--text-muted)">${esc(p.email||'—')}</td>
         <td><select class="form-input" data-user-role="${p.id}" style="padding:3px 6px;font-size:11px;max-width:150px"${isMe?' disabled title="You cannot change your own role"':''}>
-          ${[['user','User'],['admin','Admin (team lead)'],['super_admin','Super Admin']].map(function(r){return `<option value="${r[0]}"${p.role===r[0]?' selected':''}>${r[1]}</option>`;}).join('')}
+          ${[['user','User'],['admin','Admin'],['super_admin','Super Admin']].map(function(r){return `<option value="${r[0]}"${p.role===r[0]?' selected':''}>${r[1]}</option>`;}).join('')}
         </select></td>
         <td><select class="form-input" data-user-reports="${p.id}" style="padding:3px 6px;font-size:11px;max-width:140px">
           <option value="">— nobody —</option>

@@ -5,13 +5,88 @@ const { users, tracker, activity } = require('./database');
 const { generateToken, requireAuth, requireAdmin, requireSuperAdmin } = require('./auth');
 const roles = require('./roles');
 
+// --- User directory ---------------------------------------------------------
+// Visibility is derived from the reporting line, so every scope decision
+// needs the COMPLETE list of people — and since the Cognito migration
+// that is no longer users.getAll().
+//
+// This is what broke handing a client down the chain: Super Admin gives a
+// client to Reethu (Admin), Reethu passes it to Shreyas (her User), and it
+// vanished from Reethu's view. clientScope is right — an Admin sees their
+// own name plus their downline's — but downlineOf() was being handed the
+// local users table, which contains none of the Cognito-invited people.
+// Reethu's downline resolved to empty, so the moment assignedTeam became
+// "Shreyas" it fell outside her scope.
+//
+// Merged here, canonicalised on the Cognito sub (the id req.user carries
+// at runtime), and cached for a minute because nearly every request needs
+// it. Injected per-request by middleware below so the sync helpers that
+// read it can stay sync.
+var _dirCache = { at: 0, users: null };
+var DIRECTORY_TTL_MS = 60 * 1000;
+async function userDirectory() {
+  if (_dirCache.users && (Date.now() - _dirCache.at) < DIRECTORY_TTL_MS) return _dirCache.users;
+  var local = users.getAll();
+  var merged = local.slice();
+  if (cognito.isConfigured()) {
+    try {
+      var pool = await cognito.listUsers(200);
+      var cognitoByEmail = {};
+      pool.forEach(function(cu) { if (cu.email) cognitoByEmail[cu.email.toLowerCase()] = cu; });
+      var haveEmail = {};
+      local.forEach(function(u) { if (u.email) haveEmail[u.email.toLowerCase()] = true; });
+      pool.forEach(function(cu) {
+        var em = (cu.email || '').toLowerCase();
+        if (!em || haveEmail[em]) return;
+        merged.push({
+          id: cu.id, email: cu.email, name: cu.name || cu.email,
+          role: cu.role || 'user', reports_to: cu.reports_to || null,
+          active: cu.active
+        });
+      });
+      // Same canonicalisation as /users/org: a pre-migration user has both
+      // a local numeric id and a Cognito sub. req.user.id is always the
+      // sub, so rewrite ids and reporting lines onto subs or the reporting
+      // chain never joins up.
+      var subByLegacyId = {};
+      merged.forEach(function(u) {
+        var cu = u.email && cognitoByEmail[u.email.toLowerCase()];
+        if (cu && String(cu.id) !== String(u.id)) subByLegacyId[String(u.id)] = cu.id;
+      });
+      merged = merged.map(function(u) {
+        return Object.assign({}, u, {
+          id: subByLegacyId[String(u.id)] || u.id,
+          reports_to: u.reports_to != null ? (subByLegacyId[String(u.reports_to)] || u.reports_to) : null
+        });
+      });
+    } catch (e) {
+      console.error('[directory] cognito merge failed, falling back to local:', e.message);
+    }
+  }
+  _dirCache = { at: Date.now(), users: merged };
+  return merged;
+}
+// Any write that changes people or reporting lines should drop the cache
+// so the next request sees it rather than waiting out the TTL.
+function invalidateDirectory() { _dirCache = { at: 0, users: null }; }
+
+// Populate req.directory once per request (registered on the router below,
+// right after it is created). Falls back to the local table if Cognito is
+// unreachable — degraded scope beats a 500.
+function attachDirectory(req, res, next) {
+  userDirectory()
+    .then(function(d) { req.directory = d; next(); })
+    .catch(function(e) { console.error('[directory] middleware:', e.message); req.directory = users.getAll(); next(); });
+}
+function dirOf(req) { return (req && req.directory) || users.getAll(); }
+
 // --- Visibility helpers -----------------------------------------------------
 // Every route that returns client-shaped data goes through these, so the rule
 // lives in roles.js and not in fifteen copies of the same filter. Before this,
 // each route asked "is this user an admin? if not, only their own clients" —
 // which left a team lead seeing nothing but their own work.
 function myClients(req) {
-  return roles.visibleClients(req.user, users.getAll(), tracker.getData().clients || []);
+  return roles.visibleClients(req.user, dirOf(req), tracker.getData().clients || []);
 }
 function myClientIds(req) {
   return myClients(req).map(function(c) { return String(c.id); });
@@ -28,7 +103,7 @@ function seesEveryClient(req) {
 function scopeByUser(req, rows) {
   if (!rows || !rows.length) return rows;
   if (roles.atLeast(req.user, 'super_admin')) return rows;
-  var all = users.getAll();
+  var all = dirOf(req);
   var down = roles.downlineOf(req.user, all);
   var ids   = new Set(down.map(function(u){ return String(u.id); }));
   var names = new Set(down.map(function(u){ return u.name; }).filter(Boolean));
@@ -73,6 +148,10 @@ const actionCenterService = require('./services/actionCenterService');
 const briefingService = require('./services/briefingService');
 const followUpService = require('./services/followUpService');
 const router = express.Router();
+// Every route below resolves visibility from the reporting line, so the
+// merged local+Cognito directory has to be on the request before any of
+// them run.
+router.use(attachDirectory);
 
 // ─── /auth/config ────────────────────────────────────────────────
 // Browser fetches this on boot to know which Cognito pool + client to talk
@@ -260,6 +339,7 @@ router.post('/invite', requireAuth, requireAdmin, async function(req, res) {
   if (cognito.isConfigured()) {
     try {
       var created = await cognito.invite({ email: cleanEmail, name: name, role: requestedRole, reportsTo: reportsTo });
+      invalidateDirectory();  // new person joins the reporting tree
       activity.log(req.user.id, req.user.name, 'invite_sent', 'Invited ' + name + ' as ' + requestedRole);
       return res.json({ ok: true, message: 'Invite sent to ' + cleanEmail + ' — they will receive a temporary password by email.', user: created });
     } catch (e) {
@@ -276,6 +356,7 @@ router.post('/invite', requireAuth, requireAdmin, async function(req, res) {
   var inviteUrl = (process.env.APP_URL || 'http://localhost:3000') + '/signup?token=' + token;
   var result = await sendInviteEmail(cleanEmail, name, inviteUrl);
   if (result.success) {
+    invalidateDirectory();
     activity.log(req.user.id, req.user.name, 'invite_sent', 'Invited ' + name);
     res.json({ ok: true, message: 'Invite sent to ' + cleanEmail });
   } else {
@@ -366,13 +447,14 @@ router.put('/users/:id/role', requireAuth, requireSuperAdmin, function(req, res)
   // Never leave the firm without a Super Admin — otherwise nobody can restore
   // anyone's access, including their own.
   if (role && role !== 'super_admin' && roles.isSuperAdmin(target)) {
-    var others = users.getAll().filter(function(u) {
+    var others = dirOf(req).filter(function(u) {
       return roles.isSuperAdmin(u) && u.active === 1 && String(u.id) !== String(id);
     });
     if (!others.length) return res.status(400).json({ error: 'This is the only Super Admin — promote somebody else first' });
   }
 
   var updated = users.setRoleAndManager(id, role, reportsTo);
+  invalidateDirectory();  // role or reporting line moved — scopes change
   activity.log(req.user.id, req.user.name, 'role_changed',
     target.name + ' → ' + roles.labelOf(updated.role) +
     (updated.reports_to != null ? ' reporting to ' + ((users.findById(updated.reports_to) || {}).name || updated.reports_to) : ''));
@@ -520,7 +602,7 @@ router.delete('/users/:id', requireAuth, requireSuperAdmin, asyncH(async functio
   // Never leave the firm without a Super Admin — nobody could restore access,
   // including to their own account.
   if (roles.isSuperAdmin(target)) {
-    var others = users.getAll().filter(function(u) {
+    var others = dirOf(req).filter(function(u) {
       return roles.isSuperAdmin(u) && u.active === 1 && String(u.id) !== String(id);
     });
     if (!others.length) return res.status(400).json({ error: 'This is the only Super Admin — promote somebody else first' });
@@ -554,7 +636,7 @@ router.delete('/users/:id', requireAuth, requireSuperAdmin, asyncH(async functio
 
   // Anyone reporting to them would be left pointing at a manager that no longer
   // exists, which silently collapses their visibility. Move them up a level.
-  var orphanedReports = users.getAll().filter(function(u) { return String(u.reports_to) === String(id); });
+  var orphanedReports = dirOf(req).filter(function(u) { return String(u.reports_to) === String(id); });
   orphanedReports.forEach(function(u) {
     users.setRoleAndManager(u.id, null, target.reports_to != null ? target.reports_to : null);
   });
@@ -569,6 +651,7 @@ router.delete('/users/:id', requireAuth, requireSuperAdmin, asyncH(async functio
     catch (e) { console.error('[delete-user] cognito delete failed for ' + cognitoEmail + ':', e.message); }
   }
 
+  invalidateDirectory();
   activity.log(req.user.id, req.user.name, 'user_deleted',
     target.name + ' (' + (target.email || 'no email') + ')' +
     (clients.length ? ' — ' + clients.length + ' client(s) moved to Unassigned' : '') +
@@ -635,7 +718,7 @@ router.put('/tracker', requireAuth, asyncH(async function(req, res) {
     // may save their reports' clients; an executive only their own. Anything
     // else in the payload is ignored rather than rejected, so a stale browser
     // tab can't overwrite another team's work.
-    var writable = roles.clientScope(user, users.getAll());
+    var writable = roles.clientScope(user, dirOf(req));
     var merged = existing.clients.map(function(ec) {
       var updated = clients.find(function(c) { return c.id === ec.id; });
       if (updated && roles.scopeAllows(writable, ec.assignedTeam)) {
@@ -693,13 +776,13 @@ router.put('/tracker', requireAuth, asyncH(async function(req, res) {
 router.get('/team/pressure', requireAuth, requireAdmin, asyncH(async function(req, res) {
   res.json(pressureService.getPressure({
     month: req.query.month || undefined,
-    users: users.getAll(),
+    users: dirOf(req),
     viewer: req.user
   }));
 }));
 
 router.get('/team/pressure/suggestions', requireAuth, requireAdmin, asyncH(async function(req, res) {
-  var p = pressureService.getPressure({ month: req.query.month || undefined, users: users.getAll(), viewer: req.user });
+  var p = pressureService.getPressure({ month: req.query.month || undefined, users: dirOf(req), viewer: req.user });
   res.json(Object.assign({ month: p.month }, pressureService.suggestRebalance(p, parseInt(req.query.max, 10) || 10)));
 }));
 
@@ -711,7 +794,7 @@ router.post('/team/pressure/rebalance', requireAuth, requireSuperAdmin, asyncH(a
   if (!Array.isArray(moves) || !moves.length) return res.status(400).json({ error: 'No moves supplied.' });
 
   var data = tracker.getData();
-  var all = users.getAll();
+  var all = dirOf(req);
   var applied = [], rejected = [];
 
   var next = (data.clients || []).map(function(c) { return c; });
@@ -1124,7 +1207,7 @@ router.get('/calendar', requireAuth, asyncH(async function(req, res) {
 router.get('/clients/:id/health', requireAuth, asyncH(async function(req, res) {
   var client = (tracker.getData().clients || []).find(function(c){ return String(c.id) === String(req.params.id); });
   if (!client) return res.status(404).json({ error: 'Unknown client' });
-  if (!roles.canSeeClient(req.user, users.getAll(), client)) return res.status(403).json({ error: 'Forbidden' });
+  if (!roles.canSeeClient(req.user, dirOf(req), client)) return res.status(403).json({ error: 'Forbidden' });
   res.json({ health: await healthScore.computeForClient(client) });
 }));
 
@@ -1240,7 +1323,7 @@ router.get('/team/workload/recommendations', requireAuth, requireAdmin, asyncH(a
   // Recommendations can suggest moving work between two users — keep only
   // recs where BOTH the source and destination are in the caller's scope.
   if (!roles.atLeast(req.user, 'super_admin') && recs && recs.recommendations) {
-    var all = users.getAll();
+    var all = dirOf(req);
     var down = roles.downlineOf(req.user, all).concat([req.user]);
     var ids = new Set(down.map(function(u){ return String(u.id); }));
     recs.recommendations = recs.recommendations.filter(function(r){
@@ -1734,7 +1817,7 @@ router.get('/dashboard/morning', requireAuth, requireAdmin, asyncH(async functio
   res.json(await morningDashboardSvc.generate({
     force: req.query.refresh === '1',
     user: req.user,
-    allUsers: users.getAll()
+    allUsers: dirOf(req)
   }));
 }));
 

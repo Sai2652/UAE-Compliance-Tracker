@@ -873,7 +873,20 @@ router.get('/manager/dashboard', requireAuth, requireAdmin, asyncH(async functio
     compliance.tasks.list({ notStatus: ['completed'], limit: 1000 })
   ]);
 
-  // Workload summary: count open tasks per assignee
+  // Scope every task array to the caller's visible clients. Super/Prime
+  // see the whole firm; Admin sees only their downline's clients; a User
+  // sees only their own. This one endpoint was one of the biggest leaks —
+  // an Admin's Today briefly loads it and would see every firm-wide task.
+  var mineIds = seesEveryClient(req) ? null : new Set(myClientIds(req));
+  var inScope = function(t){ return !mineIds || mineIds.has(String(t.client_external_id)); };
+  overdue        = overdue.filter(inScope);
+  dueToday       = dueToday.filter(inScope);
+  upcoming       = upcoming.filter(inScope);
+  blocked        = blocked.filter(inScope);
+  awaitingReview = awaitingReview.filter(inScope);
+  allOpen        = allOpen.filter(inScope);
+
+  // Workload summary: count open tasks per assignee (now scoped)
   var workload = {};
   allOpen.forEach(function(t){
     var key = t.assigned_user_name || 'Unassigned';
@@ -881,6 +894,7 @@ router.get('/manager/dashboard', requireAuth, requireAdmin, asyncH(async functio
   });
 
   var pendingDocs = await compliance.documents.list({ status: 'pending', limit: 500 });
+  if (mineIds) pendingDocs = pendingDocs.filter(function(d){ return mineIds.has(String(d.client_external_id)); });
 
   res.json({
     criticalToday: dueToday.slice(0, 50),
@@ -1030,7 +1044,9 @@ router.get('/clients/:id/health', requireAuth, asyncH(async function(req, res) {
 }));
 
 router.get('/health/summary', requireAuth, requireAdmin, asyncH(async function(req, res) {
-  var rows = await healthScore.computeForAll(tracker.getData().clients || []);
+  // Compute for the caller's clients only, not the firm-wide set.
+  var visible = seesEveryClient(req) ? (tracker.getData().clients || []) : myClients(req);
+  var rows = await healthScore.computeForAll(visible);
   res.json({ scores: rows, weights: await healthScore.getWeights() });
 }));
 
@@ -1076,7 +1092,12 @@ router.post('/escalation/run', requireAuth, requireSuperAdmin, asyncH(async func
   res.json(await escalationEngine.runSweep());
 }));
 router.get('/escalation/events', requireAuth, requireAdmin, asyncH(async function(req, res) {
-  res.json({ events: await repos.EscalationEventsRepo.listRecent(parseInt(req.query.limit) || 100) });
+  var events = await repos.EscalationEventsRepo.listRecent(parseInt(req.query.limit) || 100);
+  if (!seesEveryClient(req)) {
+    var mineIds = new Set(myClientIds(req));
+    events = events.filter(function(e){ return mineIds.has(String(e.client_external_id)); });
+  }
+  res.json({ events: events });
 }));
 
 // ---- Exceptions Dashboard ----
@@ -1087,6 +1108,15 @@ router.get('/exceptions', requireAuth, requireAdmin, asyncH(async function(req, 
     compliance.tasks.list({ notStatus: ['completed'], limit: 5000 }).then(function(all){ return all.filter(compliance.isEscalated); }),
     compliance.tasks.list({ notStatus: ['completed'], limit: 5000 })
   ]);
+  // Scope task arrays to caller's clients (Admin -> downline only).
+  if (!seesEveryClient(req)) {
+    var mineIds = new Set(myClientIds(req));
+    var inScope = function(t){ return mineIds.has(String(t.client_external_id)); };
+    overdue = overdue.filter(inScope);
+    blocked = blocked.filter(inScope);
+    escalated = escalated.filter(inScope);
+    allOpen = allOpen.filter(inScope);
+  }
   var docsStale = (await compliance.documents.list({ status: 'pending', limit: 1000 })).filter(function(d){
     return (Date.now() - new Date(d.requested_date).getTime()) > 7*24*60*60*1000;
   });
@@ -1162,24 +1192,48 @@ router.get('/team/productivity', requireAuth, asyncH(async function(req, res) {
   res.json({ users: await productivityService.getForAll(range) });
 }));
 
-router.get('/team/kpis', requireAuth, requireAdmin, asyncH(async function(req, res) {
+// Firm-level dashboards — KPIs, forecast, command center. These aggregate
+// across the whole firm by design; there's no meaningful "Admin scoped"
+// version without a redesign. Gated to Super Admin so an Admin never sees
+// the firm-wide numbers on a screen they weren't supposed to reach.
+router.get('/team/kpis', requireAuth, requireSuperAdmin, asyncH(async function(req, res) {
   res.json(await kpiService.getKpis(req.query.range || '30'));
 }));
-
-router.get('/forecast', requireAuth, requireAdmin, asyncH(async function(req, res) {
+router.get('/forecast', requireAuth, requireSuperAdmin, asyncH(async function(req, res) {
   res.json(await forecastService.getForecast(req.query.days || 30));
 }));
-
-router.get('/ops/command-center', requireAuth, requireAdmin, asyncH(async function(req, res) {
+router.get('/ops/command-center', requireAuth, requireSuperAdmin, asyncH(async function(req, res) {
   res.json(await commandCenterService.getCommandCenter());
 }));
 
+// Review queue — task rows are scoped by client id, reviewer workload by user.
 router.get('/review-queue', requireAuth, requireAdmin, asyncH(async function(req, res) {
-  res.json(await reviewQueueService.getQueue());
+  var q = await reviewQueueService.getQueue();
+  if (!seesEveryClient(req)) {
+    // Task-side scoping — the row's `client` is the client_name; we match by
+    // assigned_user (owner) being in the caller's scope, since the review
+    // queue is what THIS admin should be reviewing, not the whole firm.
+    var mineClients = new Set((myClients(req) || []).map(function(c){ return c.name; }));
+    var filterTask = function(r){ return mineClients.has(r.client); };
+    q.queue   = (q.queue   || []).filter(filterTask);
+    q.oldest  = (q.oldest  || []).filter(filterTask);
+    q.queueDepth = q.queue.length;
+    var counts = { fresh: 0, warn: 0, alarm: 0 };
+    q.queue.forEach(function(r){ if(counts[r.aging] != null) counts[r.aging]++; });
+    q.countsByAging = counts;
+    q.reviewerWorkload = scopeByUser(req, q.reviewerWorkload || []);
+  }
+  res.json(q);
 }));
 
 router.get('/clients/communication', requireAuth, requireAdmin, asyncH(async function(req, res) {
-  res.json(await communicationService.getCommunicationBoard());
+  var board = await communicationService.getCommunicationBoard();
+  if (!seesEveryClient(req)) {
+    var mineIds = new Set(myClientIds(req));
+    if (Array.isArray(board.clients)) board.clients = board.clients.filter(function(r){ return mineIds.has(String(r.clientId)); });
+    if (Array.isArray(board.rows))    board.rows    = board.rows.filter(function(r){ return mineIds.has(String(r.clientId)); });
+  }
+  res.json(board);
 }));
 
 // Workload config (capacity defaults + band thresholds)

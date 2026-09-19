@@ -287,6 +287,14 @@ router.put('/users/:id/role', requireAuth, requireSuperAdmin, function(req, res)
       return res.status(403).json({ error: 'Only a Prime Admin can change another Prime Admin\'s role.' });
     }
   }
+  // Prime Admins sit at the top of the tree — they don't report to anyone.
+  // Whether the effective role after this change is prime_admin (either target
+  // is already prime and role wasn't changed, or role is being set to prime),
+  // force reports_to to null regardless of what the client sent.
+  var effectiveRole = role != null ? role : String(target.role||'').toLowerCase();
+  if (effectiveRole === 'prime_admin') {
+    reportsTo = null;
+  }
 
   if (reportsTo !== undefined && reportsTo !== null && reportsTo !== '') {
     var mgrId = parseInt(reportsTo, 10);

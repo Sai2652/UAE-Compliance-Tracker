@@ -4844,14 +4844,20 @@ function renderUserManagement(){
         : `<select class="form-input" data-user-role="${p.id}" style="padding:3px 6px;font-size:11px;max-width:150px"${isMe?' disabled title="You cannot change your own role"':''}>
             ${opts.map(function(r){const dis=!hasCurrent && r[0]===p.role?' disabled':'';return `<option value="${r[0]}"${p.role===r[0]?' selected':''}${dis}>${r[1]}</option>`;}).join('')}
           </select>`;
+      // Prime Admin sits at the top of the tree — nobody manages a founder.
+      // Render a static "— nobody —" label instead of an editable dropdown so
+      // the row can't be accidentally rewired under someone else.
+      const reportsCell = targetIsPrime
+        ? `<span style="font-size:11px;color:var(--text-muted)" title="Prime Admins sit at the top — they don't report to anyone">— nobody —</span>`
+        : `<select class="form-input" data-user-reports="${p.id}" style="padding:3px 6px;font-size:11px;max-width:140px">
+            <option value="">— nobody —</option>
+            ${people.filter(x=>String(x.id)!==String(p.id)&&x.role!=='user').map(x=>`<option value="${x.id}"${String(p.reports_to)===String(x.id)?' selected':''}>${esc(x.name)}</option>`).join('')}
+          </select>${(p.role==='admin'&&!people.some(x=>String(x.reports_to)===String(p.id)))?`<div style="font-size:10px;color:var(--amber);margin-top:2px">no reports — sees only own clients</div>`:''}`;
       h+=`<tr${p.active===false?' style="opacity:0.5"':''}>
         <td style="font-weight:600">${esc(p.name||'(no name set)')}${isMe?' <span style="font-size:10px;color:var(--text-muted)">(you)</span>':''}${p.active===false?' <span style="font-size:10px;color:var(--red)">deactivated</span>':''}</td>
         <td style="color:var(--text-muted)">${esc(p.email||'—')}</td>
         <td>${roleCell}</td>
-        <td><select class="form-input" data-user-reports="${p.id}" style="padding:3px 6px;font-size:11px;max-width:140px">
-          <option value="">— nobody —</option>
-          ${people.filter(x=>String(x.id)!==String(p.id)&&x.role!=='user').map(x=>`<option value="${x.id}"${String(p.reports_to)===String(x.id)?' selected':''}>${esc(x.name)}</option>`).join('')}
-        </select>${(p.role==='admin'&&!people.some(x=>String(x.reports_to)===String(p.id)))?`<div style="font-size:10px;color:var(--amber);margin-top:2px">no reports — sees only own clients</div>`:''}</td>
+        <td>${reportsCell}</td>
         <td style="text-align:right;font-weight:700">${p.clientCount||0}</td>
         <td style="color:var(--text-muted);font-size:11px">${p.last_login?fmtDate(String(p.last_login).slice(0,10)):'never'}</td>
         <td style="text-align:right;white-space:nowrap">

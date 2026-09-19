@@ -83,6 +83,19 @@
     <h1>Sign in</h1>
     <p class="h1-sub">Use your BCL email and password.</p>
     <div class="msg" id="signin-msg"></div>
+    <script>
+      // Friendly note when the app bounced back here after an expired
+      // session — the redirect adds ?reason=expired to the URL.
+      (function(){
+        try {
+          var q = new URLSearchParams(window.location.search);
+          if(q.get('reason') === 'expired'){
+            var el = document.getElementById('signin-msg');
+            if(el){ el.textContent = 'Your session expired. Sign in again to continue.'; el.className = 'msg msg-warn'; }
+          }
+        } catch(_){}
+      })();
+    </script>
     <form id="signin-form">
       <label for="signin-email">Email</label>
       <input type="email" id="signin-email" autocomplete="username" required placeholder="you@bcl.ae">

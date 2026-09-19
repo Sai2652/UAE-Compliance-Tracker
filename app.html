@@ -3777,6 +3777,18 @@ const taskState={ priority:[], tasks:[], documents:[], ops:null, loading:false, 
 
 async function apiJSON(url, opts){
   const r=await fetch(url, Object.assign({credentials:'include',headers:{'Content-Type':'application/json'}}, opts||{}));
+  // Cognito access tokens live ~1 hour. Anything after that returns 401
+  // "Invalid or expired token" — no matter what the user is trying to
+  // do. Clear the dead token and send them back to /login instead of
+  // letting every screen paint an error message. Guarded so it fires
+  // once per page load.
+  if(r.status === 401 && !window.__uctSessionExpired){
+    window.__uctSessionExpired = true;
+    try { localStorage.removeItem('uct.cognito.accessToken'); localStorage.removeItem('uct.cognito.idToken'); localStorage.removeItem('uct.cognito.refreshToken'); } catch{}
+    // Small delay so any in-flight callers see the throw first and don't
+    // race an unfinished render against navigation.
+    setTimeout(() => { window.location.href = '/login?reason=expired'; }, 50);
+  }
   if(!r.ok){ const j=await r.json().catch(()=>({})); throw new Error(j.error||('HTTP '+r.status)); }
   return r.json();
 }
@@ -3988,6 +4000,14 @@ function renderDashboard(){
   const allottees = getAllottees();
   const canBulk = isAdmin() && allottees.length > 0;
   const selected = state.selectedClientIds || (state.selectedClientIds = new Set());
+
+  // Admin caller with no downline users yet — show a one-liner so they
+  // know why the bulk-assign bar isn't appearing when they tick rows.
+  // Prime/Super never hit this since getAllottees returns the whole
+  // active Admin+User pool for them.
+  if(isAdmin() && !isSuperAdmin() && allottees.length === 0){
+    h += `<div class="alert alert-info" style="margin-bottom:12px;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap"><span>You have no Users under you yet — invite one before you can allot clients to them.</span><button class="btn btn-sm btn-primary" data-action="toggleProfileMenu">Open profile → Invite</button></div>`;
+  }
   // NOTE: no longer pruning to visible rows. Search-and-tick is the whole
   // workflow — search "foo" and tick 3, search "bar" and tick 2, all 5 stay
   // ticked. We only prune to ids that still exist at all (a delete elsewhere).

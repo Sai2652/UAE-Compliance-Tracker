@@ -221,6 +221,28 @@ html.theme-light .header .btn-primary:hover,.header .btn-primary:hover{backgroun
 .notif-toggle input:checked + .notif-track{background:var(--sidebar-bg);border-color:var(--sidebar-bg)}
 .notif-thumb{position:absolute;top:3px;left:3px;width:14px;height:14px;background:#fff;border-radius:50%;transition:left 0.15s;box-shadow:0 1px 2px rgba(0,0,0,0.15);pointer-events:none}
 .notif-toggle input:checked ~ .notif-thumb{left:19px}
+
+/* ── In-app dialogs (uctAlert / uctConfirm / uctTypeToConfirm) ── */
+.uct-dialog-overlay{position:fixed;inset:0;background:rgba(15,17,30,0.48);backdrop-filter:blur(4px);z-index:2000;display:flex;align-items:center;justify-content:center;padding:16px;animation:uct-fade 0.12s ease-out}
+@keyframes uct-fade{from{opacity:0}to{opacity:1}}
+.uct-dialog{background:var(--bg-card);border:1px solid var(--border);border-radius:14px;box-shadow:0 24px 64px rgba(15,17,30,0.28),0 4px 12px rgba(15,17,30,0.12);width:460px;max-width:96vw;max-height:88vh;overflow:hidden;display:flex;flex-direction:column;animation:uct-pop 0.14s ease-out}
+@keyframes uct-pop{from{transform:translateY(8px) scale(0.98);opacity:0}to{transform:translateY(0) scale(1);opacity:1}}
+.uct-dialog-head{padding:16px 20px;border-bottom:1px solid var(--border);border-top:3px solid var(--accent);background:var(--bg-elevated)}
+.uct-dialog-head.uct-tone-info{border-top-color:var(--accent)}
+.uct-dialog-head.uct-tone-success{border-top-color:var(--green)}
+.uct-dialog-head.uct-tone-warning{border-top-color:var(--amber)}
+.uct-dialog-head.uct-tone-danger{border-top-color:var(--red)}
+.uct-dialog-title{font-size:15px;font-weight:800;color:var(--text-primary);letter-spacing:-0.005em}
+.uct-dialog-body{padding:16px 20px;font-size:13px;color:var(--text-secondary);line-height:1.55;overflow-y:auto}
+.uct-dialog-typed{margin-top:12px;font-size:12px;color:var(--text-muted)}
+.uct-dialog-typed code{background:var(--bg-elevated);padding:2px 7px;border-radius:5px;font-family:var(--mono);color:var(--text-primary);font-weight:700;border:1px solid var(--border)}
+.uct-dialog-hint{font-size:11.5px;color:var(--red);margin-top:6px;min-height:1em}
+.uct-dialog-foot{padding:12px 20px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:8px;background:var(--bg-elevated)}
+/* Solid red danger button — for destructive confirms only. Native .btn-danger
+   is a ghost button which is too soft when the whole modal is a red-toned warning. */
+.btn-danger-solid{background:var(--red);border:1px solid var(--red);color:#fff}
+.btn-danger-solid:hover{background:var(--red-border,#a11a1a);border-color:var(--red-border,#a11a1a);color:#fff}
+.btn-danger-solid:disabled{opacity:0.55;cursor:not-allowed}
 /* Sidebar brand — BCL mark + name; sits at the top of .side-nav. */
 .side-nav-brand{display:flex;align-items:center;gap:12px;padding:18px 16px 14px;border-bottom:1px solid var(--sidebar-line);color:var(--sidebar-strong)}
 .side-nav-brand .bcl-mark{width:34px;height:34px;flex-shrink:0;color:var(--sidebar-strong)}
@@ -1671,6 +1693,126 @@ function startNotifChecker(){
   setTimeout(walkNotifRules, 30000);
   window.__uctNotifTimer = setInterval(walkNotifRules, 5 * 60 * 1000);
 }
+
+// ═══════════════════════════════════════════════════════════════
+// IN-APP DIALOGS — replaces window.alert/confirm/prompt so every
+// user-facing question shares the app's card + button language
+// instead of a raw OS dialog that says "humbynves5.execute-api…
+// says". Returns Promises so callers await naturally.
+// ───────────────────────────────────────────────────────────────
+// uctAlert({title, body, tone})           — resolves when closed
+// uctConfirm({title, body, confirmLabel,
+//             cancelLabel, dangerous})    — resolves true | false
+// uctTypeToConfirm({title, body, phrase,
+//             confirmLabel, dangerous})   — resolves true | false;
+//                                            user has to type the phrase
+// ═══════════════════════════════════════════════════════════════
+function _uctDialogRoot(){
+  let root = document.getElementById('uct-dialog-root');
+  if(!root){ root = document.createElement('div'); root.id = 'uct-dialog-root'; document.body.appendChild(root); }
+  return root;
+}
+function _uctDialog(html, wire){
+  return new Promise(resolve => {
+    const root = _uctDialogRoot();
+    const wrap = document.createElement('div');
+    wrap.className = 'uct-dialog-overlay';
+    wrap.innerHTML = html;
+    root.appendChild(wrap);
+    const close = (val) => { try { root.removeChild(wrap); } catch{} document.removeEventListener('keydown', esc); resolve(val); };
+    const esc = (e) => { if(e.key === 'Escape') close(false); };
+    document.addEventListener('keydown', esc);
+    wrap.addEventListener('click', (e) => { if(e.target === wrap) close(false); });
+    wire(wrap, close);
+    // Focus the primary/confirm button so Enter confirms.
+    setTimeout(() => {
+      const primary = wrap.querySelector('[data-uct-primary]') || wrap.querySelector('[data-uct-close]');
+      if(primary) primary.focus();
+    }, 0);
+  });
+}
+function uctAlert(opts){
+  const o = typeof opts === 'string' ? { body: opts } : (opts || {});
+  const title = o.title || 'Heads up';
+  const body  = o.body  || '';
+  const tone  = o.tone  || 'info'; // 'info' | 'success' | 'warning' | 'danger'
+  const html = `<div class="uct-dialog" role="alertdialog" aria-modal="true">
+    <div class="uct-dialog-head uct-tone-${tone}"><div class="uct-dialog-title">${esc(title)}</div></div>
+    <div class="uct-dialog-body">${esc(body).replace(/\n/g,'<br>')}</div>
+    <div class="uct-dialog-foot"><button class="btn btn-primary" data-uct-close data-uct-primary>OK</button></div>
+  </div>`;
+  return _uctDialog(html, (wrap, close) => {
+    wrap.querySelector('[data-uct-close]').onclick = () => close(true);
+  });
+}
+function uctConfirm(opts){
+  const o = opts || {};
+  const title = o.title || 'Confirm';
+  const body  = o.body  || '';
+  const cLbl  = o.confirmLabel || 'Confirm';
+  const xLbl  = o.cancelLabel  || 'Cancel';
+  const dangerous = !!o.dangerous;
+  const html = `<div class="uct-dialog" role="alertdialog" aria-modal="true">
+    <div class="uct-dialog-head ${dangerous?'uct-tone-danger':'uct-tone-info'}"><div class="uct-dialog-title">${esc(title)}</div></div>
+    <div class="uct-dialog-body">${esc(body).replace(/\n/g,'<br>')}</div>
+    <div class="uct-dialog-foot">
+      <button class="btn" data-uct-cancel>${esc(xLbl)}</button>
+      <button class="btn ${dangerous?'btn-danger-solid':'btn-primary'}" data-uct-confirm data-uct-primary>${esc(cLbl)}</button>
+    </div>
+  </div>`;
+  return _uctDialog(html, (wrap, close) => {
+    wrap.querySelector('[data-uct-cancel]').onclick  = () => close(false);
+    wrap.querySelector('[data-uct-confirm]').onclick = () => close(true);
+  });
+}
+function uctTypeToConfirm(opts){
+  const o = opts || {};
+  const title = o.title || 'Confirm';
+  const body  = o.body  || '';
+  const phrase = String(o.phrase || '').trim();
+  const cLbl  = o.confirmLabel || 'Confirm';
+  const dangerous = o.dangerous !== false; // default true — this shape is used for destructive actions
+  const html = `<div class="uct-dialog" role="alertdialog" aria-modal="true">
+    <div class="uct-dialog-head ${dangerous?'uct-tone-danger':'uct-tone-info'}"><div class="uct-dialog-title">${esc(title)}</div></div>
+    <div class="uct-dialog-body">${esc(body).replace(/\n/g,'<br>')}
+      <div class="uct-dialog-typed">Type <code>${esc(phrase)}</code> to confirm.</div>
+      <input type="text" class="form-input" data-uct-typed autocomplete="off" spellcheck="false" style="margin-top:8px">
+      <div class="uct-dialog-hint" data-uct-hint></div>
+    </div>
+    <div class="uct-dialog-foot">
+      <button class="btn" data-uct-cancel>Cancel</button>
+      <button class="btn ${dangerous?'btn-danger-solid':'btn-primary'}" data-uct-confirm data-uct-primary disabled>${esc(cLbl)}</button>
+    </div>
+  </div>`;
+  return _uctDialog(html, (wrap, close) => {
+    const input   = wrap.querySelector('[data-uct-typed]');
+    const confirm = wrap.querySelector('[data-uct-confirm]');
+    const hint    = wrap.querySelector('[data-uct-hint]');
+    const check = () => {
+      const ok = input.value.trim() === phrase;
+      confirm.disabled = !ok;
+      hint.textContent = input.value && !ok ? `Doesn't match — nothing will happen.` : '';
+    };
+    input.oninput = check;
+    input.onkeydown = (e) => { if(e.key === 'Enter' && !confirm.disabled) close(true); };
+    setTimeout(() => input.focus(), 0);
+    wrap.querySelector('[data-uct-cancel]').onclick  = () => close(false);
+    confirm.onclick = () => { if(!confirm.disabled) close(true); };
+  });
+}
+// Global monkey-patch of window.alert only — confirm/prompt stay native for
+// now because they're synchronous and refactoring every call site to async
+// is a bigger job. Critical destructive flows (delete user, reset password,
+// etc.) call uctConfirm/uctTypeToConfirm directly.
+(function(){
+  const nativeAlert = window.alert;
+  window.alert = function(msg){
+    // Fire-and-forget — most alert() callers don't await, and old code
+    // paths that immediately return after alert continue to do so.
+    try { uctAlert({ body: String(msg == null ? '' : msg) }); }
+    catch { try { nativeAlert(msg); } catch{} }
+  };
+})();
 // One document-level delegate for every notification button — banner and modal
 // both re-render often, so per-render onclick bindings would leak.
 document.addEventListener('click', async function(e){
@@ -3023,14 +3165,24 @@ function renderTimelineCard(data){
 
 // ----- Phase 4/5: full lifecycle section embedded in client detail -----
 async function loadClientLifecycle(clientId){
-  const containerId='cli-lifecycle-'+clientId;
-  const el=document.getElementById(containerId); if(!el) return;
+  // Two containers now — the lifecycle 8-tile grid stays high on the page,
+  // Blockers / Next Actions / Workflows land in a "cli-followups" container
+  // at the very bottom so the actionables sit above the metadata but the
+  // long-form supporting cards live where they don't crowd the top of the
+  // page. Either container may be missing if a caller only wanted one.
+  const topEl    = document.getElementById('cli-lifecycle-'+clientId);
+  const bottomEl = document.getElementById('cli-followups-'+clientId);
+  if(!topEl && !bottomEl) return;
   try{
-    const data=await apiJSON('/api/clients/'+clientId+'/lifecycle-summary');
-    el.innerHTML=renderClientLifecycle(data);
-    el.querySelectorAll('[data-wf-open]').forEach(b=>{ b.onclick=()=>openWorkflowModal(b.dataset.wfOpen); });
+    const data = await apiJSON('/api/clients/'+clientId+'/lifecycle-summary');
+    const parts = renderClientLifecycle(data);
+    if(topEl)    topEl.innerHTML    = parts.top || '';
+    if(bottomEl) bottomEl.innerHTML = parts.bottom || '';
+    (topEl ? topEl : document.body).querySelectorAll('[data-wf-open]').forEach(b=>{ b.onclick=()=>openWorkflowModal(b.dataset.wfOpen); });
+    if(bottomEl) bottomEl.querySelectorAll('[data-wf-open]').forEach(b=>{ b.onclick=()=>openWorkflowModal(b.dataset.wfOpen); });
   }catch(e){
-    el.innerHTML=`<div class="card" style="border-color:var(--red-border)"><div style="padding:8px;font-size:12px;color:var(--red)">Lifecycle unavailable: ${esc(e.message||'error')}</div></div>`;
+    const err = `<div class="card" style="border-color:var(--red-border)"><div style="padding:8px;font-size:12px;color:var(--red)">Lifecycle unavailable: ${esc(e.message||'error')}</div></div>`;
+    if(topEl) topEl.innerHTML = err;
   }
 }
 
@@ -3071,15 +3223,18 @@ function lifecycleTile(label, stage){
   </div>`;
 }
 
+// Split output — { top, bottom }. `top` is the lifecycle strip + 8-tile grid
+// (belongs high on the page). `bottom` is Blockers + Next Actions +
+// Workflows (belongs after everything else on the client Overview).
 function renderClientLifecycle(data){
-  if(!data) return '';
+  if(!data) return { top:'', bottom:'' };
   const s=data.stages; const overall=data.overallReadiness;
   const overallColor=lifecycleStageColor(overall);
   const escalation=data.escalation||{score:0,band:'green'};
   const health=data.health;
 
-  // Header strip with overall readiness + scores
-  let h=`<div class="card" style="border-color:${overallColor};margin-bottom:12px">
+  // ── TOP: Compliance Lifecycle card ──
+  let top=`<div class="card" style="border-color:${overallColor};margin-bottom:12px">
     <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px">
       <div>
         <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em">Compliance Lifecycle</div>
@@ -3091,54 +3246,50 @@ function renderClientLifecycle(data){
         ${data.findings && data.findings.length?`<div><div style="color:var(--text-muted);font-size:10px;text-transform:uppercase">Open Risks</div><div style="margin-top:2px;font-weight:700">${data.findings.length}</div></div>`:''}
       </div>
     </div>`;
-
-  // 8-tile stage grid
-  h+=`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:8px;margin-top:14px">`;
-  h+=lifecycleTile('Onboarding',         s.onboarding);
-  h+=lifecycleTile('VAT Registration',   s.vatRegistration);
-  h+=lifecycleTile('CT Registration',    s.ctRegistration);
-  h+=lifecycleTile('Accounting',         s.accounting);
-  h+=lifecycleTile('Review',             s.review);
-  h+=lifecycleTile('Client Approval',    s.clientApproval);
-  h+=lifecycleTile('Filing',             s.filing);
-  h+=`<div style="background:var(--bg-deep);border-radius:8px;padding:10px;border-left:3px solid ${overallColor}">
+  top+=`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:8px;margin-top:14px">`;
+  top+=lifecycleTile('Onboarding',         s.onboarding);
+  top+=lifecycleTile('VAT Registration',   s.vatRegistration);
+  top+=lifecycleTile('CT Registration',    s.ctRegistration);
+  top+=lifecycleTile('Accounting',         s.accounting);
+  top+=lifecycleTile('Review',             s.review);
+  top+=lifecycleTile('Client Approval',    s.clientApproval);
+  top+=lifecycleTile('Filing',             s.filing);
+  top+=`<div style="background:var(--bg-deep);border-radius:8px;padding:10px;border-left:3px solid ${overallColor}">
     <div style="display:flex;justify-content:space-between;align-items:center"><div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em">Overall Readiness</div><div style="font-size:16px;color:${overallColor};font-weight:700">${lifecycleStageIcon(overall)}</div></div>
     <div style="font-size:13px;font-weight:700;color:${overallColor};margin-top:4px">${readinessLabel(overall)}</div>
   </div>`;
-  h+=`</div>`;
-  h+=`</div>`;
+  top+=`</div></div>`;
 
-  // Blockers + next actions
+  // ── BOTTOM: Blockers + Next Actions + Workflows ──
+  let bottom = '';
   if((data.blockers&&data.blockers.length)||(data.nextActions&&data.nextActions.length)){
-    h+=`<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">`;
+    bottom+=`<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">`;
     if(data.blockers&&data.blockers.length){
-      h+=`<div class="card" style="border-color:var(--red-border)"><div class="card-title" style="color:var(--red)">⚠ Blockers</div>`;
-      data.blockers.forEach(b=>{ h+=`<div style="padding:6px 0;font-size:12px;border-bottom:1px solid var(--border)">${esc(b)}</div>`; });
-      h+=`</div>`;
+      bottom+=`<div class="card" style="border-color:var(--red-border)"><div class="card-title" style="color:var(--red)">⚠ Blockers</div>`;
+      data.blockers.forEach(b=>{ bottom+=`<div style="padding:6px 0;font-size:12px;border-bottom:1px solid var(--border)">${esc(b)}</div>`; });
+      bottom+=`</div>`;
     }else{
-      h+=`<div class="card"><div class="card-title">✓ Blockers</div><div style="padding:8px;font-size:12px;color:var(--text-muted)">No active blockers.</div></div>`;
+      bottom+=`<div class="card"><div class="card-title">✓ Blockers</div><div style="padding:8px;font-size:12px;color:var(--text-muted)">No active blockers.</div></div>`;
     }
     if(data.nextActions&&data.nextActions.length){
-      h+=`<div class="card" style="border-color:var(--accent-soft)"><div class="card-title" style="color:var(--accent)">→ Next Actions</div>`;
-      data.nextActions.forEach(a=>{ h+=`<div style="padding:6px 0;font-size:12px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;gap:8px"><span>${esc(a.title)}</span>${a.workflowId?`<button class="btn btn-sm" data-wf-open="${a.workflowId}">Open</button>`:''}</div>`; });
-      h+=`</div>`;
+      bottom+=`<div class="card" style="border-color:var(--accent-soft)"><div class="card-title" style="color:var(--accent)">→ Next Actions</div>`;
+      data.nextActions.forEach(a=>{ bottom+=`<div style="padding:6px 0;font-size:12px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;gap:8px"><span>${esc(a.title)}</span>${a.workflowId?`<button class="btn btn-sm" data-wf-open="${a.workflowId}">Open</button>`:''}</div>`; });
+      bottom+=`</div>`;
     }else{
-      h+=`<div class="card"><div class="card-title">→ Next Actions</div><div style="padding:8px;font-size:12px;color:var(--text-muted)">Nothing to action — lifecycle clean.</div></div>`;
+      bottom+=`<div class="card"><div class="card-title">→ Next Actions</div><div style="padding:8px;font-size:12px;color:var(--text-muted)">Nothing to action — lifecycle clean.</div></div>`;
     }
-    h+=`</div>`;
+    bottom+=`</div>`;
   }
-
-  // Workflows list (compact)
   if(data.workflows&&data.workflows.length){
-    h+=`<div class="card" style="margin-bottom:8px"><div class="card-title">Workflows</div>`;
+    bottom+=`<div class="card" style="margin-bottom:8px"><div class="card-title">Workflows</div>`;
     data.workflows.forEach(w=>{
       const c=w.status==='completed'?'var(--green)':w.status==='active'?'var(--accent)':'var(--text-muted)';
-      h+=`<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border);font-size:12px"><div><b>${esc(w.workflow_type.replace(/_/g,' '))}</b> ${w.period_label?'· '+esc(w.period_label):''}</div><div style="display:flex;gap:8px;align-items:center"><span style="color:${c};font-size:11px;font-weight:700;text-transform:uppercase">${esc(w.status)}</span><span style="color:var(--text-muted);font-size:11px">${esc(w.current_step_key||'—')}</span><button class="btn btn-sm" data-wf-open="${w.id}">Open</button></div></div>`;
+      bottom+=`<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border);font-size:12px"><div><b>${esc(w.workflow_type.replace(/_/g,' '))}</b> ${w.period_label?'· '+esc(w.period_label):''}</div><div style="display:flex;gap:8px;align-items:center"><span style="color:${c};font-size:11px;font-weight:700;text-transform:uppercase">${esc(w.status)}</span><span style="color:var(--text-muted);font-size:11px">${esc(w.current_step_key||'—')}</span><button class="btn btn-sm" data-wf-open="${w.id}">Open</button></div></div>`;
     });
-    h+=`</div>`;
+    bottom+=`</div>`;
   }
 
-  return h;
+  return { top, bottom };
 }
 
 // ----- Phase 4 minimal: workflow widget (drop-in for client detail) -----
@@ -3892,10 +4043,11 @@ function renderOverview(sc,scm){
   // 3) Client Details — metadata, sits after the modules.
   h+=`<div class="card"><div class="card-title">Client Details</div><div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px"><div><div class="form-label">Entity Type</div>${isAdmin()?entitySelectHtml("etSel_"+sc.id,sc.entityType,`data-client-entity="${sc.id}" data-entity-hint-for="etHint_${sc.id}" style="padding:5px 8px;font-size:12px;max-width:230px"`):`<div>${esc(sc.entityType)}</div>`}${sc.entityTypeGuessed?`<div style="font-size:10px;color:var(--amber);margin-top:3px;font-weight:600">⚠ Read off the company name — check the trade licence</div>`:''}<div id="etHint_${sc.id}" style="font-size:10px;color:var(--text-muted);line-height:1.45;margin-top:4px">${esc(entityHintFor(normalizeEntityType(sc.entityType)||sc.entityType))}</div></div><div><div class="form-label">Nature</div>${isAdmin()?selectHTML("bn",sc.businessNature||"Not Recorded",BUSINESS_NATURES,`data-client-nature="${sc.id}"`):`<div>${esc(sc.businessNature||"Not Recorded")}</div>`}</div><div><div class="form-label">Financial Year</div><div>FY ${esc(sc.accounting.financialYear)}</div></div><div><div class="form-label">Assigned To</div>${isAdmin()?selectHTML("at",sc.assignedTeam,getTeamOptions(),`data-client-field="${sc.id}"`):`<div style="font-weight:600">${esc(sc.assignedTeam)}</div>`}</div><div><div class="form-label">VAT Status</div>${isAdmin()?selectHTML("vs",sc.vatApplicable,VAT_OPTIONS,`data-client-vatapp="${sc.id}"`):`<div>${esc(sc.vatApplicable)}</div>`}</div><div><div class="form-label">CT Applicable</div><div style="color:${sc.ctApplicable?'var(--green)':'var(--red)'};font-weight:600">${sc.ctApplicable?"Yes":"No"}</div></div><div><div class="form-label">Last Updated</div><div style="font-size:12px;color:var(--text-muted)">${fmtDate(sc.lastUpdated)} ${sc.lastUpdatedBy?'by '+esc(sc.lastUpdatedBy):''}</div></div></div></div>`;
 
-  // 4) History timeline lives at the bottom, so the top of the page stays
-  //    about compliance, not archaeology.
-  const timelineHTML = `<div id="cli-timeline-${sc.id}" style="margin-bottom:14px"></div>`;
-  setTimeout(function(){ loadClientLifecycle(sc.id); loadClientTimeline(sc.id); }, 0);
+  // 4) History Timeline retired 2026-09-19 — it was a 71-row list of
+  //    dated deadline archaeology that pushed the actionable cards below
+  //    the fold. The endpoint (loadClientTimeline) still exists, so a
+  //    dedicated "History" tab can revive it later if we want.
+  setTimeout(function(){ loadClientLifecycle(sc.id); }, 0);
   if(scm.warnings.length)h+=`<div class="card" style="border-color:var(--red-border)"><div class="card-title" style="color:var(--red)">⚠ Warnings</div>${scm.warnings.map(w=>`<div style="padding:5px 0;font-size:13px;color:var(--amber);border-bottom:1px solid var(--border)">• ${esc(w)}</div>`).join("")}</div>`;
   // Blocked reasons summary — specific per module
   const brs=sc.blockedReasons||{};
@@ -3963,8 +4115,11 @@ function renderOverview(sc,scm){
     h+=`<div class="card"><div class="card-title" style="margin-bottom:10px">Upcoming deadlines</div>${kick('Overdue', buckets.over, 'var(--red)', 'var(--red-bg)')}${kick('Next 30 days', buckets.soon, 'var(--amber)', 'var(--amber-bg)')}${kick('Later', buckets.later, 'var(--accent)', 'var(--accent-soft)')}</div>`;
   }
 
-  // 6) History timeline — long tail, sits at the very bottom.
-  h += timelineHTML;
+  // 6) Blockers + Next Actions + Workflows — populated async into this
+  //    container by loadClientLifecycle. Bottom of the page: the
+  //    actionable module cards and deadlines above already say what to
+  //    do next; these cards are the deeper follow-ups.
+  h += `<div id="cli-followups-${sc.id}" style="margin-bottom:14px"></div>`;
   return h;
 }
 
@@ -5187,39 +5342,56 @@ function bindEvents(){
         alert('Invite sent to '+email+'.');
       },'Sending the invite…');
     };
-    if(a==="resetPwd")el.onclick=()=>{
-      if(!confirm('Send a password reset to '+el.dataset.name+'?'))return;
-      userAction(async()=>{ await apiJSON('/api/users/'+el.dataset.id+'/reset-password',{method:'POST',body:JSON.stringify({})}); alert('Reset sent.'); },'Sending the reset…');
+    if(a==="resetPwd")el.onclick=async()=>{
+      const ok = await uctConfirm({
+        title: 'Send password reset',
+        body: `${el.dataset.name} will get an email with a reset code. They'll pick a new password themselves.`,
+        confirmLabel: 'Send reset email'
+      });
+      if(!ok) return;
+      userAction(async()=>{ await apiJSON('/api/users/'+el.dataset.id+'/reset-password',{method:'POST',body:JSON.stringify({})}); uctAlert({title:'Reset sent', body:'Ask them to check their inbox.', tone:'success'}); },'Sending the reset…');
     };
-    if(a==="toggleActive")el.onclick=()=>{
+    if(a==="toggleActive")el.onclick=async()=>{
       const on=el.dataset.active==='1';
-      if(!confirm((on?'Deactivate ':'Reactivate ')+el.dataset.name+'?'+(on?'\n\nThey keep their clients — move those in Workload if somebody else should pick them up.':'')))return;
+      const ok = await uctConfirm({
+        title: on ? `Deactivate ${el.dataset.name}` : `Reactivate ${el.dataset.name}`,
+        body: on
+          ? 'They won’t be able to sign in. They keep their clients — move those in Workload if somebody else should pick them up.'
+          : 'They’ll be able to sign in again with the same credentials.',
+        confirmLabel: on ? 'Deactivate' : 'Reactivate',
+        dangerous: on
+      });
+      if(!ok) return;
       userAction(async()=>{ await apiJSON('/api/users/'+el.dataset.id+'/'+(on?'deactivate':'activate'),{method:'PUT',body:JSON.stringify({})}); },on?'Deactivating…':'Reactivating…');
     };
-    if(a==="deleteUser")el.onclick=()=>{
+    if(a==="deleteUser")el.onclick=async()=>{
       const name=el.dataset.name, held=parseInt(el.dataset.clients||'0',10);
       // Deleting is permanent and there's no undo, so make the person type the
       // name. A yes/no box is too easy to click past on the wrong row.
-      const typed=prompt(
-        'Delete '+name+' permanently?\n\n'+
-        'This removes the account and their sign-in. It cannot be undone —\n'+
-        'use Deactivate instead if they might come back.\n\n'+
-        (held?('They hold '+held+' client'+(held===1?'':'s')+'. Deleting leaves those\nclients with an owner who no longer exists — reassign them in\nWorkload first if you can.\n\n'):'')+
-        'Type the name to confirm:');
-      if(typed===null) return;
-      if(typed.trim()!==name.trim()){ alert('That did not match "'+name+'" — nothing was deleted.'); return; }
+      const heldNote = held ? `\n\nThey hold ${held} client${held===1?'':'s'}. Deleting leaves those clients with an owner who no longer exists — reassign them in Workload first if you can.` : '';
+      const ok = await uctTypeToConfirm({
+        title: `Delete ${name} permanently`,
+        body: `This removes the account and their sign-in. It cannot be undone — use Deactivate instead if they might come back.${heldNote}`,
+        phrase: name,
+        confirmLabel: 'Delete permanently'
+      });
+      if(!ok) return;
       userAction(async()=>{
         let r;
         try{
           r=await apiJSON('/api/users/'+el.dataset.id,{method:'DELETE'});
         }catch(e){
-          // The server refuses a delete that would strand clients unless we say
-          // we accept it. Ask once more, naming the number, then repeat.
           if(String(e&&e.message||'').indexOf('holds_clients')<0) throw e;
-          if(!confirm(name+' still holds clients.\n\nDelete anyway and leave them unassigned?')) return;
+          const orphan = await uctConfirm({
+            title: `${name} still holds clients`,
+            body: 'Delete anyway and leave those clients unassigned? You\'ll need to reassign them from Workload afterwards.',
+            confirmLabel: 'Delete and orphan clients',
+            dangerous: true
+          });
+          if(!orphan) return;
           r=await apiJSON('/api/users/'+el.dataset.id+'?orphanClients=yes',{method:'DELETE'});
         }
-        if(r&&r.clientsOrphaned) alert(name+' deleted. '+r.clientsOrphaned+' client'+(r.clientsOrphaned===1?' is':'s are')+' now unassigned — reassign in Workload.');
+        if(r&&r.clientsOrphaned) uctAlert({title:`${name} deleted`, body:`${r.clientsOrphaned} client${r.clientsOrphaned===1?' is':'s are'} now unassigned — reassign in Workload.`, tone:'warning'});
       },'Deleting…');
     };
 

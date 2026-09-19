@@ -619,22 +619,77 @@ function launchPortal(cid,idx){
 const STORAGE_KEY="uae_compliance_v4";
 
 // Cognito auth wiring: monkey-patch window.fetch to attach the access token
-// from localStorage as an Authorization: Bearer header on every same-origin
-// API call. Sits above cookie-based auth so a redirect from /login flows
-// straight into the app without the cookie needing to arrive first (which
-// occasionally races the boot fetch on cold pages). Legacy JWT-in-cookie
-// still works because the token/cookie pair is set alongside localStorage
-// in login.html.
+// from localStorage on every same-origin API call, PLUS transparently refresh
+// the access token before/after expiry using the stored refresh token — so
+// users stay signed in for up to the refresh-token TTL (30 days by default,
+// per the User Pool client config), not just the 1-hour access-token life.
+// Legacy JWT-in-cookie still works because the token/cookie pair is set
+// alongside localStorage in login.html.
 (function(){
   const _origFetch = window.fetch.bind(window);
-  window.fetch = function(input, init){
+
+  function decodeExp(jwt){
+    try { return JSON.parse(atob(jwt.split('.')[1])).exp || 0; } catch { return 0; }
+  }
+  function expiresSoon(jwt){
+    const exp = decodeExp(jwt);
+    return exp && (exp * 1000 - Date.now()) < 5 * 60 * 1000; // <5 min to expiry
+  }
+
+  // One in-flight refresh at a time — a burst of API calls all racing
+  // to refresh at once would flood /auth/refresh and burn refresh
+  // tokens for no reason.
+  let _refreshInFlight = null;
+  async function refreshAccessToken(){
+    if (_refreshInFlight) return _refreshInFlight;
+    let rt = null;
+    try { rt = localStorage.getItem('cognito_refresh_token'); } catch{}
+    if (!rt) return null;
+    _refreshInFlight = (async () => {
+      try {
+        const r = await _origFetch('/api/auth/refresh', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ refreshToken: rt })
+        });
+        if (!r.ok) return null;
+        const j = await r.json();
+        if (j && j.accessToken) {
+          try {
+            localStorage.setItem('cognito_access_token', j.accessToken);
+            if (j.idToken) localStorage.setItem('cognito_id_token', j.idToken);
+            document.cookie = 'token=' + j.accessToken + '; path=/; max-age=' + (j.expiresIn || 3600) + '; samesite=lax';
+          } catch{}
+          return j.accessToken;
+        }
+      } catch(_){}
+      return null;
+    })();
+    const t = await _refreshInFlight;
+    _refreshInFlight = null;
+    return t;
+  }
+  // Expose for the reactive path (apiJSON's 401 handler).
+  window.__uctRefreshAccessToken = refreshAccessToken;
+
+  window.fetch = async function(input, init){
     const url = (typeof input === 'string') ? input : (input && input.url) || '';
-    // Only touch calls to our own API surface — never third-party fetches.
     if (!/^\/(api|auth)\//.test(url) && url.indexOf(window.location.origin + '/api/') !== 0 && url.indexOf(window.location.origin + '/auth/') !== 0) {
       return _origFetch(input, init);
     }
+    // Don't attach a token — or trigger a refresh — for the refresh
+    // call itself; that would cause an infinite loop on expiry.
+    if (/\/api\/auth\/refresh\b/.test(url)) return _origFetch(input, init);
+
     let token = null;
     try { token = localStorage.getItem('cognito_access_token'); } catch(_){}
+    // Proactive refresh — if the token is inside the 5-minute expiry
+    // window, swap it out BEFORE the request goes so the server never
+    // sees an expired one and the user never bounces to /login.
+    if (token && expiresSoon(token)) {
+      const fresh = await refreshAccessToken();
+      if (fresh) token = fresh;
+    }
     if (!token) return _origFetch(input, init);
     const opts = init ? Object.assign({}, init) : {};
     const h = new Headers(opts.headers || {});
@@ -3776,17 +3831,21 @@ const TASK_TYPES=["Accounting_Bookkeeping","VAT_Filing","VAT_Registration","VAT_
 const taskState={ priority:[], tasks:[], documents:[], ops:null, loading:false, priorityLoaded:false, tasksLoaded:false, documentsLoaded:false };
 
 async function apiJSON(url, opts){
-  const r=await fetch(url, Object.assign({credentials:'include',headers:{'Content-Type':'application/json'}}, opts||{}));
-  // Cognito access tokens live ~1 hour. Anything after that returns 401
-  // "Invalid or expired token" — no matter what the user is trying to
-  // do. Clear the dead token and send them back to /login instead of
-  // letting every screen paint an error message. Guarded so it fires
-  // once per page load.
+  let r = await fetch(url, Object.assign({credentials:'include',headers:{'Content-Type':'application/json'}}, opts||{}));
+  // Reactive refresh — if the server still rejects the token as expired
+  // (proactive refresh in the fetch wrapper missed it, or the clock
+  // skewed), try one refresh and replay the request. Only bounce to
+  // /login if the refresh itself fails.
+  if(r.status === 401 && window.__uctRefreshAccessToken && !opts?.__retried){
+    const fresh = await window.__uctRefreshAccessToken();
+    if(fresh){
+      const nextOpts = Object.assign({credentials:'include',headers:{'Content-Type':'application/json'}}, opts||{}, { __retried: true });
+      r = await fetch(url, nextOpts);
+    }
+  }
   if(r.status === 401 && !window.__uctSessionExpired){
     window.__uctSessionExpired = true;
-    try { localStorage.removeItem('uct.cognito.accessToken'); localStorage.removeItem('uct.cognito.idToken'); localStorage.removeItem('uct.cognito.refreshToken'); } catch{}
-    // Small delay so any in-flight callers see the throw first and don't
-    // race an unfinished render against navigation.
+    try { localStorage.removeItem('cognito_access_token'); localStorage.removeItem('cognito_id_token'); localStorage.removeItem('cognito_refresh_token'); } catch{}
     setTimeout(() => { window.location.href = '/login?reason=expired'; }, 50);
   }
   if(!r.ok){ const j=await r.json().catch(()=>({})); throw new Error(j.error||('HTTP '+r.status)); }

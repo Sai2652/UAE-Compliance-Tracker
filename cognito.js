@@ -284,6 +284,24 @@ async function completeNewPassword({ email, tempPassword, newPassword, name }) {
   return chal.AuthenticationResult; // { AccessToken, IdToken, RefreshToken, ExpiresIn }
 }
 
+// ─── Silent token refresh ────────────────────────────────────────
+// Cognito access tokens expire ~1 hour. The refresh token lives up
+// to 30 days (per the User Pool client config in template.yaml).
+// The browser exchanges the refresh token for a fresh access token
+// via this helper — no re-signin required — so users stay in the app
+// until they explicitly log out or their refresh token itself ages
+// out. Returns { AccessToken, IdToken, ExpiresIn }.
+async function refreshTokens(refreshToken) {
+  const c = client();
+  const out = await c.send(new AdminInitiateAuthCommand({
+    UserPoolId: POOL_ID,
+    ClientId: CLIENT_ID,
+    AuthFlow: 'REFRESH_TOKEN_AUTH',
+    AuthParameters: { REFRESH_TOKEN: refreshToken },
+  }));
+  return out.AuthenticationResult;
+}
+
 module.exports = {
   isConfigured,
   verifyAccessToken,
@@ -298,5 +316,6 @@ module.exports = {
   setRole,
   setReportsTo,
   completeNewPassword,
+  refreshTokens,
   config: () => ({ userPoolId: POOL_ID, clientId: CLIENT_ID, region: REGION }),
 };

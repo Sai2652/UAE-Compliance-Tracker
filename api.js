@@ -90,6 +90,30 @@ router.get('/auth/config', function(req, res) {
 // ─── /auth/logout — always the same ──────────────────────────────
 router.post('/auth/logout', function(req, res) { res.clearCookie('token'); res.json({ ok: true }); });
 
+// ─── /auth/refresh — silent token renewal ────────────────────────
+// Access tokens live ~1 hour. Rather than log the user out when it
+// expires, the browser POSTs its refresh token here and we exchange
+// it for a fresh access + id token. The refresh token itself lives
+// up to 30 days per the User Pool client config. No requireAuth on
+// this route — the whole point is that the caller's access token is
+// expired; the refresh token is the proof of identity.
+router.post('/auth/refresh', asyncH(async function(req, res) {
+  if (!cognito.isConfigured()) return res.status(400).json({ error: 'Cognito not configured' });
+  var rt = req.body && req.body.refreshToken;
+  if (!rt) return res.status(400).json({ error: 'refreshToken required' });
+  try {
+    var result = await cognito.refreshTokens(rt);
+    res.json({
+      accessToken: result.AccessToken,
+      idToken: result.IdToken || null,
+      expiresIn: result.ExpiresIn || null
+    });
+  } catch (e) {
+    // Refresh token expired / revoked / invalid — client will bounce to /login.
+    res.status(401).json({ error: 'Refresh failed', message: (e && e.message) || 'invalid' });
+  }
+}));
+
 // ─── /auth/me — reads req.user which requireAuth already normalised ──
 // Access tokens don't carry email/name — for Cognito users we enrich by
 // hitting AdminGetUser once per boot so the greeting shows "Sai" instead

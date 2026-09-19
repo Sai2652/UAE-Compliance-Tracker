@@ -77,7 +77,13 @@ body,.header,.nav,.nav-btn,.btn,.card,.stat-card,.form-input,.main,.sidebar,.mod
 .skeleton-row{height:64px;margin-bottom:8px}
 .skeleton-card{height:120px;margin-bottom:12px}
 html{font-size:14px}
-body{font-family:var(--font);background:var(--bg-deep);color:var(--text-primary);min-height:100vh;overflow-x:hidden;line-height:1.5;font-variant-numeric:tabular-nums}
+/* Height chain so .main is the only scrollable region and the scroll
+   capture/restore in _renderImpl actually has something to remember.
+   Without this, body scrolled (not .main) and every re-render reset
+   the page position — dropdowns "jumped to top" on every change. */
+html,body{height:100%}
+body{font-family:var(--font);background:var(--bg-deep);color:var(--text-primary);overflow:hidden;line-height:1.5;font-variant-numeric:tabular-nums}
+#app{height:100%;display:flex;flex-direction:column;min-height:0}
 input,select,textarea,button{font-family:inherit}
 ::-webkit-scrollbar{width:6px;height:6px}
 ::-webkit-scrollbar-track{background:transparent}
@@ -270,7 +276,7 @@ html.theme-light .header .btn-primary:hover,.header .btn-primary:hover{backgroun
 .side-nav-footer{margin-top:auto;padding:10px 8px 4px;border-top:1px solid var(--sidebar-line);display:flex;flex-direction:column;gap:4px}
 .side-nav-footer .side-nav-btn{margin:0 8px}
 .header-actions{margin-left:auto;display:flex;gap:8px;align-items:center}
-.body-wrap{display:flex;flex:1;overflow:hidden}
+.body-wrap{display:flex;flex:1;overflow:hidden;min-height:0}
 /* Client-detail sidebar — same midnight chrome as the main .side-nav so
    the whole app carries one visual identity, not two. */
 .sidebar{width:260px;background:var(--sidebar-bg);color:var(--sidebar-text);border-right:1px solid var(--sidebar-line);display:flex;flex-direction:column;overflow:hidden;flex-shrink:0}

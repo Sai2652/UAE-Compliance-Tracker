@@ -249,6 +249,15 @@ html.theme-light .header .btn-primary:hover,.header .btn-primary:hover{backgroun
 .btn-danger-solid{background:var(--red);border:1px solid var(--red);color:#fff}
 .btn-danger-solid:hover{background:var(--red-border,#a11a1a);border-color:var(--red-border,#a11a1a);color:#fff}
 .btn-danger-solid:disabled{opacity:0.55;cursor:not-allowed}
+
+/* ── (i) info icon with hover tooltip ──
+   Replaces long inline explanation paragraphs. Hovering the icon shows
+   the explanation as a small dark tooltip; the page stays uncluttered
+   for people who already know what the field means. */
+.uct-info{display:inline-flex;align-items:center;justify-content:center;width:15px;height:15px;border-radius:50%;background:var(--bg-elevated);color:var(--text-muted);font-size:10px;font-weight:800;cursor:help;font-family:'Georgia',serif;font-style:italic;border:1px solid var(--border);margin-left:6px;position:relative;vertical-align:middle;line-height:1;user-select:none}
+.uct-info:hover{background:var(--accent-soft);color:var(--accent);border-color:var(--accent)}
+.uct-info[data-tip]:hover::after{content:attr(data-tip);position:absolute;bottom:calc(100% + 8px);left:50%;transform:translateX(-50%);background:#222536;color:#fff;padding:8px 12px;border-radius:6px;font-size:12px;font-weight:500;font-family:var(--font);font-style:normal;line-height:1.5;text-align:left;z-index:1000;box-shadow:0 4px 16px rgba(0,0,0,0.28);width:max-content;max-width:260px;white-space:normal;pointer-events:none}
+.uct-info[data-tip]:hover::before{content:'';position:absolute;bottom:calc(100% + 3px);left:50%;transform:translateX(-50%);border:5px solid transparent;border-top-color:#222536;z-index:1000;pointer-events:none}
 /* Sidebar brand — BCL mark + name; sits at the top of .side-nav. */
 .side-nav-brand{display:flex;align-items:center;gap:12px;padding:18px 16px 14px;border-bottom:1px solid var(--sidebar-line);color:var(--sidebar-strong)}
 .side-nav-brand .bcl-mark{width:34px;height:34px;flex-shrink:0;color:var(--sidebar-strong)}
@@ -710,6 +719,9 @@ const fmtDate=d=>d?new Date(d).toLocaleDateString("en-GB",{day:"2-digit",month:"
 const fmtDateTime=d=>d?new Date(d).toLocaleDateString("en-GB",{day:"2-digit",month:"short",year:"numeric",hour:"2-digit",minute:"2-digit"}):"—";
 const daysUntil=d=>d?Math.ceil((new Date(d)-today)/864e5):null;
 const esc=s=>{if(s==null)return"";return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#39;");};
+// (i) info icon → hover shows the tooltip. Use in place of inline
+// explanations under section headers, tabs, or form labels.
+const infoIcon=(tip)=>`<span class="uct-info" data-tip="${esc(tip)}" aria-label="More info">i</span>`;
 const nowISO=()=>new Date().toISOString();
 // Who a client can be assigned to: the people who actually log in.
 //
@@ -1333,18 +1345,20 @@ function renderProfileMenu_People(){
   return h;
 }
 function renderProfileMenu_Prefs(){
+  // Theme block dropped — light-only is the only theme, saying so on a
+  // Preferences page just clutters the page with a non-choice.
   return `<div class="pm-sec">
     <div class="pm-sec-k">Notifications</div>
     <div class="pm-row" data-action="openNotifPrefs" style="cursor:pointer"><div class="pm-row-av" style="background:var(--accent-soft);color:var(--accent);border:1px solid var(--info-line,var(--accent-soft))">🔔</div><div class="pm-row-who"><div class="pm-row-n">Desktop notifications</div><div class="pm-row-e">Rules, quiet hours, test toast</div></div><span style="color:var(--text-muted);font-size:12px">Open →</span></div>
-  </div>
-  <div class="pm-sec">
-    <div class="pm-sec-k">Theme</div>
-    <div style="font-size:12.5px;color:var(--text-muted);padding:4px 2px">Light theme only — dark theme was retired 2026-09.</div>
   </div>`;
 }
 function renderProfileMenu_Account(){
+  // "Change password" was a placeholder row with no wired action — sending
+  // people to click something that does nothing is worse than not offering
+  // it. If a password reset is needed, a Super Admin uses the row-level
+  // "Reset password" button in User Management, which fires the real
+  // Cognito reset email.
   return `<div class="pm-sec">
-    <div class="pm-row"><div class="pm-row-av">🔒</div><div class="pm-row-who"><div class="pm-row-n">Change password</div><div class="pm-row-e">Opens the reset flow</div></div></div>
     <div class="pm-row" data-action="logout"><div class="pm-row-av" style="background:var(--red-bg);color:var(--red);border:1px solid var(--red-border)">⏻</div><div class="pm-row-who"><div class="pm-row-n" style="color:var(--red)">Logout</div><div class="pm-row-e">Signs you out of this browser</div></div></div>
   </div>`;
 }
@@ -1912,10 +1926,7 @@ function openNotifPrefsModal(){
   wrap.innerHTML = `
     <div class="modal" style="width:640px;max-width:96vw">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px">
-        <div>
-          <div class="modal-title">Notifications</div>
-          <div style="font-size:12px;color:var(--text-muted);margin-top:2px">This device only · your prefs don't sync across browsers.</div>
-        </div>
+        <div class="modal-title">Notifications${infoIcon('Preferences apply to this device only — they do not sync across your browsers.')}</div>
         <button class="btn btn-sm" data-notif-close>Done</button>
       </div>
       ${perm === 'unsupported' ? `<div class="alert alert-warning" style="margin-top:12px">Your browser doesn't support notifications.</div>` : ''}
@@ -3192,14 +3203,17 @@ async function loadClientLifecycle(clientId){
   }
 }
 
+// Two-plus-one palette per user request: green for good, red for danger,
+// everything else in the layout accent so the lifecycle reads as a calm
+// wall of purple with only what actually matters (done or blocked) picked
+// out. "not_required" stays muted because it's inert — not good news,
+// not bad news, just doesn't apply.
 function lifecycleStageColor(status){
   return ({
-    complete:'var(--green)', completed:'var(--green)',
-    in_progress:'var(--accent)',
-    pending:'var(--amber)', stalled:'var(--red)',
-    not_required:'var(--text-muted)', none:'var(--text-muted)',
-    not_ready:'var(--red)', partially_ready:'var(--amber)', ready_for_filing:'var(--green)'
-  })[status] || 'var(--text-muted)';
+    complete:'var(--green)', completed:'var(--green)', ready_for_filing:'var(--green)',
+    stalled:'var(--red)', not_ready:'var(--red)',
+    not_required:'var(--text-muted)', none:'var(--text-muted)'
+  })[status] || 'var(--accent)';  // in_progress, pending, partially_ready all land here
 }
 function lifecycleStageIcon(status){
   return ({
@@ -3240,7 +3254,11 @@ function renderClientLifecycle(data){
   const health=data.health;
 
   // ── TOP: Compliance Lifecycle card ──
-  let top=`<div class="card" style="border-color:${overallColor};margin-bottom:12px">
+  // Outer border stays neutral (--border) so the whole card doesn't shout
+  // red when only one step is blocked. The state signal lives on each
+  // step tile's border-left; the header verdict text still colours by
+  // overall readiness so a glance still tells the story.
+  let top=`<div class="card" style="margin-bottom:12px">
     <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px">
       <div>
         <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em">Compliance Lifecycle</div>
@@ -4047,7 +4065,40 @@ function renderOverview(sc,scm){
   }).join("")}</div>`;
 
   // 3) Client Details — metadata, sits after the modules.
-  h+=`<div class="card"><div class="card-title">Client Details</div><div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px"><div><div class="form-label">Entity Type</div>${isAdmin()?entitySelectHtml("etSel_"+sc.id,sc.entityType,`data-client-entity="${sc.id}" data-entity-hint-for="etHint_${sc.id}" style="padding:5px 8px;font-size:12px;max-width:230px"`):`<div>${esc(sc.entityType)}</div>`}${sc.entityTypeGuessed?`<div style="font-size:10px;color:var(--amber);margin-top:3px;font-weight:600">⚠ Read off the company name — check the trade licence</div>`:''}<div id="etHint_${sc.id}" style="font-size:10px;color:var(--text-muted);line-height:1.45;margin-top:4px">${esc(entityHintFor(normalizeEntityType(sc.entityType)||sc.entityType))}</div></div><div><div class="form-label">Nature</div>${isAdmin()?selectHTML("bn",sc.businessNature||"Not Recorded",BUSINESS_NATURES,`data-client-nature="${sc.id}"`):`<div>${esc(sc.businessNature||"Not Recorded")}</div>`}</div><div><div class="form-label">Financial Year</div><div>FY ${esc(sc.accounting.financialYear)}</div></div><div><div class="form-label">Assigned To</div>${isAdmin()?selectHTML("at",sc.assignedTeam,getTeamOptions(),`data-client-field="${sc.id}"`):`<div style="font-weight:600">${esc(sc.assignedTeam)}</div>`}</div><div><div class="form-label">VAT Status</div>${isAdmin()?selectHTML("vs",sc.vatApplicable,VAT_OPTIONS,`data-client-vatapp="${sc.id}"`):`<div>${esc(sc.vatApplicable)}</div>`}</div><div><div class="form-label">CT Applicable</div><div style="color:${sc.ctApplicable?'var(--green)':'var(--red)'};font-weight:600">${sc.ctApplicable?"Yes":"No"}</div></div><div><div class="form-label">Last Updated</div><div style="font-size:12px;color:var(--text-muted)">${fmtDate(sc.lastUpdated)} ${sc.lastUpdatedBy?'by '+esc(sc.lastUpdatedBy):''}</div></div></div></div>`;
+  const entityDesc = entityHintFor(normalizeEntityType(sc.entityType)||sc.entityType);
+  const entityGuessedIcon = sc.entityTypeGuessed ? infoIcon('Entity type was inferred from the company name — confirm against the trade licence.') : '';
+  const entityHintIcon = entityDesc ? infoIcon(entityDesc) : '';
+  h+=`<div class="card"><div class="card-title">Client Details</div><div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px">
+    <div>
+      <div class="form-label">Entity Type${entityHintIcon}${entityGuessedIcon}</div>
+      ${isAdmin()?entitySelectHtml("etSel_"+sc.id,sc.entityType,`data-client-entity="${sc.id}" data-entity-hint-for="etHint_${sc.id}" style="padding:5px 8px;font-size:12px;max-width:230px"`):`<div>${esc(sc.entityType)}</div>`}
+      <div id="etHint_${sc.id}" style="display:none"></div>
+    </div>
+    <div>
+      <div class="form-label">Nature</div>
+      ${isAdmin()?selectHTML("bn",sc.businessNature||"Not Recorded",BUSINESS_NATURES,`data-client-nature="${sc.id}"`):`<div>${esc(sc.businessNature||"Not Recorded")}</div>`}
+    </div>
+    <div>
+      <div class="form-label">Financial Year</div>
+      <div>FY ${esc(sc.accounting.financialYear)}</div>
+    </div>
+    <div>
+      <div class="form-label">Assigned To</div>
+      ${isAdmin()?selectHTML("at",sc.assignedTeam,getTeamOptions(),`data-client-field="${sc.id}"`):`<div style="font-weight:600">${esc(sc.assignedTeam)}</div>`}
+    </div>
+    <div>
+      <div class="form-label">VAT Status</div>
+      ${isAdmin()?selectHTML("vs",sc.vatApplicable,VAT_OPTIONS,`data-client-vatapp="${sc.id}"`):`<div>${esc(sc.vatApplicable)}</div>`}
+    </div>
+    <div>
+      <div class="form-label">CT Applicable</div>
+      <div style="color:${sc.ctApplicable?'var(--green)':'var(--red)'};font-weight:600">${sc.ctApplicable?"Yes":"No"}</div>
+    </div>
+    <div>
+      <div class="form-label">Last Updated</div>
+      <div style="font-size:12px;color:var(--text-muted)">${fmtDate(sc.lastUpdated)} ${sc.lastUpdatedBy?'by '+esc(sc.lastUpdatedBy):''}</div>
+    </div>
+  </div></div>`;
 
   // 4) History Timeline retired 2026-09-19 — it was a 71-row list of
   //    dated deadline archaeology that pushed the actionable cards below

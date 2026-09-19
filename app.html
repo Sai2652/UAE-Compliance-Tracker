@@ -3293,26 +3293,47 @@ function renderTimelineCard(data){
 }
 
 // ----- Phase 4/5: full lifecycle section embedded in client detail -----
+// Per-client cache. The Overview page renders every 2s under the auto-
+// refresh loop; without a cache the lifecycle card was fetched, filled
+// asynchronously and briefly-empty-in-between on every tick, which the
+// user perceived as page "shaking". renderOverview reads this cache
+// synchronously so the container is never rendered empty, and the
+// refetch only touches the DOM when the data actually differs.
+const lifecycleCache = {};   // clientId -> raw lifecycle-summary payload
+const lifecyclePending = {}; // clientId -> promise in flight
+
 async function loadClientLifecycle(clientId){
-  // Two containers now — the lifecycle 8-tile grid stays high on the page,
-  // Blockers / Next Actions / Workflows land in a "cli-followups" container
-  // at the very bottom so the actionables sit above the metadata but the
-  // long-form supporting cards live where they don't crowd the top of the
-  // page. Either container may be missing if a caller only wanted one.
   const topEl    = document.getElementById('cli-lifecycle-'+clientId);
   const bottomEl = document.getElementById('cli-followups-'+clientId);
   if(!topEl && !bottomEl) return;
-  try{
-    const data = await apiJSON('/api/clients/'+clientId+'/lifecycle-summary');
-    const parts = renderClientLifecycle(data);
-    if(topEl)    topEl.innerHTML    = parts.top || '';
-    if(bottomEl) bottomEl.innerHTML = parts.bottom || '';
-    (topEl ? topEl : document.body).querySelectorAll('[data-wf-open]').forEach(b=>{ b.onclick=()=>openWorkflowModal(b.dataset.wfOpen); });
-    if(bottomEl) bottomEl.querySelectorAll('[data-wf-open]').forEach(b=>{ b.onclick=()=>openWorkflowModal(b.dataset.wfOpen); });
-  }catch(e){
-    const err = `<div class="card" style="border-color:var(--red-border)"><div style="padding:8px;font-size:12px;color:var(--red)">Lifecycle unavailable: ${esc(e.message||'error')}</div></div>`;
-    if(topEl) topEl.innerHTML = err;
-  }
+  // Coalesce concurrent calls for the same client.
+  if(lifecyclePending[clientId]) return lifecyclePending[clientId];
+  const p = (async () => {
+    try{
+      const data = await apiJSON('/api/clients/'+clientId+'/lifecycle-summary');
+      const prev = lifecycleCache[clientId];
+      const changed = !prev || JSON.stringify(prev) !== JSON.stringify(data);
+      lifecycleCache[clientId] = data;
+      // Only touch the DOM if the payload actually differs from what the
+      // cache last painted — an unchanged 2s refetch is a no-op visually.
+      if(changed){
+        const parts = renderClientLifecycle(data);
+        const t = document.getElementById('cli-lifecycle-'+clientId);
+        const b = document.getElementById('cli-followups-'+clientId);
+        if(t) t.innerHTML = parts.top || '';
+        if(b) b.innerHTML = parts.bottom || '';
+        [t,b].forEach(el => { if(el) el.querySelectorAll('[data-wf-open]').forEach(x=>{ x.onclick=()=>openWorkflowModal(x.dataset.wfOpen); }); });
+      }
+    }catch(e){
+      const t = document.getElementById('cli-lifecycle-'+clientId);
+      if(t && !t.innerHTML.trim()){
+        t.innerHTML = `<div class="card" style="border-color:var(--red-border)"><div style="padding:8px;font-size:12px;color:var(--red)">Lifecycle unavailable: ${esc(e.message||'error')}</div></div>`;
+      }
+    }
+  })();
+  lifecyclePending[clientId] = p;
+  p.finally(() => { delete lifecyclePending[clientId]; });
+  return p;
 }
 
 // Two-plus-one palette per user request: green for good, red for danger,
@@ -4210,8 +4231,12 @@ function renderOverview(sc,scm){
   // Health readout on the right.
   let h=`<h2 style="font-size:18px;font-weight:800;margin-bottom:12px;display:flex;align-items:center;gap:10px">${esc(sc.name)} <span id="cli-tier-${sc.id}"></span> <span style="font-size:13px;font-weight:400;color:var(--text-muted)">— Overview</span></h2>`;
 
-  // 1) Compliance Lifecycle — top of page, populated async.
-  h+=`<div id="cli-lifecycle-${sc.id}" style="margin-bottom:14px"><div class="card" style="border-color:var(--accent-soft)"><div style="padding:8px;font-size:12px;color:var(--text-muted)">Loading compliance lifecycle…</div></div></div>`;
+  // 1) Compliance Lifecycle — paint from cache synchronously if we have
+  //    the last-loaded payload (auto-refresh renders don't flash empty),
+  //    else show a Loading placeholder until the async loader fills it.
+  const cachedLC = lifecycleCache[sc.id];
+  const cachedParts = cachedLC ? renderClientLifecycle(cachedLC) : null;
+  h+=`<div id="cli-lifecycle-${sc.id}" style="margin-bottom:14px">${cachedParts ? cachedParts.top : '<div class="card" style="border-color:var(--accent-soft)"><div style="padding:8px;font-size:12px;color:var(--text-muted)">Loading compliance lifecycle…</div></div>'}</div>`;
 
   // 2) Five module cards — moved up here (actionable places live above metadata).
   // Logins is a COUNT ("3 logins captured"), not a percentage — the % framing
@@ -4366,11 +4391,11 @@ function renderOverview(sc,scm){
     h+=`<div class="card"><div class="card-title" style="margin-bottom:10px">Upcoming deadlines</div>${kick('Overdue', buckets.over, 'var(--red)', 'var(--red-bg)')}${kick('Next 30 days', buckets.soon, 'var(--amber)', 'var(--amber-bg)')}${kick('Later', buckets.later, 'var(--accent)', 'var(--accent-soft)')}</div>`;
   }
 
-  // 6) Blockers + Next Actions + Workflows — populated async into this
-  //    container by loadClientLifecycle. Bottom of the page: the
-  //    actionable module cards and deadlines above already say what to
-  //    do next; these cards are the deeper follow-ups.
-  h += `<div id="cli-followups-${sc.id}" style="margin-bottom:14px"></div>`;
+  // 6) Blockers + Next Actions + Workflows — paints from cache too, so
+  //    the auto-refresh doesn't blank the bottom of the page for a
+  //    heartbeat cycle. loadClientLifecycle refreshes it in the
+  //    background and only touches the DOM if the payload changed.
+  h += `<div id="cli-followups-${sc.id}" style="margin-bottom:14px">${cachedParts ? cachedParts.bottom || '' : ''}</div>`;
   return h;
 }
 
@@ -5381,8 +5406,15 @@ async function _fullPull(){
   _fullPullInFlight = true;
   try {
     await reloadTrackerFromServer();
-    if(isAdmin() && state.orgPeople) await loadOrgPeople(true);
-    if(isAdmin() && state.morning)   await loadMorningDashboard(true);
+    // If the user is deep inside a client detail page, they're not
+    // looking at Today or User Management — skipping those two pulls
+    // both saves the payload and avoids the client-detail render being
+    // followed by a second render moments later from those loaders.
+    const onClientDetail = !!state.selectedClientId;
+    if(!onClientDetail){
+      if(isAdmin() && state.orgPeople) await loadOrgPeople(true);
+      if(isAdmin() && state.morning)   await loadMorningDashboard(true);
+    }
     _lastFullPullAt = Date.now();
   } catch(e) { /* silent — next tick retries */ }
   finally { _fullPullInFlight = false; }

@@ -124,6 +124,31 @@ html.theme-light .header .btn-primary:hover,.header .btn-primary:hover{backgroun
 .header-role-pill.prime{background:rgba(255,215,150,0.20);border-color:rgba(255,215,150,0.35)}
 /* Sidebar brand block — retired. Brand now lives in the header. */
 .side-nav-brand{display:none}
+
+/* ── Today: four attention lanes ── */
+.today-lanes{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:14px}
+@media(max-width:900px){.today-lanes{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.lane-card{background:var(--bg-card);border:1px solid var(--border);border-radius:12px;box-shadow:0 1px 2px rgba(34,37,54,0.03),0 4px 12px rgba(34,37,54,0.04);padding:16px 18px;cursor:pointer;transition:border-color 0.15s,transform 0.05s,box-shadow 0.15s;position:relative;text-align:left;font-family:inherit;color:var(--text-primary)}
+.lane-card:hover{border-color:var(--accent);transform:translateY(-1px)}
+.lane-card.active{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft),0 4px 12px rgba(34,37,54,0.06)}
+.lane-top{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+.lane-icon{width:26px;height:26px;border-radius:7px;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0}
+.lane-icon svg{width:16px;height:16px;display:block}
+.lane-icon-acc{background:var(--accent-soft);color:var(--accent)}
+.lane-icon-vat{background:var(--amber-bg);color:var(--amber)}
+.lane-icon-ct{background:var(--red-bg);color:var(--red)}
+.lane-icon-doc{background:var(--accent-soft);color:var(--accent)}
+.lane-title{font-size:12px;font-weight:600;color:var(--text-secondary);letter-spacing:0.01em}
+.lane-num{font-size:34px;font-weight:700;letter-spacing:-0.02em;line-height:1;margin:4px 0 6px;font-variant-numeric:tabular-nums}
+.lane-num-has{color:var(--amber)}
+.lane-num-calm{color:var(--green)}
+.lane-sub{font-size:11.5px;color:var(--text-muted);line-height:1.4}
+.lane-hint{position:absolute;top:12px;right:12px;font-size:10px;font-weight:800;letter-spacing:0.06em;text-transform:uppercase;color:var(--accent);opacity:0.75}
+.today-kind{display:inline-block;font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:0.06em;padding:2px 6px;border-radius:4px;margin-right:6px;vertical-align:middle}
+.today-kind-acc{background:var(--accent-soft);color:var(--accent)}
+.today-kind-vat{background:var(--amber-bg);color:var(--amber)}
+.today-kind-ct{background:var(--red-bg);color:var(--red)}
+.today-kind-doc{background:var(--accent-soft);color:var(--accent)}
 /* Sidebar brand — BCL mark + name; sits at the top of .side-nav. */
 .side-nav-brand{display:flex;align-items:center;gap:12px;padding:18px 16px 14px;border-bottom:1px solid var(--sidebar-line);color:var(--sidebar-strong)}
 .side-nav-brand .bcl-mark{width:34px;height:34px;flex-shrink:0;color:var(--sidebar-strong)}
@@ -1386,20 +1411,54 @@ function renderMorningDashboard(){
 
   const d = state.morning;
   const dl = d.deadlines || {};
-  const attention = (d.clientsAttention && d.clientsAttention.length ? d.clientsAttention : ((d.todaysFocus && d.todaysFocus.items) || [])).slice(0, 25);
+  const attention = (d.clientsAttention && d.clientsAttention.length ? d.clientsAttention : ((d.todaysFocus && d.todaysFocus.items) || [])).slice(0, 100);
   const inScope = (state.clients || []).length;
-  const attentionCount = attention.length;
-  // Stale-data guard: UAE CT only exists post-2023-06 and VAT post-2018.
-  // Anything counted as "overdue" from before 2018 is almost always test data
-  // or an Ops-Mkt import from a legacy tool. When the overdue count is
-  // implausibly high we say so instead of pretending it's real work.
-  const overdueLooksStale = (dl.overdueCount || 0) > 200;
 
-  // ── Header — greeting, one-line verdict, refresh ──
-  const verdict = overdueLooksStale
-    ? `${dl.overdueCount} filings flagged behind — the list still contains legacy imports.`
-    : (attentionCount ? `${attentionCount} client${attentionCount===1?'':'s'} need${attentionCount===1?'s':''} attention today.` : `Nothing urgent — sit back.`);
-  let h = `<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:20px;flex-wrap:wrap;gap:10px">
+  // ── Bucket every attention row into one of four compliance lanes.
+  //    The lane is derived from nextDeadlineType (raw task_type on the row,
+  //    e.g. VAT_Filing, CT_Filing, Accounting_Bookkeeping, Document_Request).
+  //    Anything that doesn't match the four keeps its row but doesn't
+  //    contribute to a lane count — kept as "Other" so nothing hides silently.
+  const LANE_META = {
+    accounts:  { label:'Attention needed in Accounts', kind:'acc', tint:'var(--accent)',
+                 icon:'<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3.4" y="3.4" width="13.2" height="13.2" rx="1.4"/><path d="M3.4 7.4h13.2M7.4 7.4v9.2M11.4 7.4v9.2M15.4 7.4v9.2"/></svg>' },
+    vat:       { label:'Attention needed in VAT', kind:'vat', tint:'var(--amber)',
+                 icon:'<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3.4" y="3.4" width="13.2" height="13.2" rx="1.4"/><path d="M10 6v8M6 10h8"/></svg>' },
+    ct:        { label:'Attention needed in CT', kind:'ct', tint:'var(--red)',
+                 icon:'<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3.4" y="3.4" width="13.2" height="13.2" rx="1.4"/><path d="M6.5 8h7M6.5 11h5M6.5 14h4"/></svg>' },
+    documents: { label:'Attention needed in Documents', kind:'doc', tint:'var(--accent)',
+                 icon:'<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="4.4" y="3" width="11.2" height="14" rx="1.4"/><path d="M7 7.4h6M7 10.4h6M7 13.4h4"/></svg>' },
+  };
+  function laneOf(row){
+    const t = String(row && (row.nextDeadlineType || row.issue) || '').toLowerCase();
+    if(t.startsWith('accounting') || t.includes('books')) return 'accounts';
+    if(t.startsWith('vat')) return 'vat';
+    if(t.startsWith('ct'))  return 'ct';
+    if(t.includes('document')) return 'documents';
+    return 'other';
+  }
+  const buckets = { accounts:[], vat:[], ct:[], documents:[], other:[] };
+  attention.forEach(r => { buckets[laneOf(r)].push(r); });
+  const totalAttention = attention.length;
+
+  // Which lane is currently selected? Persists across renders on state.todayLane.
+  const selectedLane = state.todayLane || 'all';
+  const shownRows = selectedLane === 'all' ? attention : (buckets[selectedLane] || []);
+
+  // Stale-data guard: the raw overdueCount from the API includes the bulk-
+  // imported CT stubs (one per imported client, all stamped with the same
+  // default 2026-08-31 date because per-client FY wasn't set). We surface
+  // that as a separate call-out instead of letting it inflate the lane
+  // counts — the lanes read the curated `attention` list, which the backend
+  // already filters.
+  const stubCount = Math.max(0, (dl.overdueCount || 0) - totalAttention);
+  const stubLooksReal = stubCount > 50; // any less and it's probably real overdue work
+
+  // ── Header — greeting + one-line verdict + refresh ──
+  const verdict = totalAttention
+    ? `${totalAttention} client${totalAttention===1?'':'s'} need${totalAttention===1?'s':''} attention across your team.`
+    : `Nothing urgent — sit back.`;
+  let h = `<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:18px;flex-wrap:wrap;gap:10px">
     <div>
       <div style="font-size:26px;font-weight:600;letter-spacing:-0.018em;color:var(--text-primary)">${greetingFor()}</div>
       <div style="font-size:13px;color:var(--text-muted);margin-top:2px">${new Date().toLocaleDateString(undefined,{weekday:'long',day:'numeric',month:'long'})} · ${verdict}</div>
@@ -1407,46 +1466,56 @@ function renderMorningDashboard(){
     <button class="btn btn-sm" id="mb-refresh">↻ Refresh</button>
   </div>`;
 
-  // ── Sit-back state — only when there really is nothing to do ──
-  if(!attentionCount && !overdueLooksStale){
-    h += `<div style="background:var(--green-bg);border:1px solid var(--green-border);border-radius:14px;padding:36px 24px;text-align:center;margin-bottom:16px">
-      <div style="font-size:20px;font-weight:700;color:var(--green);letter-spacing:-0.01em">✓ All ${inScope} client${inScope===1?'':'s'} on track</div>
-      <div style="font-size:13px;color:var(--green);opacity:0.85;margin-top:6px">Books closed, nothing due, nothing blocked. Come back tomorrow.</div>
-    </div>`;
-    setTimeout(()=>{ const r=document.getElementById('mb-refresh'); if(r) r.onclick=()=>{ state.morning=null; loadMorningDashboard(true); }; },0);
-    return h;
+  // ── The book-line — bold, single line, no "In your book" label ──
+  h += `<div style="font-size:19px;font-weight:700;letter-spacing:-0.01em;color:var(--text-primary);margin-bottom:18px">${inScope} client${inScope===1?'':'s'} across your whole team</div>`;
+
+  // ── Stub-data warning — honest about what the 998 really is ──
+  if(stubLooksReal){
+    h += `<div class="alert alert-warning" style="margin-bottom:14px"><strong>Heads up:</strong> ${stubCount} "overdue" rows are CT-filing stubs generated during bulk import, all stamped with a default due date because the client's own financial-year-end wasn't set. Open each client → Overview → set FY end. The lane counts below already exclude these stubs.</div>`;
   }
 
-  // ── Two counters — in-scope portfolio + attention today ──
-  const cntCard = (label, val, cap, color) => `<div class="card" style="padding:18px 22px;margin-bottom:0">
-    <div style="font-size:12px;color:var(--text-muted);font-weight:500">${esc(label)}</div>
-    <div style="font-size:30px;font-weight:700;letter-spacing:-0.02em;color:${color};font-variant-numeric:tabular-nums;margin-top:2px">${val}</div>
-    <div style="font-size:12px;color:var(--text-muted);margin-top:2px">${cap}</div>
-  </div>`;
-  h += `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin-bottom:16px">
-    ${cntCard('In your book', inScope, isSuperAdmin()?'clients across your whole team':'clients you own or oversee', 'var(--text-primary)')}
-    ${cntCard('Need attention today', attentionCount, attentionCount?'listed below':'nothing outstanding', attentionCount?'var(--amber)':'var(--green)')}
-  </div>`;
-
-  // ── Stale-data hint — soft, informational, only when triggered ──
-  if(overdueLooksStale){
-    h += `<div class="alert alert-warning" style="margin-bottom:14px">Deadline counts include ${dl.overdueCount} imports from before UAE VAT/CT existed (pre-2018). Clean those out of Clients before treating the number as real.</div>`;
-  }
-
-  // ── Team pulse (Super/Prime only) — who's carrying an uneven month ──
+  // ── Team pulse (Super/Prime only) — kept, single line ──
   if(isSuperAdmin()) h += renderTodayPressureStrip();
 
-  // ── The attention list — the one place work is prioritised ──
-  if(attentionCount){
-    // assignedUser isn't on clientsAttention rows — resolve it from state.clients
-    // by id so the "Owner" column matches what the Clients tab shows.
+  // ── Four attention lanes — the one and only counter block ──
+  const laneCard = (key) => {
+    const meta = LANE_META[key];
+    const n = (buckets[key] || []).length;
+    const isActive = selectedLane === key;
+    const stateClass = n ? 'has' : 'calm';
+    return `<button class="lane-card ${stateClass}${isActive?' active':''}" data-today-lane="${key}">
+      <div class="lane-top"><span class="lane-icon lane-icon-${meta.kind}">${meta.icon}</span><span class="lane-title">${esc(meta.label)}</span></div>
+      <div class="lane-num ${n?'lane-num-has':'lane-num-calm'}">${n}</div>
+      <div class="lane-sub">${n ? (isActive ? 'Showing below' : 'Click to filter') : 'Nothing to do here'}</div>
+      ${isActive?'<div class="lane-hint">Selected</div>':''}
+    </button>`;
+  };
+  h += `<div class="today-lanes">
+    ${laneCard('accounts')}
+    ${laneCard('vat')}
+    ${laneCard('ct')}
+    ${laneCard('documents')}
+  </div>`;
+  if(selectedLane !== 'all'){
+    h += `<div style="display:flex;justify-content:flex-end;margin:-4px 0 10px"><button class="btn btn-sm" data-today-lane="all">Show all lanes</button></div>`;
+  }
+
+  // ── The attention list — filtered to the selected lane, or all four when none ──
+  if(shownRows.length){
     const ownerOf = (cid) => {
       const c = (state.clients||[]).find(x => String(x.id) === String(cid));
       return (c && c.assignedTeam) || 'unassigned';
     };
-    h += `<div class="card"><div class="card-title" style="margin-bottom:12px">Clients needing attention (${attentionCount})</div>`;
-    h += `<div style="overflow:auto"><table style="width:100%;font-size:13px"><thead><tr style="text-align:left;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em;font-size:10px;font-weight:800;background:var(--surface-2,var(--bg-elevated))"><th style="padding:10px 12px">Client</th><th style="padding:10px 12px">Owner</th><th style="padding:10px 12px">Next deadline</th><th style="padding:10px 12px">Recommended</th></tr></thead><tbody>`;
-    attention.forEach(r => {
+    const laneChip = (key) => {
+      const m = LANE_META[key]; if(!m) return '';
+      return `<span class="today-kind today-kind-${m.kind}">${m.kind==='doc'?'DOC':m.kind.toUpperCase()}</span>`;
+    };
+    const title = selectedLane === 'all'
+      ? `Clients needing attention (${shownRows.length})`
+      : `${LANE_META[selectedLane].label} (${shownRows.length})`;
+    h += `<div class="card"><div class="card-title" style="margin-bottom:12px">${esc(title)}</div>`;
+    h += `<div style="overflow:auto"><table style="width:100%;font-size:13px"><thead><tr style="text-align:left;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em;font-size:10px;font-weight:800;background:var(--bg-elevated)"><th style="padding:10px 12px">Client</th><th style="padding:10px 12px">Owner</th><th style="padding:10px 12px">Next deadline</th><th style="padding:10px 12px">Recommended</th></tr></thead><tbody>`;
+    shownRows.forEach(r => {
       const cid  = r.clientId;
       const name = r.clientName || '(unnamed)';
       const tier = r.tier;
@@ -1460,13 +1529,34 @@ function renderMorningDashboard(){
             return `<span style="color:${col};font-weight:700">${esc(dd)}</span>${tail}`;
           })()
         : '<span style="color:var(--text-muted)">—</span>';
-      h += `<tr data-client="${cid}" style="cursor:pointer"><td style="padding:12px">${esc(name)} ${tier?tierBadgeMini(tier):''}</td><td style="padding:12px;color:var(--text-muted)">${esc(ownerOf(cid))}</td><td style="padding:12px">${dueLabel}</td><td style="padding:12px;color:var(--accent)">${esc(r.recommendedAction||'—')}</td></tr>`;
+      const rowLane = laneOf(r);
+      h += `<tr data-client="${cid}" style="cursor:pointer"><td style="padding:12px">${laneChip(rowLane)}<strong>${esc(name)}</strong> ${tier?tierBadgeMini(tier):''}</td><td style="padding:12px;color:var(--text-muted)">${esc(ownerOf(cid))}</td><td style="padding:12px">${dueLabel}</td><td style="padding:12px;color:var(--accent)">${esc(r.recommendedAction||'—')}</td></tr>`;
     });
     h += `</tbody></table></div></div>`;
+  } else if(selectedLane !== 'all'){
+    h += `<div class="card" style="text-align:center;padding:32px 20px;color:var(--text-muted)">Nothing outstanding in this lane. <button class="btn btn-sm" data-today-lane="all" style="margin-left:8px">See other lanes</button></div>`;
+  }
+
+  // ── Full sit-back state — every lane is empty AND overall attention is 0 ──
+  if(!totalAttention){
+    h += `<div style="background:var(--green-bg);border:1px solid var(--green-border);border-radius:14px;padding:36px 24px;text-align:center;margin-top:12px">
+      <div style="font-size:20px;font-weight:700;color:var(--green);letter-spacing:-0.01em">✓ All four lanes clear</div>
+      <div style="font-size:13px;color:var(--green);opacity:0.85;margin-top:6px">Everyone on your team is on track. Come back tomorrow.</div>
+    </div>`;
   }
 
   setTimeout(()=>{
     const r = document.getElementById('mb-refresh'); if(r) r.onclick=()=>{ state.morning=null; loadMorningDashboard(true); };
+    // Lane filter — click a card, or the "Show all lanes" chip, to filter.
+    // Clicking the currently-active lane clears the filter (toggle).
+    document.querySelectorAll('[data-today-lane]').forEach(b => {
+      b.onclick = (e) => {
+        e.stopPropagation();
+        const want = b.dataset.todayLane;
+        state.todayLane = (want === state.todayLane && want !== 'all') ? 'all' : want;
+        render();
+      };
+    });
   }, 0);
   return h;
 }

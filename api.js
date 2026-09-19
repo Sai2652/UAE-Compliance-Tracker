@@ -407,11 +407,25 @@ router.put('/users/:id/activate', requireAuth, requireSuperAdmin, function(req, 
 // Delete a person outright. Deactivate is the safer option and the one the UI
 // offers first — this exists for records that should never have been there, like
 // an invite sent to the wrong address.
-router.delete('/users/:id', requireAuth, requireSuperAdmin, function(req, res) {
-  var id = parseInt(req.params.id, 10);
-  if (id === req.user.id) return res.status(400).json({ error: 'You cannot delete your own account' });
+router.delete('/users/:id', requireAuth, requireSuperAdmin, asyncH(async function(req, res) {
+  var id = req.params.id;
+  var idNum = parseInt(id, 10);
+  if (String(id) === String(req.user.id)) return res.status(400).json({ error: 'You cannot delete your own account' });
 
-  var target = users.findById(id);
+  // Two identity spaces coexist: the legacy local users table (numeric ids)
+  // and Cognito (UUID usernames). The delete needs to try both — if the target
+  // exists only in Cognito (invited post-migration) findById returns nothing.
+  var target = users.findById(idNum);
+  var cognitoEmail = null;
+  if (target) {
+    cognitoEmail = target.email;
+  } else if (cognito.isConfigured()) {
+    try {
+      var pool = await cognito.listUsers(200);
+      var cu = pool.find(function(u) { return String(u.id) === String(id); });
+      if (cu) { cognitoEmail = cu.email; target = { id: id, name: cu.name || cu.email, email: cu.email, role: cu.role || 'user' }; }
+    } catch (e) { /* fall through */ }
+  }
   if (!target) return res.status(404).json({ error: 'No such user' });
 
   // Never leave the firm without a Super Admin — nobody could restore access,
@@ -423,10 +437,11 @@ router.delete('/users/:id', requireAuth, requireSuperAdmin, function(req, res) {
     if (!others.length) return res.status(400).json({ error: 'This is the only Super Admin — promote somebody else first' });
   }
 
-  // Clients are assigned by name, so deleting the account does not move their
-  // work — it strands it with an owner who can no longer sign in. Refuse unless
-  // the caller has explicitly accepted that, which the UI asks about by name.
-  var clients = (tracker.getData().clients || []).filter(function(c) { return c.assignedTeam === target.name; });
+  // Clients are assigned by name, so deleting the account can strand their
+  // work with an owner who can no longer sign in. Refuse unless the caller
+  // has explicitly accepted that, which the UI asks about by name.
+  var trackerData = tracker.getData();
+  var clients = (trackerData.clients || []).filter(function(c) { return c.assignedTeam === target.name; });
   if (clients.length && req.query.orphanClients !== 'yes') {
     return res.status(409).json({
       error: 'holds_clients',
@@ -437,6 +452,17 @@ router.delete('/users/:id', requireAuth, requireSuperAdmin, function(req, res) {
     });
   }
 
+  // Confirmed orphan-clients delete: actually null out those clients'
+  // assignedTeam. Before this, we kept the string 'Rohini' on the client
+  // rows and let strandedOwners re-surface her name in every dropdown —
+  // so a "delete" only half-deleted her. Reassign to Unassigned so she
+  // truly disappears from the picker.
+  if (clients.length) {
+    clients.forEach(function(c) { c.assignedTeam = 'Unassigned'; });
+    try { await tracker.saveData(trackerData.clients, trackerData.teamMembers, req.user.name); }
+    catch (e) { console.error('[delete-user] tracker save failed:', e.message); }
+  }
+
   // Anyone reporting to them would be left pointing at a manager that no longer
   // exists, which silently collapses their visibility. Move them up a level.
   var orphanedReports = users.getAll().filter(function(u) { return String(u.reports_to) === String(id); });
@@ -444,14 +470,23 @@ router.delete('/users/:id', requireAuth, requireSuperAdmin, function(req, res) {
     users.setRoleAndManager(u.id, null, target.reports_to != null ? target.reports_to : null);
   });
 
-  users.delete(id);
+  // Local delete (no-op if the user only existed in Cognito) …
+  if (users.findById(idNum)) users.delete(idNum);
+  // … then the Cognito delete so the account truly stops existing. Without
+  // this the /users/org merge that hydrates Cognito-native users would
+  // resurrect the row on the next page load.
+  if (cognito.isConfigured() && cognitoEmail) {
+    try { await cognito.deleteUser(cognitoEmail); }
+    catch (e) { console.error('[delete-user] cognito delete failed for ' + cognitoEmail + ':', e.message); }
+  }
+
   activity.log(req.user.id, req.user.name, 'user_deleted',
     target.name + ' (' + (target.email || 'no email') + ')' +
-    (clients.length ? ' — ' + clients.length + ' client(s) left unassigned' : '') +
+    (clients.length ? ' — ' + clients.length + ' client(s) moved to Unassigned' : '') +
     (orphanedReports.length ? ' — ' + orphanedReports.length + ' report(s) moved up' : ''));
 
   res.json({ ok: true, clientsOrphaned: clients.length, reportsMoved: orphanedReports.length });
-});
+}));
 router.put('/users/:id/reset-password', requireAuth, requireSuperAdmin, function(req, res) {
   if (!req.body.password || req.body.password.length < 6) return res.status(400).json({ error: 'Min 6 characters' });
   users.updatePassword(req.params.id, req.body.password); res.json({ ok: true });

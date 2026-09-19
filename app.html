@@ -1371,242 +1371,106 @@ function renderTodayPressureStrip(){
   </div>`;
 }
 
+// ─── Today, rebuilt ─────────────────────────────────────────────
+// One card, one question: does anything need me today. The previous version
+// stacked eight sections that all restated the same overdue count in
+// different visual shapes — three tables and four tile groups all reading
+// the same 998 row — so a manager could not tell where to click first.
+// Everything below is either the answer (attention list) or the counters
+// that make the answer legible; nothing is a dupe.
 function renderMorningDashboard(){
   if(!isAdmin()) return renderPriorityQueue();
   if(!state.clientReadiness){ setTimeout(ensureReadinessLoaded,0); }
   if(!state.morning){ setTimeout(loadMorningDashboard,0); return `<div class="empty-state"><div class="empty-state-icon">☕</div><div class="empty-state-title">Composing morning briefing…</div></div>`; }
   if(_isLoadErr(state.morning)) return renderLoaderError(state.morning, '⚠️', 'Failed to load morning briefing');
-  const d=state.morning;
-  const ageSec=Math.floor((Date.now()-new Date(d.generatedAt).getTime())/1000);
-  // The page used to stack eight sections of equal weight, so on a quiet day
-  // it said "nothing to do" three separate times and on a busy one it gave no
-  // clue what to open first. It now answers one question at the top — does
-  // anything need me today — backs it with three numbers that drive action,
-  // then the work itself. Everything that is context rather than action moved
-  // below a fold.
-  const dl=d.deadlines||{};
-  const th=(d.teamHealth&&d.teamHealth.totals)||{};
-  const overdue=dl.overdueCount||0, dueToday=dl.todayCount||0, next7=dl.next7Count||0;
-  const blocked=th.blockedWork||0, reviews=th.pendingReviews||0;
-  const needsMe=overdue+dueToday+blocked+reviews;
 
-  // Stale-data guard: UAE Corporate Tax only applies to FYs starting on or
-  // after 2023-06-01, and VAT existed from 2018. Anything counted as
-  // "overdue" with a date before 2018 is almost always test data or an
-  // Ops-Mkt import from a legacy tool that never ran a filing. When the
-  // overdue number looks implausibly high (>200), stamp a hint on the tile
-  // so the manager doesn't wake up to a screaming red 993 that is really
-  // twenty stale rows in a database.
-  const overdueLooksStale = overdue > 200;
+  const d = state.morning;
+  const dl = d.deadlines || {};
+  const attention = (d.clientsAttention && d.clientsAttention.length ? d.clientsAttention : ((d.todaysFocus && d.todaysFocus.items) || [])).slice(0, 25);
+  const inScope = (state.clients || []).length;
+  const attentionCount = attention.length;
+  // Stale-data guard: UAE CT only exists post-2023-06 and VAT post-2018.
+  // Anything counted as "overdue" from before 2018 is almost always test data
+  // or an Ops-Mkt import from a legacy tool. When the overdue count is
+  // implausibly high we say so instead of pretending it's real work.
+  const overdueLooksStale = (dl.overdueCount || 0) > 200;
 
-  let h=`<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:22px;flex-wrap:wrap;gap:8px">
+  // ── Header — greeting, one-line verdict, refresh ──
+  const verdict = overdueLooksStale
+    ? `${dl.overdueCount} filings flagged behind — the list still contains legacy imports.`
+    : (attentionCount ? `${attentionCount} client${attentionCount===1?'':'s'} need${attentionCount===1?'s':''} attention today.` : `Nothing urgent — sit back.`);
+  let h = `<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:20px;flex-wrap:wrap;gap:10px">
     <div>
       <div style="font-size:26px;font-weight:600;letter-spacing:-0.018em;color:var(--text-primary)">${greetingFor()}</div>
-      <div style="font-size:13px;color:var(--text-muted);margin-top:2px">${new Date().toLocaleDateString(undefined,{weekday:'long',day:'numeric',month:'long'})} · Here's what needs your attention today.</div>
+      <div style="font-size:13px;color:var(--text-muted);margin-top:2px">${new Date().toLocaleDateString(undefined,{weekday:'long',day:'numeric',month:'long'})} · ${verdict}</div>
     </div>
     <button class="btn btn-sm" id="mb-refresh">↻ Refresh</button>
   </div>`;
 
-  // ---- Three calmer KPI tiles (was four alarming red-bordered ones).
-  // "Overdue" carries the total, with a stale-data hint when it's implausible.
-  // "Due this week" is the next-7 count. "Filed on time" is aspirational — falls
-  // back to a static 'This week's cadence' line when the number isn't known.
-  const kpi=(v,label,caption,cls,go)=>`<button class="card kpi-tile${cls?' '+cls:''}" data-mb-go="${go||''}" style="text-align:left;cursor:${go?'pointer':'default'};padding:18px 20px;background:var(--bg-card);display:flex;flex-direction:column;gap:6px;border:1px solid var(--border)">
-    <span style="font-size:12px;color:var(--text-muted);font-weight:500">${esc(label)}</span>
-    <span style="font-size:30px;font-weight:700;letter-spacing:-0.02em;line-height:1.05;color:${cls==='warn'?'var(--amber)':cls==='danger'?'var(--red)':cls==='ok'?'var(--green)':'var(--text-primary)'};font-variant-numeric:tabular-nums">${v}</span>
-    <span style="font-size:12px;color:var(--text-muted);font-weight:500">${caption||''}</span>
-  </button>`;
-  const overdueCaption = overdueLooksStale
-    ? '<span style="color:var(--amber)">Includes legacy imports — clean the list</span>'
-    : (overdue ? 'Start with these' : 'Nothing behind. Nice.');
-  const overdueClass = overdueLooksStale ? 'warn' : (overdue ? 'danger' : 'ok');
-  h+=`<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin-bottom:22px">
-    ${kpi(overdue,'Filings behind',overdueCaption,overdueClass,'overdue')}
-    ${kpi(next7,'Due this week',next7?'Look at the calendar':'Nothing due this week','',next7?'overdue':'')}
-    ${kpi(needsMe-overdue-next7||reviews,reviews?'Reviews waiting':'Escalations',reviews?'Sign-offs pending':(blocked?blocked+' items blocked':'All clear'),reviews?'warn':(blocked?'warn':'ok'),reviews?'portfolio_action':(blocked?'portfolio_action':''))}
+  // ── Sit-back state — only when there really is nothing to do ──
+  if(!attentionCount && !overdueLooksStale){
+    h += `<div style="background:var(--green-bg);border:1px solid var(--green-border);border-radius:14px;padding:36px 24px;text-align:center;margin-bottom:16px">
+      <div style="font-size:20px;font-weight:700;color:var(--green);letter-spacing:-0.01em">✓ All ${inScope} client${inScope===1?'':'s'} on track</div>
+      <div style="font-size:13px;color:var(--green);opacity:0.85;margin-top:6px">Books closed, nothing due, nothing blocked. Come back tomorrow.</div>
+    </div>`;
+    setTimeout(()=>{ const r=document.getElementById('mb-refresh'); if(r) r.onclick=()=>{ state.morning=null; loadMorningDashboard(true); }; },0);
+    return h;
+  }
+
+  // ── Two counters — in-scope portfolio + attention today ──
+  const cntCard = (label, val, cap, color) => `<div class="card" style="padding:18px 22px;margin-bottom:0">
+    <div style="font-size:12px;color:var(--text-muted);font-weight:500">${esc(label)}</div>
+    <div style="font-size:30px;font-weight:700;letter-spacing:-0.02em;color:${color};font-variant-numeric:tabular-nums;margin-top:2px">${val}</div>
+    <div style="font-size:12px;color:var(--text-muted);margin-top:2px">${cap}</div>
+  </div>`;
+  h += `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin-bottom:16px">
+    ${cntCard('In your book', inScope, isSuperAdmin()?'clients across your whole team':'clients you own or oversee', 'var(--text-primary)')}
+    ${cntCard('Need attention today', attentionCount, attentionCount?'listed below':'nothing outstanding', attentionCount?'var(--amber)':'var(--green)')}
   </div>`;
 
-  // ---- Who is under pressure this month. Folded in here because it is the
-  // other question a manager has every morning, and it was previously only
-  // answerable by counting clients by hand.
-  h+=renderTodayPressureStrip();
+  // ── Stale-data hint — soft, informational, only when triggered ──
+  if(overdueLooksStale){
+    h += `<div class="alert alert-warning" style="margin-bottom:14px">Deadline counts include ${dl.overdueCount} imports from before UAE VAT/CT existed (pre-2018). Clean those out of Clients before treating the number as real.</div>`;
+  }
 
-  // ---- The work itself.
-  h+=`<div style="display:grid;grid-template-columns:2fr 1fr;gap:14px;margin-bottom:14px">`;
-  h+=renderMB_TodaysFocus(d.todaysFocus);
-  h+=renderMB_ManagerActions(d.managerActions);
-  h+=`</div>`;
-  h+=renderMB_Deadlines(d.deadlines);
-  h+=renderMB_ClientsAttention(d.clientsAttention);
+  // ── Team pulse (Super/Prime only) — who's carrying an uneven month ──
+  if(isSuperAdmin()) h += renderTodayPressureStrip();
 
-  // ---- Context, not action. Present but out of the way, so the top of the
-  // page stays about what to do next.
-  h+=`<details style="margin-top:6px"><summary style="cursor:pointer;font-size:12px;color:var(--text-muted);padding:8px 0">More detail — business health, filing readiness, team and risk</summary><div style="padding-top:10px">`;
-  h+=renderMB_BusinessHealth(d.businessHealth);
-  h+=renderMB_ReadinessChips(d.readinessCounts);
-  h+=renderMB_TeamHealth(d.teamHealth);
-  h+=renderMB_RiskSummary(d.riskSummary);
-  h+=`</div></details>`;
+  // ── The attention list — the one place work is prioritised ──
+  if(attentionCount){
+    // assignedUser isn't on clientsAttention rows — resolve it from state.clients
+    // by id so the "Owner" column matches what the Clients tab shows.
+    const ownerOf = (cid) => {
+      const c = (state.clients||[]).find(x => String(x.id) === String(cid));
+      return (c && c.assignedTeam) || 'unassigned';
+    };
+    h += `<div class="card"><div class="card-title" style="margin-bottom:12px">Clients needing attention (${attentionCount})</div>`;
+    h += `<div style="overflow:auto"><table style="width:100%;font-size:13px"><thead><tr style="text-align:left;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em;font-size:10px;font-weight:800;background:var(--surface-2,var(--bg-elevated))"><th style="padding:10px 12px">Client</th><th style="padding:10px 12px">Owner</th><th style="padding:10px 12px">Next deadline</th><th style="padding:10px 12px">Recommended</th></tr></thead><tbody>`;
+    attention.forEach(r => {
+      const cid  = r.clientId;
+      const name = r.clientName || '(unnamed)';
+      const tier = r.tier;
+      const dd   = r.nextDeadline || r.dueDate;
+      const dtyp = r.nextDeadlineType || r.issue;
+      const dueLabel = dd
+        ? (function(){
+            const dn = Math.floor((new Date(dd).getTime() - Date.now())/86400000);
+            const col = dn<0 ? 'var(--red)' : dn<=3 ? 'var(--amber)' : 'var(--text-primary)';
+            const tail = dtyp ? ` <span style="color:var(--text-muted);font-weight:400">· ${esc(String(dtyp).replace(/_/g,' '))}</span>` : '';
+            return `<span style="color:${col};font-weight:700">${esc(dd)}</span>${tail}`;
+          })()
+        : '<span style="color:var(--text-muted)">—</span>';
+      h += `<tr data-client="${cid}" style="cursor:pointer"><td style="padding:12px">${esc(name)} ${tier?tierBadgeMini(tier):''}</td><td style="padding:12px;color:var(--text-muted)">${esc(ownerOf(cid))}</td><td style="padding:12px">${dueLabel}</td><td style="padding:12px;color:var(--accent)">${esc(r.recommendedAction||'—')}</td></tr>`;
+    });
+    h += `</tbody></table></div></div>`;
+  }
 
   setTimeout(()=>{
-    const r=document.getElementById('mb-refresh'); if(r) r.onclick=()=>{ state.morning=null; loadMorningDashboard(true); };
-    // Click handlers for readiness chips → drill into Clients Overview with filter
-    document.querySelectorAll('[data-mb-readiness]').forEach(b=>{ b.onclick=()=>{ state.filterReadiness=b.dataset.mbReadiness; state.activeTab='dashboard'; render(); }; });
-    // Risk Summary tile click-throughs
-    document.querySelectorAll('[data-mb-go]').forEach(b=>{ b.onclick=()=>{
-      const target=b.dataset.mbGo;
-      if(target==='portfolio_action'){ state.activeTab='portfolio'; portfolioState.subTab='action'; }
-      else if(target==='risk_critical'){ state.activeTab='risk'; riskState.subTab='dashboard'; riskState.readinessFilter='All'; }
-      else if(target==='risk_action'){ state.activeTab='risk'; riskState.subTab='action'; }
-      else if(target==='overdue'){ state.activeTab='dashboard'; }
-      render();
-    }; });
-  },0);
-  return h;
-}
-
-// ----- Section 8 -----
-function renderMB_BusinessHealth(b){
-  if(!b) return '';
-  const tile=(label,val,suffix,color)=>`<div class="card" style="text-align:center"><div style="color:var(--text-muted);font-size:11px;text-transform:uppercase;letter-spacing:0.05em">${label}</div><div style="font-size:24px;font-weight:800;color:${color||'var(--text-primary)'};margin-top:2px">${val==null?'—':val}${suffix||''}</div></div>`;
-  let h=`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px;margin-bottom:12px">`;
-  h+=tile('Active Clients',     b.totalActiveClients);
-  h+=tile('Ready For Filing',   b.readyForFiling, '', 'var(--green)');
-  h+=tile('Blocked',            b.blockedClients, '', b.blockedClients>0?'var(--red)':'var(--text-primary)');
-  h+=tile('Filing Completion',  b.filingCompletionRate, '%', b.filingCompletionRate>=90?'var(--green)':b.filingCompletionRate>=70?'var(--amber)':b.filingCompletionRate==null?null:'var(--red)');
-  h+=tile('SLA Compliance',     b.slaCompliancePct, '%', b.slaCompliancePct>=90?'var(--green)':b.slaCompliancePct>=70?'var(--amber)':b.slaCompliancePct==null?null:'var(--red)');
-  h+=tile('Team Utilisation',   b.teamUtilizationPct, '%', b.teamUtilizationPct>100?'var(--red)':b.teamUtilizationPct>=80?'var(--amber)':'var(--green)');
-  h+=`</div>`;
-  return h;
-}
-
-// ----- Section 5 -----
-function renderMB_ReadinessChips(counts){
-  if(!counts) return '';
-  const order=['high_risk','blocked','filing_due','awaiting_client_approval','awaiting_documents','awaiting_review','partially_ready','ready'];
-  let h=`<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px;align-items:center">
-    <span style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em;margin-right:4px">Filing readiness</span>`;
-  order.forEach(s=>{
-    const n=counts[s]||0; const m=READINESS_STATE_META[s]; if(!m) return;
-    h+=`<button class="btn btn-sm" data-mb-readiness="${s}" style="border-left:3px solid ${m.color}">${esc(m.label)}: <b>${n}</b></button>`;
-  });
-  h+=`</div>`;
-  return h;
-}
-
-// ----- Section 1 -----
-function renderMB_TodaysFocus(tf){
-  if(!tf) return '';
-  const items=tf.items||[];
-  let h=`<div class="card"><div class="card-title">🎯 Today's Focus (Top ${items.length})</div>`;
-  if(!items.length){ h+=`<div style="padding:8px;font-size:12px;color:var(--text-muted)">Nothing requires immediate attention.</div></div>`; return h; }
-  h+=`<div style="overflow:auto"><table style="width:100%;font-size:12px"><thead><tr style="text-align:left;color:var(--text-muted);font-weight:600"><th style="padding:4px">Client</th><th style="padding:4px">Issue</th><th style="padding:4px">Due</th><th style="padding:4px">Owner</th><th style="padding:4px">Recommended action</th></tr></thead><tbody>`;
-  items.forEach(i=>{
-    const due=i.dueDate?`<span style="color:${daysUntilLocal(i.dueDate)<0?'var(--red)':daysUntilLocal(i.dueDate)<=3?'var(--amber)':'var(--text-muted)'};font-weight:700">${i.dueDate}</span>`:'—';
-    h+=`<tr style="cursor:pointer" data-client="${i.clientId}"><td style="padding:6px 4px"><b>${esc(i.clientName)}</b> ${tierBadgeMini(i.tier)}</td><td style="padding:6px 4px">${esc(i.issue)}</td><td style="padding:6px 4px">${due}</td><td style="padding:6px 4px;color:var(--text-muted)">${esc(i.assignedUser||'—')}</td><td style="padding:6px 4px;color:var(--accent)">${esc(i.recommendedAction||'')}</td></tr>`;
-  });
-  h+=`</tbody></table></div></div>`;
+    const r = document.getElementById('mb-refresh'); if(r) r.onclick=()=>{ state.morning=null; loadMorningDashboard(true); };
+  }, 0);
   return h;
 }
 function daysUntilLocal(d){ if(!d) return null; return Math.floor((new Date(d).getTime()-Date.now())/86400000); }
-
-// ----- Section 6 -----
-function renderMB_ManagerActions(actions){
-  let h=`<div class="card" style="border-color:var(--accent-soft)"><div class="card-title" style="color:var(--accent)">→ Recommended Actions Today (${(actions||[]).length})</div>`;
-  if(!actions||!actions.length){ h+=`<div style="padding:8px;font-size:12px;color:var(--text-muted)">Nothing to action.</div></div>`; return h; }
-  h+=`<div style="display:grid;gap:6px">`;
-  actions.forEach(a=>{
-    const clickable=a.clientId||a.taskId;
-    h+=`<div${clickable?` style="cursor:pointer" ${a.taskId?`data-task="${a.taskId}"`:''}${a.clientId?` data-client="${a.clientId}"`:''}`:''} class="card" data-mb-action style="padding:8px;background:var(--bg-deep);border:1px solid var(--border)"><div style="font-size:12px">${esc(a.sentence)}</div></div>`;
-  });
-  h+=`</div></div>`;
-  return h;
-}
-
-// ----- Section 2 -----
-function renderMB_Deadlines(d){
-  if(!d) return '';
-  const tile=(label,n,color)=>`<div class="card" style="text-align:center;border-color:${color||'var(--border)'}"><div style="color:var(--text-muted);font-size:11px;text-transform:uppercase">${label}</div><div style="font-size:22px;font-weight:800;color:${color||'var(--text-primary)'}">${n||0}</div></div>`;
-  let h=`<div class="card-title" style="margin-top:14px;margin-bottom:10px">⏰ Critical Deadlines</div>`;
-  h+=`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px;margin-bottom:12px">`;
-  h+=tile('Overdue',     d.overdueCount, 'var(--red)');
-  h+=tile('Due Today',   d.todayCount,   d.todayCount>0?'var(--amber)':'var(--border)');
-  h+=tile('Next 7 Days', d.next7Count);
-  h+=tile('Next 14 Days',d.next14Count);
-  h+=`</div>`;
-  // By category breakdown (upcoming only)
-  const cats=d.byCategory||{};
-  h+=`<div class="card" style="padding:0;overflow:auto;margin-bottom:14px"><table style="width:100%;font-size:12px"><thead><tr style="text-align:left;color:var(--text-muted)"><th style="padding:6px">Category</th><th style="padding:6px">Count</th><th style="padding:6px">Earliest</th><th style="padding:6px">Latest</th></tr></thead><tbody>`;
-  ['VAT','CT','Registration','Review','Client Approval','Other'].forEach(k=>{
-    const list=cats[k]||[];
-    if(!list.length) return;
-    const dates=list.map(x=>x.dueDate).filter(Boolean).sort();
-    h+=`<tr><td style="padding:6px;font-weight:600">${esc(k)}</td><td style="padding:6px">${list.length}</td><td style="padding:6px">${dates[0]||'—'}</td><td style="padding:6px">${dates[dates.length-1]||'—'}</td></tr>`;
-  });
-  h+=`</tbody></table></div>`;
-  // Overdue detail (if any) — first 8 rows
-  if(d.overdue && d.overdue.length){
-    h+=`<div class="card" style="border-color:var(--red-border);margin-bottom:14px"><div class="card-title" style="color:var(--red)">Overdue (${d.overdueCount})</div><div style="overflow:auto"><table style="width:100%;font-size:12px"><tbody>`;
-    d.overdue.slice(0,8).forEach(t=>{
-      h+=`<tr data-task="${t.taskId}" style="cursor:pointer"><td style="padding:4px;font-weight:600">${esc(t.clientName)}</td><td style="padding:4px">${esc((t.taskType||'').replace(/_/g,' '))}</td><td style="padding:4px;color:var(--red)">${t.dueDate} (${-t.daysToDue}d overdue)</td><td style="padding:4px;color:var(--text-muted)">${esc(t.assignedUser||'—')}</td></tr>`;
-    });
-    h+=`</tbody></table></div></div>`;
-  }
-  return h;
-}
-
-// ----- Section 3 -----
-function renderMB_ClientsAttention(rows){
-  let h=`<div class="card" style="margin-bottom:14px"><div class="card-title">🚨 Top 10 Clients Requiring Attention</div>`;
-  if(!rows||!rows.length){ h+=`<div style="padding:8px;font-size:12px;color:var(--text-muted)">No clients require attention.</div></div>`; return h; }
-  h+=`<div style="overflow:auto"><table style="width:100%;font-size:12px"><thead><tr style="text-align:left;color:var(--text-muted)"><th style="padding:6px">Client</th><th style="padding:6px">Tier</th><th style="padding:6px">Risk</th><th style="padding:6px">Readiness</th><th style="padding:6px">Next Deadline</th><th style="padding:6px">Recommended</th></tr></thead><tbody>`;
-  rows.forEach(r=>{
-    h+=`<tr style="cursor:pointer" data-client="${r.clientId}"><td style="padding:6px;font-weight:700">${esc(r.clientName)}</td><td style="padding:6px">${tierBadgeMini(r.tier)}</td><td style="padding:6px">${riskBandPill(r.riskBand)}</td><td style="padding:6px">${readinessPill(r.readinessState)}</td><td style="padding:6px;color:var(--text-muted)">${r.nextDeadline?r.nextDeadline+(r.nextDeadlineType?' ('+r.nextDeadlineType.replace(/_/g,' ')+')':''):'—'}</td><td style="padding:6px;color:var(--accent)">${esc(r.recommendedAction||'')}</td></tr>`;
-  });
-  h+=`</tbody></table></div></div>`;
-  return h;
-}
-
-// ----- Section 4 -----
-function renderMB_TeamHealth(t){
-  if(!t) return '';
-  const tot=t.totals||{};
-  const tile=(label,val,color)=>`<div class="card" style="text-align:center"><div style="color:var(--text-muted);font-size:11px;text-transform:uppercase">${label}</div><div style="font-size:22px;font-weight:800;color:${color||'var(--text-primary)'}">${val||0}</div></div>`;
-  let h=`<div class="card-title" style="margin-bottom:10px">👥 Team Health</div>`;
-  h+=`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;margin-bottom:12px">`;
-  h+=tile('Total Open',      tot.totalOpenTasks);
-  h+=tile('Overdue',         tot.overdueTasks, tot.overdueTasks>0?'var(--red)':'var(--text-primary)');
-  h+=tile('Pending Reviews', tot.pendingReviews, tot.pendingReviews>5?'var(--amber)':'var(--text-primary)');
-  h+=tile('Blocked',         tot.blockedWork, tot.blockedWork>0?'var(--red)':'var(--text-primary)');
-  h+=tile('Open Escalations',tot.openEscalations, tot.openEscalations>0?'var(--red)':'var(--text-primary)');
-  h+=`</div>`;
-  if(t.byUser && t.byUser.length){
-    h+=`<div class="card" style="padding:0;overflow:auto;margin-bottom:14px"><table style="width:100%;font-size:12px"><thead><tr style="text-align:left;color:var(--text-muted)"><th style="padding:6px">User</th><th style="padding:6px">Workload</th><th style="padding:6px">Open</th><th style="padding:6px">Overdue</th><th style="padding:6px">Reviews</th><th style="padding:6px">Blocked</th></tr></thead><tbody>`;
-    t.byUser.forEach(u=>{
-      const c=u.band==='overloaded'?'var(--red)':u.band==='underutilized'?'var(--blue)':'var(--green)';
-      const pct=Math.min(150,(u.workloadRatio||0)*100);
-      h+=`<tr><td style="padding:6px;font-weight:600">${esc(u.userName)}</td><td style="padding:6px;width:30%"><div style="display:flex;align-items:center;gap:6px"><div style="flex:1;background:var(--bg-deep);height:6px;border-radius:3px;overflow:hidden"><div style="width:${Math.min(100,pct)}%;background:${c};height:100%"></div></div><span style="color:${c};font-weight:700;font-size:11px">${u.workloadRatio||0}</span></div></td><td style="padding:6px">${u.openTasks||0}/${u.capacity||'—'}</td><td style="padding:6px;color:${u.overdueTasks>0?'var(--red)':'var(--text-muted)'}">${u.overdueTasks||0}</td><td style="padding:6px">${u.awaitingReview||0}</td><td style="padding:6px">${u.blockedTasks||0}</td></tr>`;
-    });
-    h+=`</tbody></table></div>`;
-  }
-  if(t.overloaded && t.overloaded.length){
-    h+=`<div class="card" style="border-color:var(--red-border);margin-bottom:14px"><div class="card-title" style="color:var(--red)">⚠ Overloaded (${t.overloaded.length})</div><div style="font-size:12px">${t.overloaded.map(u=>esc(u.userName)+' (ratio '+u.workloadRatio+')').join(' · ')}</div></div>`;
-  }
-  return h;
-}
-
-// ----- Section 7 -----
-function renderMB_RiskSummary(r){
-  if(!r) return '';
-  const tile=(label,n,color,target)=>`<button class="card" data-mb-go="${target}" style="cursor:pointer;text-align:center;border-color:${n>0?(color||'var(--border)'):'var(--border)'}"><div style="color:var(--text-muted);font-size:11px;text-transform:uppercase">${label}</div><div style="font-size:26px;font-weight:800;color:${n>0?(color||'var(--text-primary)'):'var(--text-muted)'};margin-top:2px">${n||0}</div><div style="font-size:10px;color:var(--accent);margin-top:4px">View →</div></button>`;
-  let h=`<div class="card-title" style="margin-bottom:10px">📊 Risk Summary</div><div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px;margin-bottom:14px">`;
-  h+=tile('High-Risk Clients',     r.highRiskClients,        'var(--amber)', 'portfolio_action');
-  h+=tile('Critical-Risk Clients', r.criticalRiskClients,    'var(--red)',   'risk_critical');
-  h+=tile('Open Escalations',      r.openEscalations,        'var(--red)',   'risk_action');
-  h+=tile('Overdue Compliance',    r.overdueComplianceItems, 'var(--red)',   'overdue');
-  h+=`</div>`;
-  return h;
-}
 
 // ═══════════════════════════════════════════════════════════════
 // PHASE 8 — AI Operations Assistant (explainable, deterministic)

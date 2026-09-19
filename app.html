@@ -1333,7 +1333,9 @@ function renderProfileMenu_People(){
   const pending = people.filter(p => !p.active).length;
   const stat = (k,v) => `<div class="pm-stat"><div class="pm-stat-k">${esc(k)}</div><div class="pm-stat-v">${v}</div></div>`;
   let h = `<div class="pm-sec"><div class="pm-sec-k">Your team at a glance</div><div class="pm-summary">${stat('Admins',admins)}${stat('Users',users)}${stat('Pending',pending)}</div></div>`;
-  h += `<div class="pm-sec"><div class="pm-people-h"><div class="pm-sec-k">People (${people.length})</div>${isSuperAdmin()?`<button class="pm-invite" data-pm-invite>+ Invite</button>`:''}</div>`;
+  // Admins can invite Users; Super/Prime can invite anything they're allowed
+  // to grant (matches roles.canInvite matrix — enforced backend-side too).
+  h += `<div class="pm-sec"><div class="pm-people-h"><div class="pm-sec-k">People (${people.length})</div>${isAdmin()?`<button class="pm-invite" data-pm-invite>+ Invite</button>`:''}</div>`;
   people.forEach(p => {
     const tone = roleTint[String(p.role).toLowerCase()] || 'user';
     const initial = ((p.name||p.email||'?').trim().charAt(0)||'?').toUpperCase();
@@ -1876,9 +1878,10 @@ document.addEventListener('click', function(e){
   // Tab switch inside the menu
   const tab = e.target.closest('[data-pm-tab]');
   if(tab){ state.profileMenuTab = tab.dataset.pmTab; render(); return; }
-  // Invite button — opens the existing invite modal
+  // Invite button — jump to User Management with the invite panel open.
+  // There is no standalone invite modal — the panel is the invite UI.
   const inv = e.target.closest('[data-pm-invite]');
-  if(inv){ state.profileMenuOpen = false; state.showModal = 'invite'; render(); return; }
+  if(inv){ state.profileMenuOpen = false; state.activeTab = 'users'; usersState.inviteOpen = true; render(); return; }
   // "Open full Organisation" — links to the (retired but still-registered) users tab
   const org = e.target.closest('[data-pm-open-org]');
   if(org){ e.preventDefault(); state.profileMenuOpen = false; state.activeTab = 'users'; render(); return; }
@@ -4824,7 +4827,11 @@ async function userAction(fn,label){
 }
 
 function renderUserManagement(){
-  if(!isSuperAdmin())return`<div class="empty-state"><div class="empty-state-icon">🔒</div><div class="empty-state-title">Super Admin only</div></div>`;
+  // Anyone with Admin role or above can open this page. What each caller
+  // sees + can do is scoped further inside:
+  //   * Prime/Super: full firm view, invite any role they can grant
+  //   * Admin: their own downline only, invite Users only
+  if(!isAdmin())return`<div class="empty-state"><div class="empty-state-icon">🔒</div><div class="empty-state-title">Admin access only</div></div>`;
   if(!state.orgPeople&&!usersState.loading){ setTimeout(()=>loadOrgPeople(true),0); }
 
   const people=usersState.people||[];
@@ -4832,8 +4839,7 @@ function renderUserManagement(){
   const stranded=strandedOwners();
 
   let h=`<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:16px;flex-wrap:wrap">
-    <div><h2 style="font-size:20px;font-weight:800;margin:0">👤 User Management</h2>
-    <div style="font-size:12px;color:var(--text-muted);margin-top:3px">Everyone who can sign in. Clients are assigned to these people — there is no separate team list any more.</div></div>
+    <div><h2 style="font-size:20px;font-weight:800;margin:0">👤 User Management</h2></div>
     <div style="display:flex;gap:8px"><button class="btn" data-action="reloadUsers">↻ Refresh</button><button class="btn btn-primary" data-action="toggleInvite">${usersState.inviteOpen?'Cancel':'+ Invite person'}</button></div>
   </div>`;
 
@@ -4857,7 +4863,6 @@ function renderUserManagement(){
         <div><div class="form-label">Reports to</div><select class="form-input" id="invReports"><option value="">— auto —</option>${people.filter(p=>p.role!=='user').map(p=>`<option value="${p.id}">${esc(p.name)}</option>`).join('')}</select></div>
         <button class="btn btn-primary" data-action="sendInvite">Send invite</button>
       </div>
-      <div style="font-size:11px;color:var(--text-muted);margin-top:8px;line-height:1.5">A User sees only their own clients. An Admin sees the Users they were given. A Super Admin sees their entire book — Admins they invited, those Admins' Users, and everything they manage.</div>
     </div>`;
   }
 

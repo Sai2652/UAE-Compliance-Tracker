@@ -26,12 +26,27 @@ function daysAgo(d)   { return d ? Math.floor((Date.now() - new Date(d).getTime(
 function isoDate(d)   { return new Date(d).toISOString().slice(0, 10); }
 
 // Server-side composite cache (30s) — absorbs double-click refreshes without
-// re-running every service. Per-process, in-memory only.
-let _cache = null;
+// re-running every service. Per-process, in-memory only. Keyed by caller
+// visibility scope: a Super Admin's cached payload is not served to an
+// Admin, because they see different subsets. Cache key is a stable
+// signature of the visibleClientIds set (or 'ALL' for full-visibility).
+const _cache = new Map();  // key -> {at, payload}
 const CACHE_MS = 30 * 1000;
 
-async function generate({ force } = {}) {
-  if (!force && _cache && (Date.now() - _cache.at) < CACHE_MS) return _cache.payload;
+async function generate({ force, user, allUsers } = {}) {
+  // Visibility scoping — the previous version ignored `user` entirely and
+  // returned the whole firm's payload to every caller, so Admins saw every
+  // client's tasks, escalations and deadlines on their Today tab. We now
+  // require callers to pass user + allUsers so we can resolve their client
+  // scope (Prime/Super = everyone; Admin = own name + downline; User =
+  // own name only) and filter the payload before returning.
+  const roles = require('../../roles');
+  let scope = { all: true, names: null };
+  if (user) scope = roles.clientScope(user, allUsers || []);
+
+  const cacheKey = scope.all ? 'ALL' : Array.from(scope.names || []).sort().join('|') || '__none__';
+  const hit = _cache.get(cacheKey);
+  if (!force && hit && (Date.now() - hit.at) < CACHE_MS) return hit.payload;
 
   const today = new Date(); today.setUTCHours(0, 0, 0, 0);
   const todayStr = isoDate(today);
@@ -39,7 +54,7 @@ async function generate({ force } = {}) {
   const in14  = isoDate(new Date(today.getTime() + 14 * DAY));
   const thisMonth = todayStr.slice(0, 7);
 
-  const [
+  let [
     actionList, readinessData, capacity, riskData, mgmtSummary, reviewQueue,
     openTasks, obligations, openEscalations, workflows
   ] = await Promise.all([
@@ -54,7 +69,36 @@ async function generate({ force } = {}) {
     repos.EscalationEventsRepo.listOpen(),
     repos.WorkflowsRepo.list({ workflowType: ['VAT_Filing','CT_Filing'], status: 'active', limit: 5000 })
   ]);
-  const clients = repos.ClientsRepo.listAll();
+  const allClients = repos.ClientsRepo.listAll();
+
+  // Filter every downstream data source through the caller's scope. Anything
+  // that carries a client id (task, obligation, escalation, workflow, action
+  // row, readiness row) drops out if the client isn't in the caller's book.
+  // For unscoped callers (Prime/Super) `scope.all` is true and inclusion
+  // becomes a no-op.
+  const includeById   = (cid) => scope.all ? true : !!(scope.names && (function(){
+    // Match by client's assignedTeam name — that's how visibility resolves elsewhere.
+    var cli = allClients.find(function(c){ return String(c.id) === String(cid); });
+    return cli && scope.names.has(cli.assignedTeam);
+  })());
+  const includeByName = (nm)  => scope.all ? true : !!(scope.names && nm && scope.names.has(nm));
+
+  const clients = scope.all ? allClients : allClients.filter(c => c.assignedTeam && scope.names.has(c.assignedTeam));
+  const scopedOpenTasks       = scope.all ? openTasks       : openTasks.filter(t => includeByName(t.assigned_user_name) || includeById(t.client_external_id));
+  const scopedObligations     = scope.all ? obligations     : obligations.filter(o => includeById(o.client_external_id));
+  const scopedEscalations     = scope.all ? openEscalations : openEscalations.filter(e => includeById(e.client_external_id));
+  const scopedWorkflows       = scope.all ? workflows       : workflows.filter(w => includeById(w.client_external_id));
+  const scopedActionRows      = scope.all ? (actionList.rows || []) : (actionList.rows || []).filter(r => includeById(r.clientId));
+  const scopedReadinessClients= scope.all ? (readinessData.clients || []) : (readinessData.clients || []).filter(r => includeById(r.clientId));
+  const scopedReadinessData   = { ...readinessData, clients: scopedReadinessClients, counts: scope.all ? readinessData.counts : recount(scopedReadinessClients) };
+  // Aliases — rest of the function reads these names.
+  openTasks       = scopedOpenTasks;
+  obligations     = scopedObligations;
+  openEscalations = scopedEscalations;
+  workflows       = scopedWorkflows;
+  actionList      = { ...actionList, rows: scopedActionRows };
+  readinessData   = scopedReadinessData;
+
   const clientScores = riskService.computeClientScores(riskData.findings, riskData.config, clients);
 
   // -------- Workflow steps — single batched query, shared by sections below.
@@ -110,8 +154,16 @@ async function generate({ force } = {}) {
     todaysFocus, deadlines, clientsAttention, teamHealth,
     readinessCounts, managerActions, riskSummary, businessHealth
   };
-  _cache = { at: Date.now(), payload };
+  _cache.set(cacheKey, { at: Date.now(), payload });
   return payload;
+}
+
+// Roll a scoped readiness-clients slice back into count buckets so
+// downstream renders (Filing Readiness chips, if any) still add up.
+function recount(rows){
+  const c = {};
+  (rows || []).forEach(r => { if(r && r.state) c[r.state] = (c[r.state] || 0) + 1; });
+  return c;
 }
 
 // ---------- Section builders ----------

@@ -1529,7 +1529,14 @@ router.get('/ai/clients/:id/risk-explanation', requireAuth, requireAdmin, asyncH
 // =====================================================================
 var morningDashboardSvc = require('./services/dashboard/morningDashboardService');
 router.get('/dashboard/morning', requireAuth, requireAdmin, asyncH(async function(req, res) {
-  res.json(await morningDashboardSvc.generate({ force: req.query.refresh === '1' }));
+  // Pass user + allUsers so the dashboard scopes to the caller's book.
+  // Cognito-native users (post-migration) may not be in users.getAll(); the
+  // service still resolves their scope from req.user.name + role.
+  res.json(await morningDashboardSvc.generate({
+    force: req.query.refresh === '1',
+    user: req.user,
+    allUsers: users.getAll()
+  }));
 }));
 
 module.exports = router;

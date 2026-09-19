@@ -112,8 +112,10 @@ input,select,textarea,button{font-family:inherit}
 /* Header actions — on the midnight ground buttons must invert. */
 .header .btn{background:rgba(255,255,255,0.08);border-color:rgba(255,255,255,0.16);color:#fff}
 .header .btn:hover{background:rgba(255,255,255,0.14);border-color:rgba(255,255,255,0.26);color:#fff}
-.header .btn-primary{background:#fff;border-color:#fff;color:var(--sidebar-bg);box-shadow:none}
-.header .btn-primary:hover{background:#f0f0f7;border-color:#f0f0f7;color:var(--sidebar-bg)}
+/* Specificity has to beat html.theme-light .btn-primary above, which pins
+   color:#fff globally. Otherwise the +Add Client label goes white-on-white. */
+html.theme-light .header .btn-primary,.header .btn-primary{background:#fff;border-color:#fff;color:var(--sidebar-bg);box-shadow:none}
+html.theme-light .header .btn-primary:hover,.header .btn-primary:hover{background:#f0f0f7;border-color:#f0f0f7;color:var(--sidebar-bg)}
 .header .btn-sm{background:transparent;border-color:rgba(255,255,255,0.20);color:rgba(255,255,255,0.85)}
 .header .btn-sm:hover{background:rgba(255,255,255,0.12);color:#fff;border-color:rgba(255,255,255,0.30)}
 .header-user{display:flex;align-items:center;gap:10px;padding-left:14px;border-left:1px solid rgba(255,255,255,0.14)}

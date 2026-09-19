@@ -245,7 +245,7 @@ const users = {
 
 // ---------- tracker (clients + team) ----------
 const tracker = {
-  getData() { return { clients: store.trackerData.clients, teamMembers: store.trackerData.teamMembers }; },
+  getData() { return { clients: store.trackerData.clients, teamMembers: store.trackerData.teamMembers, updatedAt: store.trackerData.updatedAt || null }; },
   // Returns a Promise now so callers can await the S3 write and surface a
   // real error to the client. The in-memory update is still synchronous —
   // reads immediately after this call see the new data — but the promise

@@ -496,6 +496,16 @@ router.put('/users/:id/reset-password', requireAuth, requireSuperAdmin, function
 var COMPLIANCE_FIELDS = ['vatRegistrationDate','vatFrequency','vatCertificate','ctRegistrationDate','financialYearEnd','incorporationDate','ctCertificate','assignedTeam'];
 function complianceFingerprint(c) { if (!c) return ''; return COMPLIANCE_FIELDS.map(function(k){ return k + '=' + (c[k] == null ? '' : c[k]); }).join('|'); }
 
+// GET /tracker/heartbeat — 40-byte poll target. Returns just the tracker's
+// updatedAt so a 2-second client poll costs almost nothing. Client only
+// pulls the full /tracker when this timestamp moves. Not scoped — knowing
+// "something changed at 10:03:22" leaks nothing about which client or team.
+router.get('/tracker/heartbeat', requireAuth, function(req, res) {
+  var data = tracker.getData();
+  res.set('Cache-Control', 'no-store');
+  res.json({ updatedAt: data.updatedAt || null });
+});
+
 // GET /tracker — members only see clients assigned to them. Without this
 // filter, any authenticated member could hit /api/tracker directly and read
 // the full client roster; the frontend's getVisibleClients() masked the leak

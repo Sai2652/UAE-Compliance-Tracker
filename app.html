@@ -5269,37 +5269,66 @@ async function reloadTrackerFromServer(){
 }
 
 // ── Auto-refresh loop ─────────────────────────────────────────
-// Polls the server every 20s so an assignee sees new work land on
-// their Today/Clients tab without hitting Refresh, and an admin
-// sees a user's completions the same way. Skips while the tab is
-// hidden (browsers throttle setTimeout there anyway), while a
-// modal is open, and while the user is actively typing in a
-// form field — clobbering an in-progress edit is worse than a
-// slightly-stale view.
-const AUTO_REFRESH_MS = 20 * 1000;
-async function autoRefreshTick(){
-  if(document.hidden) return;
-  if(state.showModal) return;
-  if(document.getElementById('notif-prefs-modal')) return;
-  const focused = document.activeElement;
-  if(focused && (focused.tagName === 'INPUT' || focused.tagName === 'TEXTAREA' || focused.tagName === 'SELECT')) return;
+// Two-tier polling so a hand-down lands on the assignee's tab in ~2s
+// without re-rendering the DOM every 2s while nothing has changed:
+//
+//   * every 2s  — /api/tracker/heartbeat, ~40 bytes, just returns the
+//                 tracker's updatedAt. Cheap enough to run constantly.
+//                 If the timestamp hasn't moved, do nothing.
+//   * on change — the full pull (tracker + org-people + morning) runs
+//                 once. Subsequent 2s ticks see the timestamp is now
+//                 known and go quiet again.
+//   * every 60s — a safety-belt full pull runs unconditionally in case
+//                 the heartbeat has been silently stuck.
+//
+// Skip conditions (any tick): hidden tab (browsers throttle timers
+// anyway), open modal, focused input/textarea/select — a re-render
+// mid-typing clobbers an in-progress edit.
+const HEARTBEAT_MS = 2 * 1000;
+const SAFETY_FULL_MS = 60 * 1000;
+let _lastKnownTrackerUpdatedAt = null;
+let _lastFullPullAt = 0;
+let _fullPullInFlight = false;
+function _skipTick(){
+  if(document.hidden) return true;
+  if(state.showModal) return true;
+  if(document.getElementById('notif-prefs-modal')) return true;
+  const f = document.activeElement;
+  if(f && (f.tagName === 'INPUT' || f.tagName === 'TEXTAREA' || f.tagName === 'SELECT')) return true;
+  return false;
+}
+async function _fullPull(){
+  if(_fullPullInFlight) return;
+  _fullPullInFlight = true;
   try {
-    // Tracker + org-people are cheap and cover the "who owns what"
-    // change surface. Morning dashboard payload has its own 30s
-    // server-side cache so re-requests inside that window are free.
     await reloadTrackerFromServer();
     if(isAdmin() && state.orgPeople) await loadOrgPeople(true);
     if(isAdmin() && state.morning)   await loadMorningDashboard(true);
-  } catch(e) { /* silent — the next tick tries again */ }
+    _lastFullPullAt = Date.now();
+  } catch(e) { /* silent — next tick retries */ }
+  finally { _fullPullInFlight = false; }
+}
+async function heartbeatTick(){
+  if(_skipTick()) return;
+  try {
+    const hb = await apiJSON('/api/tracker/heartbeat');
+    const changed = hb && hb.updatedAt && hb.updatedAt !== _lastKnownTrackerUpdatedAt;
+    const safetyDue = (Date.now() - _lastFullPullAt) > SAFETY_FULL_MS;
+    if(changed || safetyDue){
+      _lastKnownTrackerUpdatedAt = hb.updatedAt || _lastKnownTrackerUpdatedAt;
+      await _fullPull();
+    }
+  } catch(e) { /* silent */ }
 }
 function startAutoRefresh(){
-  if(window.__uctAutoRefreshTimer) clearInterval(window.__uctAutoRefreshTimer);
-  window.__uctAutoRefreshTimer = setInterval(autoRefreshTick, AUTO_REFRESH_MS);
-  // Also refresh immediately when the tab regains focus after being
-  // hidden — most common case is you switching back to the app tab.
-  document.addEventListener('visibilitychange', () => {
-    if(!document.hidden) autoRefreshTick();
-  });
+  if(window.__uctHeartbeatTimer) clearInterval(window.__uctHeartbeatTimer);
+  // Prime the known timestamp so the very first tick doesn't force a
+  // full pull on top of the boot-time load.
+  _lastFullPullAt = Date.now();
+  apiJSON('/api/tracker/heartbeat').then(hb => { _lastKnownTrackerUpdatedAt = hb && hb.updatedAt || null; }).catch(()=>{});
+  window.__uctHeartbeatTimer = setInterval(heartbeatTick, HEARTBEAT_MS);
+  // Immediate refresh when the tab regains focus.
+  document.addEventListener('visibilitychange', () => { if(!document.hidden) heartbeatTick(); });
 }
 
 async function loadOpsMkt(){

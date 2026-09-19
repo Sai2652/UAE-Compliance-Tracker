@@ -259,6 +259,25 @@ html.theme-light .header .btn-primary:hover,.header .btn-primary:hover{backgroun
 .uct-info[data-tip]:hover::after{content:attr(data-tip);position:absolute;bottom:calc(100% + 8px);left:50%;transform:translateX(-50%);background:#222536;color:#fff;padding:8px 12px;border-radius:6px;font-size:12px;font-weight:500;font-family:var(--font);font-style:normal;line-height:1.5;text-align:left;z-index:1000;box-shadow:0 4px 16px rgba(0,0,0,0.28);width:max-content;max-width:260px;white-space:normal;pointer-events:none}
 .uct-info[data-tip]:hover::before{content:'';position:absolute;bottom:calc(100% + 3px);left:50%;transform:translateX(-50%);border:5px solid transparent;border-top-color:#222536;z-index:1000;pointer-events:none}
 
+/* ── Toast (pattern A2) — top-centre pill under the header ──
+   Confirmations that need no acknowledgement. Sits below the 60px
+   header so it never covers the brand or the search field, and is
+   click-to-dismiss for anyone who doesn't want to wait it out. */
+#uct-toast-root{position:fixed;top:0;left:0;right:0;z-index:2500;display:flex;flex-direction:column;align-items:center;gap:8px;padding-top:calc(60px + 12px + env(safe-area-inset-top,0px));pointer-events:none}
+.uct-toast{pointer-events:auto;display:flex;align-items:center;gap:10px;background:#222536;color:#fff;border-radius:10px;padding:10px 16px;font-size:13px;font-weight:600;box-shadow:0 10px 30px rgba(18,19,28,0.26);max-width:min(420px,calc(100vw - 32px));cursor:pointer;animation:uctToastIn .28s cubic-bezier(.16,1,.3,1)}
+.uct-toast.out{animation:uctToastOut .2s ease forwards}
+.uct-toast-mark{width:18px;height:18px;border-radius:50%;display:grid;place-items:center;flex-shrink:0;font-size:11px;font-weight:800;background:var(--green);color:#fff}
+.uct-toast-warning .uct-toast-mark{background:var(--amber)}
+.uct-toast-danger .uct-toast-mark{background:var(--red)}
+.uct-toast-info .uct-toast-mark{background:var(--accent)}
+.uct-toast-text{line-height:1.35}
+.uct-toast-sub{display:block;font-weight:400;font-size:11.5px;color:rgba(255,255,255,0.68);margin-top:1px}
+@keyframes uctToastIn{from{opacity:0;transform:translateY(-14px)}to{opacity:1;transform:none}}
+@keyframes uctToastOut{to{opacity:0;transform:translateY(-8px)}}
+@media (prefers-reduced-motion: reduce){
+  .uct-toast,.uct-toast.out{animation-duration:.01ms}
+}
+
 /* ── Bulk-assign bar (Clients tab) ── */
 .bulk-bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:var(--accent-soft);border:1px solid var(--accent);border-radius:10px;padding:10px 14px;margin-bottom:12px;font-size:13px;color:var(--text-primary)}
 .bulk-bar .bulk-count{font-size:13px;color:var(--accent);font-weight:600}
@@ -787,6 +806,9 @@ async function saveData(d){
       alert('Save failed: ' + msg + '\n\nYour changes are NOT saved. Please retry or refresh — the previous version is still safely stored.');
       throw new Error(msg);
     }
+    // Write landed. Tell the user — coalesced, so a burst of edits
+    // produces one pill rather than one per control.
+    if(typeof noteSaved === 'function') noteSaved();
   });
   _savePending = attempt.catch(()=>{}); // don't let a rejection poison the chain
   return attempt;
@@ -1160,10 +1182,31 @@ let metricsCache={};
 function refreshMetrics(){metricsCache={};state.clients.forEach(c=>{metricsCache[c.id]=calcMetrics(c);});}
 function getClient(id){return state.clients.find(c=>c.id===id);}
 
-// Auto-save: every change persists immediately
+// Auto-save: every change persists immediately (pattern C1). The only
+// thing that changed is that a successful write now says so — see
+// noteSaved() below, which drives the A2 confirmation pill.
 function updateAndSave(){refreshMetrics();render();persistState();}
 function updateUI(){updateAndSave();}
 function markUpdated(c){c.lastUpdated=nowISO().slice(0,10);c.lastUpdatedBy=currentUser?currentUser.name:'System';}
+
+// Coalesced save confirmation.
+//
+// Autosave fires on every individual control, so flipping five documents
+// in a row would stack five identical toasts. Instead each successful
+// write bumps a counter and resets a short timer; when the edits stop,
+// one pill reports the batch. Failures are NOT toasted — saveData raises
+// a modal for those, because a failed save needs acknowledgement, not a
+// notification that disappears on its own.
+let _savedRunCount = 0, _savedRunTimer = null;
+function noteSaved(){
+  _savedRunCount++;
+  clearTimeout(_savedRunTimer);
+  _savedRunTimer = setTimeout(function(){
+    const n = _savedRunCount;
+    _savedRunCount = 0;
+    uctToast('Saved', n > 1 ? n + ' changes' : null);
+  }, 700);
+}
 
 // ═══════════════════════════════════════════════════════════════
 // RENDER
@@ -1968,6 +2011,32 @@ function startNotifChecker(){
 //             confirmLabel, dangerous})   — resolves true | false;
 //                                            user has to type the phrase
 // ═══════════════════════════════════════════════════════════════
+// ── Toast (pattern A2) ────────────────────────────────────────
+// Top-centre pill that drops from under the header and clears itself.
+// For confirmations that need no acknowledgement — "Saved", "Assigned".
+// Anything the user must actually decide on stays a modal (uctConfirm).
+function _uctToastRoot(){
+  let r = document.getElementById('uct-toast-root');
+  if(!r){ r = document.createElement('div'); r.id = 'uct-toast-root'; document.body.appendChild(r); }
+  return r;
+}
+function uctToast(title, sub, opts){
+  const o = opts || {};
+  const life = o.life || 2400;
+  const tone = o.tone || 'success';   // success | warning | danger | info
+  const root = _uctToastRoot();
+  const el = document.createElement('div');
+  el.className = 'uct-toast uct-toast-' + tone;
+  el.setAttribute('role', 'status');
+  const mark = tone === 'danger' ? '!' : tone === 'warning' ? '!' : '✓';
+  el.innerHTML = `<span class="uct-toast-mark">${mark}</span><span class="uct-toast-text">${esc(title)}${sub?`<span class="uct-toast-sub">${esc(sub)}</span>`:''}</span>`;
+  root.appendChild(el);
+  const kill = () => { el.classList.add('out'); setTimeout(() => { try { root.removeChild(el); } catch {} }, 200); };
+  const timer = setTimeout(kill, life);
+  el.addEventListener('click', () => { clearTimeout(timer); kill(); });
+  return el;
+}
+
 function _uctDialogRoot(){
   let root = document.getElementById('uct-dialog-root');
   if(!root){ root = document.createElement('div'); root.id = 'uct-dialog-root'; document.body.appendChild(root); }
@@ -5932,7 +6001,7 @@ function bindEvents(){
         confirmLabel: 'Send reset email'
       });
       if(!ok) return;
-      userAction(async()=>{ await apiJSON('/api/users/'+el.dataset.id+'/reset-password',{method:'POST',body:JSON.stringify({})}); uctAlert({title:'Reset sent', body:'Ask them to check their inbox.', tone:'success'}); },'Sending the reset…');
+      userAction(async()=>{ await apiJSON('/api/users/'+el.dataset.id+'/reset-password',{method:'POST',body:JSON.stringify({})}); uctToast('Reset sent', 'Ask them to check their inbox.'); },'Sending the reset…');
     };
     if(a==="toggleActive")el.onclick=async()=>{
       const on=el.dataset.active==='1';
@@ -6039,7 +6108,7 @@ function bindEvents(){
           isAdmin() && state.orgPeople ? loadOrgPeople(true) : Promise.resolve()
         ]);
         try { const hb = await apiJSON('/api/tracker/heartbeat'); if(hb) _lastKnownTrackerUpdatedAt = hb.updatedAt || _lastKnownTrackerUpdatedAt; _lastFullPullAt = Date.now(); } catch{}
-        uctAlert({title:'Assigned', body:`${target} now owns ${s.size} client${s.size===1?'':'s'}. Any previous assignee has lost visibility.`, tone:'success'});
+        uctToast('Assigned', `${target} now owns ${s.size} client${s.size===1?'':'s'}`);
       }catch(err){ uctAlert({title:'Save failed', body: err.message, tone:'danger'}); }
     };
     if(a==="logout")el.onclick=()=>{logout();};

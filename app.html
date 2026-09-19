@@ -627,75 +627,119 @@ const STORAGE_KEY="uae_compliance_v4";
 // alongside localStorage in login.html.
 (function(){
   const _origFetch = window.fetch.bind(window);
+  const AT = 'cognito_access_token', IT = 'cognito_id_token', RT = 'cognito_refresh_token';
+  const ls = {
+    get(k){ try { return localStorage.getItem(k); } catch { return null; } },
+    set(k,v){ try { localStorage.setItem(k,v); } catch {} },
+    del(k){ try { localStorage.removeItem(k); } catch {} }
+  };
 
   function decodeExp(jwt){
     try { return JSON.parse(atob(jwt.split('.')[1])).exp || 0; } catch { return 0; }
   }
-  function expiresSoon(jwt){
+  function expiresWithin(jwt, ms){
     const exp = decodeExp(jwt);
-    return exp && (exp * 1000 - Date.now()) < 5 * 60 * 1000; // <5 min to expiry
+    return exp ? (exp * 1000 - Date.now()) < ms : false;
   }
 
-  // One in-flight refresh at a time — a burst of API calls all racing
-  // to refresh at once would flood /auth/refresh and burn refresh
-  // tokens for no reason.
-  let _refreshInFlight = null;
-  async function refreshAccessToken(){
-    if (_refreshInFlight) return _refreshInFlight;
-    let rt = null;
-    try { rt = localStorage.getItem('cognito_refresh_token'); } catch{}
-    if (!rt) return null;
-    _refreshInFlight = (async () => {
+  // Refresh result is deliberately three-valued, because conflating
+  // "your session is over" with "the network hiccuped" is exactly what
+  // was logging people out at random:
+  //   { token }        -> success, use the new access token
+  //   { invalid:true } -> Cognito rejected the refresh token (400/401)
+  //                       or we never had one. This is the ONLY case
+  //                       that may end a session.
+  //   { error:true }   -> transient: offline, 5xx, Lambda cold-start
+  //                       timeout, DNS blip. Keep the session, keep the
+  //                       old token, let the caller try again later.
+  let _inFlight = null;
+  function refreshAccessToken(){
+    if (_inFlight) return _inFlight;
+    const rt = ls.get(RT);
+    if (!rt) return Promise.resolve({ invalid: true });
+    _inFlight = (async () => {
       try {
         const r = await _origFetch('/api/auth/refresh', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ refreshToken: rt })
         });
-        if (!r.ok) return null;
-        const j = await r.json();
+        if (r.status === 400 || r.status === 401) return { invalid: true };
+        if (!r.ok) return { error: true };
+        const j = await r.json().catch(() => null);
         if (j && j.accessToken) {
-          try {
-            localStorage.setItem('cognito_access_token', j.accessToken);
-            if (j.idToken) localStorage.setItem('cognito_id_token', j.idToken);
-            document.cookie = 'token=' + j.accessToken + '; path=/; max-age=' + (j.expiresIn || 3600) + '; samesite=lax';
-          } catch{}
-          return j.accessToken;
+          ls.set(AT, j.accessToken);
+          if (j.idToken) ls.set(IT, j.idToken);
+          try { document.cookie = 'token=' + j.accessToken + '; path=/; max-age=' + (j.expiresIn || 3600) + '; samesite=lax'; } catch {}
+          return { token: j.accessToken };
         }
-      } catch(_){}
-      return null;
+        return { error: true };
+      } catch(_) { return { error: true }; }
     })();
-    const t = await _refreshInFlight;
-    _refreshInFlight = null;
-    return t;
+    _inFlight.finally(() => { _inFlight = null; });
+    return _inFlight;
   }
-  // Expose for the reactive path (apiJSON's 401 handler).
+
+  // The single place a session ends without the user clicking Logout.
+  // Nothing else in the app is allowed to redirect to /login on an
+  // error — that rule is what keeps a bad minute on the network from
+  // looking like a logout.
+  function endSession(){
+    if (window.__uctSessionEnded) return;
+    window.__uctSessionEnded = true;
+    ls.del(AT); ls.del(IT); ls.del(RT);
+    setTimeout(() => { window.location.href = '/login?reason=expired'; }, 50);
+  }
   window.__uctRefreshAccessToken = refreshAccessToken;
+  window.__uctEndSession = endSession;
+  window.__uctHasSession = () => !!(ls.get(AT) || ls.get(RT));
 
-  window.fetch = async function(input, init){
-    const url = (typeof input === 'string') ? input : (input && input.url) || '';
-    if (!/^\/(api|auth)\//.test(url) && url.indexOf(window.location.origin + '/api/') !== 0 && url.indexOf(window.location.origin + '/auth/') !== 0) {
-      return _origFetch(input, init);
-    }
-    // Don't attach a token — or trigger a refresh — for the refresh
-    // call itself; that would cause an infinite loop on expiry.
-    if (/\/api\/auth\/refresh\b/.test(url)) return _origFetch(input, init);
-
-    let token = null;
-    try { token = localStorage.getItem('cognito_access_token'); } catch(_){}
-    // Proactive refresh — if the token is inside the 5-minute expiry
-    // window, swap it out BEFORE the request goes so the server never
-    // sees an expired one and the user never bounces to /login.
-    if (token && expiresSoon(token)) {
-      const fresh = await refreshAccessToken();
-      if (fresh) token = fresh;
-    }
-    if (!token) return _origFetch(input, init);
+  function isOurApi(url){
+    return /^\/(api|auth)\//.test(url)
+      || url.indexOf(window.location.origin + '/api/') === 0
+      || url.indexOf(window.location.origin + '/auth/') === 0;
+  }
+  function withAuth(init, token){
     const opts = init ? Object.assign({}, init) : {};
     const h = new Headers(opts.headers || {});
-    if (!h.has('Authorization')) h.set('Authorization', 'Bearer ' + token);
+    h.set('Authorization', 'Bearer ' + token);
     opts.headers = h;
-    return _origFetch(input, opts);
+    return opts;
+  }
+
+  // Refresh + replay lives HERE rather than in apiJSON, so every call
+  // site gets it — loadData, loadCurrentUser, saveData and the raw
+  // fetches all benefit without each needing its own retry logic.
+  window.fetch = async function(input, init){
+    const url = (typeof input === 'string') ? input : (input && input.url) || '';
+    if (!isOurApi(url)) return _origFetch(input, init);
+    // Auth plumbing endpoints must never recurse through this wrapper.
+    if (/\/api\/auth\/(refresh|logout|config)\b/.test(url)) return _origFetch(input, init);
+
+    let token = ls.get(AT);
+
+    // Proactive: swap a near-dead token before the request leaves, so
+    // the server never sees an expired one in the first place.
+    if (token && expiresWithin(token, 5 * 60 * 1000)) {
+      const res = await refreshAccessToken();
+      if (res.token) token = res.token;
+      else if (res.invalid) endSession();
+      // res.error: keep the old token and let the request try anyway —
+      // it may still be inside its validity window.
+    }
+
+    let r = await _origFetch(input, token ? withAuth(init, token) : init);
+
+    // Reactive: one refresh + one replay if the server still says 401.
+    // Covers clock skew and a token that died between check and call.
+    // Only replay for string URLs — a Request object's body is already
+    // consumed by the first attempt.
+    if (r.status === 401 && typeof input === 'string') {
+      const res = await refreshAccessToken();
+      if (res.token) r = await _origFetch(input, withAuth(init, res.token));
+      else if (res.invalid) endSession();
+    }
+    return r;
   };
 })();
 
@@ -709,7 +753,12 @@ async function loadData(){
   try {
     const res = await fetch('/api/tracker');
     if(res.ok){ const data = await res.json(); return { clients: data.clients, teamMembers: data.teamMembers }; }
-    if(res.status === 401) window.location.href = '/login';
+    // No redirect here any more. The fetch wrapper has already tried a
+    // refresh + replay, and ended the session itself if Cognito rejected
+    // the refresh token. Anything still failing at this point is
+    // transient (5xx, timeout) — return null and let the next
+    // auto-refresh tick retry rather than throwing away a live session.
+    console.warn('Tracker load failed:', res.status);
   } catch(e) { console.warn('Load error:', e); }
   return null;
 }
@@ -772,12 +821,61 @@ function getVisibleClients(){
   return state.clients.filter(c => c.assignedTeam === currentUser.name);
 }
 
+// Boot-time identity check.
+//
+// This function was the main reason the app "randomly logged people
+// out". It redirected to /login on ANY failure — a Lambda cold-start
+// timeout, a 502 from API Gateway, a two-second wifi drop, anything.
+// None of those mean the session is over.
+//
+// Now: transient failures are retried with backoff, and the only exit
+// to /login is either (a) a 401 that survived the wrapper's refresh —
+// which means Cognito really did reject us — or (b) no tokens in
+// localStorage at all, i.e. genuinely not signed in.
+let _meRetryQueued = false;
 async function loadCurrentUser(){
-  try {
-    const res = await fetch('/api/auth/me');
-    if(res.ok){ const data = await res.json(); currentUser = data.user; return data.user; }
+  const hasSession = window.__uctHasSession ? window.__uctHasSession() : true;
+  for(let attempt = 0; attempt < 4; attempt++){
+    try {
+      const res = await fetch('/api/auth/me');
+      if(res.ok){
+        const data = await res.json();
+        currentUser = data.user;
+        return data.user;
+      }
+      if(res.status === 401){
+        // The wrapper already tried a refresh. A 401 surviving that
+        // means the refresh token is gone or rejected — session over.
+        if(window.__uctEndSession) window.__uctEndSession();
+        else window.location.href = '/login';
+        return null;
+      }
+      // 5xx / 429 / anything else — transient, fall through to retry.
+      console.warn('[auth] /auth/me returned', res.status, '— retrying');
+    } catch(e){
+      console.warn('[auth] /auth/me network error — retrying', e && e.message);
+    }
+    await new Promise(r => setTimeout(r, 400 * Math.pow(2, attempt))); // 0.4s → 3.2s
+  }
+
+  if(!hasSession){
+    // Never had tokens to begin with — this is a plain "not signed in".
     window.location.href = '/login';
-  } catch(e) { window.location.href = '/login'; }
+    return null;
+  }
+
+  // We hold what looks like a valid session but the server is
+  // unreachable. Keep the user where they are and retry quietly in the
+  // background rather than dumping them at the login screen.
+  console.error('[auth] /auth/me unreachable after retries — keeping session, retrying in background');
+  if(!_meRetryQueued){
+    _meRetryQueued = true;
+    setTimeout(async () => {
+      _meRetryQueued = false;
+      const u = await loadCurrentUser();
+      if(u) render();
+    }, 5000);
+  }
   return null;
 }
 
@@ -3852,23 +3950,11 @@ const TASK_TYPES=["Accounting_Bookkeeping","VAT_Filing","VAT_Registration","VAT_
 const taskState={ priority:[], tasks:[], documents:[], ops:null, loading:false, priorityLoaded:false, tasksLoaded:false, documentsLoaded:false };
 
 async function apiJSON(url, opts){
-  let r = await fetch(url, Object.assign({credentials:'include',headers:{'Content-Type':'application/json'}}, opts||{}));
-  // Reactive refresh — if the server still rejects the token as expired
-  // (proactive refresh in the fetch wrapper missed it, or the clock
-  // skewed), try one refresh and replay the request. Only bounce to
-  // /login if the refresh itself fails.
-  if(r.status === 401 && window.__uctRefreshAccessToken && !opts?.__retried){
-    const fresh = await window.__uctRefreshAccessToken();
-    if(fresh){
-      const nextOpts = Object.assign({credentials:'include',headers:{'Content-Type':'application/json'}}, opts||{}, { __retried: true });
-      r = await fetch(url, nextOpts);
-    }
-  }
-  if(r.status === 401 && !window.__uctSessionExpired){
-    window.__uctSessionExpired = true;
-    try { localStorage.removeItem('cognito_access_token'); localStorage.removeItem('cognito_id_token'); localStorage.removeItem('cognito_refresh_token'); } catch{}
-    setTimeout(() => { window.location.href = '/login?reason=expired'; }, 50);
-  }
+  // Refresh + replay + session-end all live in the fetch wrapper above,
+  // so this stays a thin JSON helper. It must NOT redirect on its own —
+  // a 500 from one endpoint should surface as an error on that screen,
+  // never as a logout.
+  const r = await fetch(url, Object.assign({credentials:'include',headers:{'Content-Type':'application/json'}}, opts||{}));
   if(!r.ok){ const j=await r.json().catch(()=>({})); throw new Error(j.error||('HTTP '+r.status)); }
   return r.json();
 }

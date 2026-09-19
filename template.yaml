@@ -157,9 +157,19 @@ Resources:
         - ALLOW_USER_SRP_AUTH        # Login (SRP is what amazon-cognito-identity-js uses)
         - ALLOW_ADMIN_USER_PASSWORD_AUTH  # For the server-side admin flow (first-login password change)
         - ALLOW_REFRESH_TOKEN_AUTH
+      # Access/id tokens stay short (60 min) — they are what every API
+      # call carries, so a short life limits the blast radius of a leaked
+      # one. The browser swaps them silently via REFRESH_TOKEN_AUTH, so
+      # the user never sees the boundary.
+      #
+      # The refresh token is what actually decides how long somebody
+      # stays signed in. 30 days meant anyone who didn't open the tool
+      # for a month got kicked to the login screen. Raised to Cognito's
+      # maximum (3650 days / 10 years) so the session ends when the user
+      # clicks Logout, when a Super Admin deactivates them, or never.
       AccessTokenValidity: 60
       IdTokenValidity: 60
-      RefreshTokenValidity: 30
+      RefreshTokenValidity: 3650
       TokenValidityUnits: { AccessToken: minutes, IdToken: minutes, RefreshToken: days }
       PreventUserExistenceErrors: ENABLED
       # Explicit ReadAttributes / WriteAttributes were rejected on first

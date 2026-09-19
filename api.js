@@ -589,17 +589,35 @@ function complianceFingerprint(c) { if (!c) return ''; return COMPLIANCE_FIELDS.
 // updatedAt so a 2-second client poll costs almost nothing. Client only
 // pulls the full /tracker when this timestamp moves. Not scoped — knowing
 // "something changed at 10:03:22" leaks nothing about which client or team.
-router.get('/tracker/heartbeat', requireAuth, function(req, res) {
-  var data = tracker.getData();
+router.get('/tracker/heartbeat', requireAuth, asyncH(async function(req, res) {
+  // Must be read from S3, not from this container's memory.
+  //
+  // store.trackerData is per-Lambda-container. If Sai's write was handled
+  // by container A and Reethu's heartbeat lands on container B, B's
+  // in-memory updatedAt is still whatever it hydrated at cold start — so
+  // B tells her "nothing changed" forever and the assignment never shows
+  // up, no matter how fast she polls. S3's ETag is the one value every
+  // container agrees on, and HeadObject fetches metadata only (no body),
+  // so it is cheap enough for a 2-second poll.
   res.set('Cache-Control', 'no-store');
-  res.json({ updatedAt: data.updatedAt || null });
-});
+  try {
+    var etag = await tracker.version();
+    if (etag) return res.json({ updatedAt: etag });
+  } catch (e) { /* fall through to the local value */ }
+  res.json({ updatedAt: tracker.getData().updatedAt || null });
+}));
 
 // GET /tracker — members only see clients assigned to them. Without this
 // filter, any authenticated member could hit /api/tracker directly and read
 // the full client roster; the frontend's getVisibleClients() masked the leak
 // but didn't close it.
-router.get('/tracker', requireAuth, function(req, res) {
+router.get('/tracker', requireAuth, asyncH(async function(req, res) {
+  // Pull the latest blob from S3 first if another container has written
+  // since we hydrated. One HeadObject; the full GET only happens when the
+  // ETag actually differs. Without this, a client that correctly detected
+  // a change via the heartbeat could still be served this container's
+  // stale copy and see nothing new.
+  try { await tracker.refreshIfStale(); } catch (e) { /* serve what we have */ }
   var data = tracker.getData();
   if (!seesEveryClient(req)) {
     // Their whole branch, not just their own name — a team lead needs their
@@ -607,7 +625,7 @@ router.get('/tracker', requireAuth, function(req, res) {
     return res.json({ clients: myClients(req), teamMembers: data.teamMembers });
   }
   res.json(data);
-});
+}));
 router.put('/tracker', requireAuth, asyncH(async function(req, res) {
   var clients = req.body.clients; var teamMembers = req.body.teamMembers; var user = req.user;
   var existing = tracker.getData();
@@ -1706,6 +1724,10 @@ router.get('/ai/clients/:id/risk-explanation', requireAuth, requireAdmin, asyncH
 // =====================================================================
 var morningDashboardSvc = require('./services/dashboard/morningDashboardService');
 router.get('/dashboard/morning', requireAuth, requireAdmin, asyncH(async function(req, res) {
+  // Same cross-container staleness problem as /tracker — the dashboard
+  // reads clients out of the in-memory store, so pick up another
+  // container's write before composing.
+  try { await tracker.refreshIfStale(); } catch (e) { /* compose from what we have */ }
   // Pass user + allUsers so the dashboard scopes to the caller's book.
   // Cognito-native users (post-migration) may not be in users.getAll(); the
   // service still resolves their scope from req.user.name + role.

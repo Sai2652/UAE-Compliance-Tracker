@@ -57,7 +57,10 @@ async function hydrate() {
         last_login: u.last_login
       };
     });
-    store.trackerData = { clients: tracker.clients, teamMembers: tracker.teamMembers };
+    store.trackerData = { clients: tracker.clients, teamMembers: tracker.teamMembers, updatedAt: tracker.updatedAt || null };
+    // Remember which S3 version this container booted on, so
+    // refreshIfStale() can tell "still current" from "someone else wrote".
+    store.trackerEtag = tracker.etag || null;
     // Dynamo items don't carry the old integer id; derive one from position
     // (newest gets highest — matches how activity.log() assigned ids before).
     store.activityLog = recentActivity.map(function(r, i) {
@@ -260,7 +263,43 @@ const tracker = {
   // handler can 500 on write failure and the UI can retry / alert.
   saveData(clients, teamMembers, updatedBy) {
     store.trackerData = { clients: clients, teamMembers: teamMembers, updatedAt: new Date().toISOString(), updatedBy: updatedBy };
-    return TrackerStateRepo.save(clients, teamMembers, updatedBy);
+    return TrackerStateRepo.save(clients, teamMembers, updatedBy).then(function(res) {
+      // Record the ETag we just created so refreshIfStale() recognises
+      // this container's own write and doesn't re-read it from S3.
+      if (res && res.etag) store.trackerEtag = res.etag;
+      return res;
+    });
+  },
+
+  // Cross-container freshness.
+  //
+  // store.trackerData is per-Lambda-container: hydrated at cold start and
+  // then only updated by writes that this container happened to handle.
+  // With several containers warm, a write served by A is invisible to B
+  // until B recycles — so a user polling B is told "nothing changed"
+  // indefinitely. That made assignments appear not to propagate however
+  // fast the client polled.
+  //
+  // This compares S3's ETag (one HeadObject, metadata only) against the
+  // one this container last saw, and re-reads the blob only when they
+  // differ. Cheap enough for the 2s heartbeat, and it makes every
+  // container agree on the same state within one poll.
+  async version() {
+    const v = await TrackerStateRepo.version();
+    return v ? v.etag : null;
+  },
+  async refreshIfStale() {
+    const v = await TrackerStateRepo.version();
+    if (!v || !v.etag) return false;
+    if (store.trackerEtag === v.etag) return false;   // already current
+    const fresh = await TrackerStateRepo.load();
+    store.trackerData = {
+      clients: fresh.clients,
+      teamMembers: fresh.teamMembers,
+      updatedAt: fresh.updatedAt || new Date().toISOString()
+    };
+    store.trackerEtag = fresh.etag || v.etag;
+    return true;
   }
 };
 

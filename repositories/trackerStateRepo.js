@@ -19,6 +19,32 @@ function streamToString(stream) {
 }
 
 const TrackerStateRepo = {
+  // Cheap authoritative version check — HeadObject returns metadata only,
+  // no body transfer, so this is safe to call on a 2-second heartbeat.
+  //
+  // Why it exists: the in-memory store is per-Lambda-container. A write
+  // handled by container A never reaches container B's memory, so B's
+  // idea of "last updated" stays frozen at its cold-start value and any
+  // client polling B is told nothing changed. S3 is the one place every
+  // container agrees on, and the ETag changes on every write.
+  async version() {
+    const c = getS3();
+    const bucket = bucketName();
+    if (!c || !bucket) return null;
+    try {
+      const { HeadObjectCommand } = require('@aws-sdk/client-s3');
+      const out = await c.send(new HeadObjectCommand({ Bucket: bucket, Key: KEY }));
+      return {
+        etag: out.ETag ? String(out.ETag).replace(/"/g, '') : null,
+        lastModified: out.LastModified ? new Date(out.LastModified).toISOString() : null
+      };
+    } catch (e) {
+      if (e.name === 'NotFound' || e.$metadata?.httpStatusCode === 404) return null;
+      console.warn('[trackerStateRepo] version:', e.message);
+      return null;
+    }
+  },
+
   async load() {
     const c = getS3();
     const bucket = bucketName();
@@ -30,7 +56,10 @@ const TrackerStateRepo = {
       const parsed = JSON.parse(body);
       return {
         clients: Array.isArray(parsed.clients) ? parsed.clients : [],
-        teamMembers: Array.isArray(parsed.teamMembers) ? parsed.teamMembers : []
+        teamMembers: Array.isArray(parsed.teamMembers) ? parsed.teamMembers : [],
+        updatedAt: parsed.updatedAt || null,
+        // Callers use this to decide whether their cached copy is stale.
+        etag: out.ETag ? String(out.ETag).replace(/"/g, '') : null
       };
     } catch (e) {
       if (e.name === 'NoSuchKey' || e.$metadata?.httpStatusCode === 404) {
@@ -56,12 +85,15 @@ const TrackerStateRepo = {
       updatedAt: new Date().toISOString(),
       updatedBy: updatedBy || null
     });
-    await c.send(new PutObjectCommand({
+    const out = await c.send(new PutObjectCommand({
       Bucket: bucket,
       Key: KEY,
       Body: body,
       ContentType: 'application/json'
     }));
+    // Hand the new ETag back so the writing container can record it and
+    // not immediately re-read its own write on the next staleness check.
+    return { etag: out.ETag ? String(out.ETag).replace(/"/g, '') : null };
   }
 };
 

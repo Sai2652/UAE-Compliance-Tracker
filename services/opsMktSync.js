@@ -203,7 +203,12 @@ function buildClientFromOpsMkt(row, opts) {
     entityType: guessed || 'Not Recorded',
     entityTypeGuessed: !!guessed,
     businessNature: entityTypes.normalizeBusinessNature(row && row.natureOfBusiness),
-    assignedTeam: team,
+    // Master Tracker fetch should NEVER pre-assign — the Ops-Mkt "team"
+    // field is First-POC metadata, not a client-owner assignment. Imported
+    // clients arrive Unassigned so Super Admin can allot them to Admins,
+    // and Admins can then assign to their Users. The First POC is still
+    // captured in opsMkt.firstPoc below for provenance.
+    assignedTeam: 'Unassigned',
     vatApplicable: vatVal,
     trn: String((row && row.trn) || '').trim(),
     ctApplicable: true,
@@ -217,7 +222,7 @@ function buildClientFromOpsMkt(row, opts) {
     },
     mis: { monthlyStatus: {} },
     vat: { periods: [], returnDates: [] },
-    ct: { financialYear: ctFY, dueDate: ctDue, status: 'Not Started', assignedPerson: team, notes: '' },
+    ct: { financialYear: ctFY, dueDate: ctDue, status: 'Not Started', assignedPerson: 'Unassigned', notes: '' },
     documents: DOCS_LIST.reduce(function(a, d) {
       a[d] = (d === 'VAT Registration' && vatVal === 'No') ? 'N/A' : 'Pending';
       return a;

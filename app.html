@@ -258,6 +258,13 @@ html.theme-light .header .btn-primary:hover,.header .btn-primary:hover{backgroun
 .uct-info:hover{background:var(--accent-soft);color:var(--accent);border-color:var(--accent)}
 .uct-info[data-tip]:hover::after{content:attr(data-tip);position:absolute;bottom:calc(100% + 8px);left:50%;transform:translateX(-50%);background:#222536;color:#fff;padding:8px 12px;border-radius:6px;font-size:12px;font-weight:500;font-family:var(--font);font-style:normal;line-height:1.5;text-align:left;z-index:1000;box-shadow:0 4px 16px rgba(0,0,0,0.28);width:max-content;max-width:260px;white-space:normal;pointer-events:none}
 .uct-info[data-tip]:hover::before{content:'';position:absolute;bottom:calc(100% + 3px);left:50%;transform:translateX(-50%);border:5px solid transparent;border-top-color:#222536;z-index:1000;pointer-events:none}
+
+/* ── Bulk-assign bar (Clients tab) ── */
+.bulk-bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:var(--accent-soft);border:1px solid var(--accent);border-radius:10px;padding:10px 14px;margin-bottom:12px;font-size:13px;color:var(--text-primary)}
+.bulk-bar .bulk-count{font-size:13px;color:var(--accent);font-weight:600}
+.bulk-bar .bulk-count b{font-size:15px;font-weight:800}
+.bulk-bar .bulk-sep{width:1px;height:20px;background:var(--accent);opacity:0.4}
+.bulk-bar select.form-input{background:var(--bg-card)}
 /* Sidebar brand — BCL mark + name; sits at the top of .side-nav. */
 .side-nav-brand{display:flex;align-items:center;gap:12px;padding:18px 16px 14px;border-bottom:1px solid var(--sidebar-line);color:var(--sidebar-strong)}
 .side-nav-brand .bcl-mark{width:34px;height:34px;flex-shrink:0;color:var(--sidebar-strong)}
@@ -745,6 +752,28 @@ function getTeamMembers(){
     .filter(p=>p && p.active!==false && p.role !== 'super_admin' && p.role !== 'prime_admin')
     .map(p=>p.name).filter(Boolean);
 }
+// Who the current caller can allot files to via bulk-assign on the Clients tab.
+//   * Prime / Super Admin — every Admin + User in the firm (their whole downline).
+//   * Admin — only Users who report directly to them.
+//   * User — nobody (their view is read-only for ownership).
+// Returns names (not IDs) because assignedTeam is stored as a name string.
+function getAllottees(){
+  const me = currentUser;
+  const people = state.orgPeople || [];
+  if(!me) return [];
+  const r = String(me.role || '').toLowerCase();
+  if(r === 'prime_admin' || r === 'super_admin'){
+    return people
+      .filter(p => p && p.active !== false && (p.role === 'admin' || p.role === 'user') && p.name)
+      .map(p => p.name);
+  }
+  if(r === 'admin'){
+    return people
+      .filter(p => p && p.active !== false && p.role === 'user' && String(p.reports_to) === String(me.id) && p.name)
+      .map(p => p.name);
+  }
+  return [];
+}
 function strandedOwners(){
   const live=getAssignableUsers();
   return [...new Set((state.clients||[]).map(c=>c.assignedTeam).filter(n=>n&&n!=="Unassigned"&&!live.includes(n)))];
@@ -947,7 +976,7 @@ function calcMetrics(c){
 // "morning", a separate Morning Dashboard screen that has no sidebar entry, so
 // the app started on a page with nothing highlighted in the nav and no way back
 // to it once you left. Its content is folded into Today for a lead or manager.
-let state={clients:[],teamMembers:[],activeTab:"priority",selectedClientId:null,detailTab:"overview",search:"",filterStatus:"All",filterTeam:"All",filterReadiness:"All",filterClientTier:"All",sortByTier:false,showModal:null,bulkClients:[],clientReadiness:null,clientReadinessByClient:{},clientReadinessLoadedAt:0,morning:null,morningLoadedAt:0,insightsMenuOpen:false};
+let state={clients:[],teamMembers:[],activeTab:"priority",selectedClientId:null,detailTab:"overview",search:"",filterStatus:"All",filterTeam:"All",filterReadiness:"All",filterClientTier:"All",sortByTier:false,showModal:null,bulkClients:[],selectedClientIds:new Set(),bulkAssignTarget:'',clientReadiness:null,clientReadinessByClient:{},clientReadinessLoadedAt:0,morning:null,morningLoadedAt:0,insightsMenuOpen:false};
 let metricsCache={};
 
 function refreshMetrics(){metricsCache={};state.clients.forEach(c=>{metricsCache[c.id]=calcMetrics(c);});}
@@ -3926,9 +3955,38 @@ function renderDashboard(){
   h+=`<div class="filter-bar"><input class="form-input search-input" placeholder="Search clients..." value="${esc(state.search)}" data-action="search">${selectHTML("fs",state.filterStatus,["All",...STATUSES],'data-action="filterStatus"')}${selectHTML("ft",state.filterTeam,["All",...getTeamOptions()],'data-action="filterTeam"')}${renderReadinessFilterSelect()}${renderClientTierFilterSelect()}<button class="btn btn-sm ${state.sortByTier?'btn-primary':''}" data-action="toggleSortTier">Sort by Tier</button></div>`;
 
   const fl=getFilteredClients();
-  h+=`<div class="card" style="padding:0;overflow:auto"><table style="min-width:1000px"><thead><tr><th>Client</th><th>Readiness</th><th>Overall</th><th style="min-width:120px">Completion</th><th>Accounting</th><th>VAT</th><th>Corp Tax</th><th>Documents</th><th>Logins</th><th>Next Deadline</th><th>Owner</th></tr></thead><tbody>`;
-  // Priority order in the client cell: name → readiness pill (in own column) → tier (compact, end of name).
-  fl.forEach(c=>{const m=metricsCache[c.id];const dl=m.deadlines[0];const r=readinessFor(c.id);const t=tierFor(c.id);h+=`<tr style="cursor:pointer" data-client="${c.id}"><td style="font-weight:700;color:var(--text-primary);min-width:160px"><span style="display:inline-flex;align-items:center;gap:6px">${esc(c.name)}${t?tierBadgeMini(t):''}</span></td><td>${r?readinessPill(r.state):'<span style="font-size:10px;color:var(--text-muted)">—</span>'}</td><td>${badgeHTML(m.overallStatus,1)}</td><td>${progressHTML(m.totalPct)}</td><td>${badgeHTML(m.acctStatus,1)}</td><td>${badgeHTML(m.vatStatus,1)}</td><td>${badgeHTML(m.ctStatus,1)}</td><td>${badgeHTML(m.docsStatus,1)}</td><td>${badgeHTML(m.loginsStatus,1)}</td><td style="font-size:12px;white-space:nowrap">${dl?`<span style="color:${dl.days<0?'var(--red)':dl.days<=7?'var(--amber)':'var(--text-muted)'}">${esc(dl.label)} · ${dl.days<0?Math.abs(dl.days)+'d overdue':dl.days+'d'}</span>`:'—'}</td><td style="font-size:12px;color:var(--text-muted)">${esc(c.assignedTeam)}</td></tr>`;});
+
+  // Bulk-assign bar — appears when at least one row is ticked. Available to
+  // Super/Prime (allots to Admins or Users) and Admins (allots to their own
+  // Users). Filtered per the caller's allottee scope; the actual write
+  // still goes through PUT /api/tracker which re-checks visibility.
+  const allottees = getAllottees();
+  const canBulk = isAdmin() && allottees.length > 0;
+  const selected = state.selectedClientIds || (state.selectedClientIds = new Set());
+  // Prune ids that dropped out of view since selection so counts stay honest.
+  const visibleIds = new Set(fl.map(c => String(c.id)));
+  [...selected].forEach(id => { if(!visibleIds.has(String(id))) selected.delete(id); });
+  if(canBulk && selected.size){
+    const opts = allottees.map(n=>`<option value="${esc(n)}">${esc(n)}</option>`).join('');
+    h+=`<div class="bulk-bar">
+      <span class="bulk-count"><b>${selected.size}</b> selected</span>
+      <span class="bulk-sep"></span>
+      <label style="font-size:12px;color:var(--text-muted)">Assign to</label>
+      <select id="bulkAssignTarget" class="form-input" style="min-width:160px;padding:6px 10px;font-size:12px"><option value="">— choose —</option>${opts}</select>
+      <button class="btn btn-primary btn-sm" data-action="bulkAssignApply">Apply</button>
+      <button class="btn btn-sm" data-action="bulkClearSelection">Clear</button>
+    </div>`;
+  }
+
+  const allVisibleTicked = canBulk && fl.length > 0 && fl.every(c => selected.has(String(c.id)));
+  h+=`<div class="card" style="padding:0;overflow:auto"><table style="min-width:1000px"><thead><tr>${canBulk?`<th style="width:36px;padding:8px 10px"><input type="checkbox" data-action="bulkToggleAll" ${allVisibleTicked?'checked':''}></th>`:''}<th>Client</th><th>Readiness</th><th>Overall</th><th style="min-width:120px">Completion</th><th>Accounting</th><th>VAT</th><th>Corp Tax</th><th>Documents</th><th>Logins</th><th>Next Deadline</th><th>Owner</th></tr></thead><tbody>`;
+  fl.forEach(c=>{
+    const m=metricsCache[c.id];const dl=m.deadlines[0];const r=readinessFor(c.id);const t=tierFor(c.id);
+    const cid = String(c.id);
+    const ticked = selected.has(cid);
+    const rowCbx = canBulk ? `<td style="padding:8px 10px" data-nonrow><input type="checkbox" data-bulk-row="${cid}" ${ticked?'checked':''}></td>` : '';
+    h+=`<tr style="cursor:pointer${ticked?';background:var(--accent-soft)':''}" data-client="${c.id}">${rowCbx}<td style="font-weight:700;color:var(--text-primary);min-width:160px"><span style="display:inline-flex;align-items:center;gap:6px">${esc(c.name)}${t?tierBadgeMini(t):''}</span></td><td>${r?readinessPill(r.state):'<span style="font-size:10px;color:var(--text-muted)">—</span>'}</td><td>${badgeHTML(m.overallStatus,1)}</td><td>${progressHTML(m.totalPct)}</td><td>${badgeHTML(m.acctStatus,1)}</td><td>${badgeHTML(m.vatStatus,1)}</td><td>${badgeHTML(m.ctStatus,1)}</td><td>${badgeHTML(m.docsStatus,1)}</td><td>${badgeHTML(m.loginsStatus,1)}</td><td style="font-size:12px;white-space:nowrap">${dl?`<span style="color:${dl.days<0?'var(--red)':dl.days<=7?'var(--amber)':'var(--text-muted)'}">${esc(dl.label)} · ${dl.days<0?Math.abs(dl.days)+'d overdue':dl.days+'d'}</span>`:'—'}</td><td style="font-size:12px;color:var(--text-muted)">${esc(c.assignedTeam)}</td></tr>`;
+  });
   h+=`</tbody></table>`;if(!fl.length)h+=`<div style="padding:40px;text-align:center;color:var(--text-muted)">No clients match</div>`;h+=`</div>`;
 
   const aw=state.clients.flatMap(c=>(metricsCache[c.id]?.warnings||[]).map(w=>({client:c.name,warning:w})));
@@ -5400,6 +5458,19 @@ function bindEvents(){
     },0);
   }
   document.querySelectorAll("[data-client]").forEach(el=>el.onclick=(e)=>{if(e.target.closest("select,input,button,.tm-remove"))return;state.selectedClientId=el.dataset.client;state.detailTab=el.dataset.detail||"overview";render();});
+  // Per-row bulk-select checkbox — direct binding so the state updates
+  // without going through the row click (which navigates into the client).
+  document.querySelectorAll("[data-bulk-row]").forEach(el=>{
+    el.onchange=()=>{
+      const s = state.selectedClientIds || (state.selectedClientIds = new Set());
+      if(el.checked) s.add(el.dataset.bulkRow); else s.delete(el.dataset.bulkRow);
+      render();
+    };
+    // The checkbox lives inside a data-client row whose click handler
+    // navigates into the client — stop that click from also firing when
+    // someone toggles the box.
+    el.onclick=(e)=>e.stopPropagation();
+  });
   document.querySelectorAll("[data-detail-nav]").forEach(el=>el.onclick=()=>{state.detailTab=el.dataset.detailNav;render();});
 
   document.querySelectorAll("[data-action]").forEach(el=>{
@@ -5493,6 +5564,35 @@ function bindEvents(){
     if(a==="openAddCredential")el.onclick=()=>{state.showModal="addCredential";render();};
     if(a==="closeModal")el.onclick=()=>{state.showModal=null;render();};
     if(a==="backToList")el.onclick=()=>{state.selectedClientId=null;render();};
+    // Bulk assign — per-row checkbox, select-all, apply, clear.
+    if(a==="bulkToggleAll")el.onclick=(ev)=>{
+      const fl = getFilteredClients();
+      const s = state.selectedClientIds || (state.selectedClientIds = new Set());
+      const allTicked = fl.length > 0 && fl.every(c => s.has(String(c.id)));
+      if(allTicked){ fl.forEach(c => s.delete(String(c.id))); }
+      else         { fl.forEach(c => s.add(String(c.id))); }
+      render();
+    };
+    if(a==="bulkClearSelection")el.onclick=()=>{ state.selectedClientIds = new Set(); render(); };
+    if(a==="bulkAssignApply")el.onclick=async()=>{
+      const target = (document.getElementById('bulkAssignTarget')||{}).value;
+      if(!target){ uctAlert({title:'Pick an assignee', body:'Choose someone from the dropdown before applying.'}); return; }
+      const s = state.selectedClientIds || new Set();
+      if(!s.size){ uctAlert({title:'Nothing selected', body:'Tick at least one client row.'}); return; }
+      const ok = await uctConfirm({
+        title: `Assign ${s.size} client${s.size===1?'':'s'} to ${target}`,
+        body: `Their assigned owner will be set to ${target}. ${target} will start seeing them on their Today and Clients tabs. This can be undone by reassigning.`,
+        confirmLabel: `Assign to ${target}`
+      });
+      if(!ok) return;
+      (state.clients||[]).forEach(c => { if(s.has(String(c.id))){ c.assignedTeam = target; markUpdated(c); } });
+      try{
+        await apiJSON('/api/tracker',{method:'PUT',body:JSON.stringify({clients:state.clients,teamMembers:state.teamMembers})});
+        state.selectedClientIds = new Set();
+        await reloadTrackerFromServer();
+        uctAlert({title:'Assigned', body:`${target} now owns ${s.size} client${s.size===1?'':'s'}.`, tone:'success'});
+      }catch(err){ uctAlert({title:'Save failed', body: err.message, tone:'danger'}); }
+    };
     if(a==="logout")el.onclick=()=>{logout();};
     if(a==="openNotifPrefs")el.onclick=(ev)=>{ ev.stopPropagation(); state.profileMenuOpen=false; openNotifPrefsModal(); };
     if(a==="toggleProfileMenu")el.onclick=(ev)=>{

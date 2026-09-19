@@ -86,7 +86,7 @@ input,select,textarea,button{font-family:inherit}
 /* Top header — AutoLedger parity: midnight ground carrying brand + global
    search + admin actions. Same colour as the left rail so the two read as
    one continuous chrome. */
-.header{background:var(--sidebar-bg);border-bottom:1px solid rgba(255,255,255,0.06);padding:0 20px;min-height:60px;display:flex;align-items:center;gap:20px;flex-shrink:0;z-index:100;color:var(--sidebar-strong)}
+.header{background:var(--sidebar-bg);border-bottom:1px solid rgba(255,255,255,0.06);padding:0 20px;min-height:60px;display:flex;align-items:center;gap:20px;flex-shrink:0;z-index:100;color:var(--sidebar-strong);position:relative}
 .logo{display:flex;align-items:center;gap:12px;min-width:244px;padding-right:16px;color:var(--sidebar-strong)}
 .logo-mark{width:34px;height:34px;flex-shrink:0;color:var(--sidebar-strong);display:flex;align-items:center;justify-content:center}
 .logo-mark svg{display:block;width:100%;height:100%}
@@ -118,10 +118,54 @@ html.theme-light .header .btn-primary,.header .btn-primary{background:#fff;borde
 html.theme-light .header .btn-primary:hover,.header .btn-primary:hover{background:#f0f0f7;border-color:#f0f0f7;color:var(--sidebar-bg)}
 .header .btn-sm{background:transparent;border-color:rgba(255,255,255,0.20);color:rgba(255,255,255,0.85)}
 .header .btn-sm:hover{background:rgba(255,255,255,0.12);color:#fff;border-color:rgba(255,255,255,0.30)}
-.header-user{display:flex;align-items:center;gap:10px;padding-left:14px;border-left:1px solid rgba(255,255,255,0.14)}
-.header-user-name{font-size:12px;color:#fff;font-weight:600}
+.header-user-chip{display:flex;align-items:center;gap:8px;padding:6px 10px;border-radius:8px;cursor:pointer;border:1px solid rgba(255,255,255,0.14);background:rgba(255,255,255,0.06);font-family:inherit;color:#fff;margin-left:6px}
+.header-user-chip:hover{background:rgba(255,255,255,0.10);border-color:rgba(255,255,255,0.20)}
+.header-user-chip.active{background:rgba(255,255,255,0.14);border-color:rgba(255,255,255,0.28)}
+.header-user-av{width:24px;height:24px;background:#fff;color:var(--sidebar-bg);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:800;flex-shrink:0}
+.header-user-name{font-size:12.5px;color:#fff;font-weight:600}
+.header-user-caret{color:rgba(255,255,255,0.65);font-size:10px}
 .header-role-pill{font-size:9px;padding:3px 7px;border-radius:5px;background:rgba(255,255,255,0.14);color:#fff;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;border:1px solid rgba(255,255,255,0.18)}
 .header-role-pill.prime{background:rgba(255,215,150,0.20);border-color:rgba(255,215,150,0.35)}
+
+/* ── Profile dropdown menu ── */
+.profile-menu{position:absolute;top:60px;right:20px;width:540px;max-width:calc(100vw - 40px);background:var(--bg-card);border:1px solid var(--border);border-radius:14px;box-shadow:0 12px 40px rgba(34,37,54,0.18),0 2px 6px rgba(34,37,54,0.06);overflow:hidden;z-index:200;color:var(--text-primary)}
+.pm-head{padding:16px 18px;display:flex;align-items:center;gap:12px;border-bottom:1px solid var(--border);background:var(--bg-elevated)}
+.pm-av{width:42px;height:42px;background:var(--sidebar-bg);color:#fff;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:16px;font-weight:800;flex-shrink:0}
+.pm-who{flex:1;min-width:0}
+.pm-name{font-size:14px;font-weight:800;color:var(--text-primary)}
+.pm-em{font-size:11.5px;color:var(--text-muted);margin-top:1px}
+.pm-role{display:inline-block;margin-top:5px;font-size:9px;background:var(--accent-soft);color:var(--accent);padding:2px 7px;border-radius:5px;font-weight:800;text-transform:uppercase;letter-spacing:0.06em;border:1px solid var(--accent-soft)}
+.pm-role.prime{background:rgba(255,215,150,0.20);color:#8f6a1e;border-color:rgba(255,215,150,0.40)}
+.pm-tabs{display:flex;padding:0 12px;border-bottom:1px solid var(--border);gap:2px}
+.pm-tab{padding:11px 14px;font-size:12px;font-weight:700;color:var(--text-muted);cursor:pointer;border:none;border-bottom:2px solid transparent;background:transparent;font-family:inherit;transform:translateY(1px)}
+.pm-tab.active{color:var(--accent);border-bottom-color:var(--accent)}
+.pm-tab:hover{color:var(--text-primary)}
+.pm-body{max-height:520px;overflow-y:auto}
+.pm-sec{padding:14px 18px}
+.pm-sec + .pm-sec{border-top:1px solid var(--border)}
+.pm-sec-k{font-size:10px;font-weight:800;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:8px}
+.pm-summary{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:2px 0 4px}
+.pm-stat{background:var(--bg-elevated);border:1px solid var(--border);border-radius:10px;padding:10px 12px}
+.pm-stat-k{font-size:9.5px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.06em;font-weight:800}
+.pm-stat-v{font-size:20px;font-weight:800;color:var(--text-primary);font-variant-numeric:tabular-nums;margin-top:2px}
+.pm-people-h{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
+.pm-invite{padding:5px 10px;background:var(--sidebar-bg);border:none;color:#fff;border-radius:6px;font-size:11px;font-weight:800;cursor:pointer;font-family:inherit}
+.pm-invite:hover{background:var(--sidebar-active)}
+.pm-row{display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:8px;font-size:12.5px;cursor:pointer}
+.pm-row:hover{background:var(--bg-elevated)}
+.pm-row-av{width:28px;height:28px;background:var(--bg-elevated);color:var(--sidebar-bg);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:800;flex-shrink:0;border:1px solid var(--border)}
+.pm-row-who{flex:1;min-width:0}
+.pm-row-n{font-weight:700;color:var(--text-primary)}
+.pm-row-e{font-size:11px;color:var(--text-muted);margin-top:1px}
+.pm-role-pill{font-size:9px;padding:2px 7px;border-radius:5px;background:var(--bg-elevated);color:var(--text-secondary);font-weight:800;text-transform:uppercase;letter-spacing:0.06em;border:1px solid var(--border);flex-shrink:0}
+.pm-role-pill.prime{background:rgba(255,215,150,0.20);color:#8f6a1e;border-color:rgba(255,215,150,0.40)}
+.pm-role-pill.super{background:var(--accent-soft);color:var(--accent);border-color:var(--accent-soft)}
+.pm-role-pill.admin{background:var(--amber-bg);color:var(--amber);border-color:var(--amber-border)}
+.pm-role-pill.user{background:var(--green-bg);color:var(--green);border-color:var(--green-border)}
+.pm-role-pill.pending{background:var(--amber-bg);color:var(--amber);border-color:var(--amber-border)}
+.pm-foot{padding:10px 18px;background:var(--bg-elevated);border-top:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;font-size:11.5px;color:var(--text-muted)}
+.pm-foot a{color:var(--accent);text-decoration:none;font-weight:700}
+.pm-foot a:hover{text-decoration:underline}
 /* Sidebar brand block — retired. Brand now lives in the header. */
 .side-nav-brand{display:none}
 
@@ -214,7 +258,22 @@ html.theme-light .header .btn-primary:hover,.header .btn-primary:hover{backgroun
    now read against the dark ground. Overrides live in nested selectors so
    any element that explicitly sets a colour still wins. */
 .sidebar .form-label{color:var(--sidebar-faint)}
-.sidebar .badge-in-progress,.sidebar .badge-not-started,.sidebar .badge-completed,.sidebar .badge-blocked,.sidebar .badge-not-applicable{background:var(--sidebar-chip);color:var(--sidebar-strong);border-color:var(--sidebar-line)}
+/* Client-detail sidebar badges — force higher-contrast fills. The generic
+   .badge-in-progress etc rules colour text and background for a LIGHT
+   surface, which meant "In Progress" rendered dark-on-dark on the midnight
+   rail. These override with per-status tints that stand out on midnight. */
+.sidebar .badge{color:#fff !important;border:1px solid rgba(255,255,255,0.30) !important}
+.sidebar .badge-in-progress{background:rgba(169,156,255,0.30) !important}
+.sidebar .badge-not-started{background:rgba(255,255,255,0.14) !important}
+.sidebar .badge-completed{background:rgba(80,180,140,0.30) !important;border-color:rgba(80,180,140,0.55) !important}
+.sidebar .badge-blocked{background:rgba(235,90,95,0.28) !important;border-color:rgba(235,90,95,0.55) !important}
+.sidebar .badge-not-applicable{background:rgba(255,255,255,0.10) !important;color:rgba(255,255,255,0.65) !important}
+.sidebar .badge .dot{background:#fff !important}
+/* Progress bar inside the sidebar — --accent is too dark to see on midnight;
+   use a light lavender fill and a track that reads as a groove. */
+.sidebar .progress-track{background:rgba(255,255,255,0.14) !important}
+.sidebar .progress-fill{background:#a99cff !important}
+.sidebar .progress-label{color:#fff !important}
 .sidebar .progress-track{background:rgba(255,255,255,0.10)}
 .sidebar .progress-label{color:var(--sidebar-strong)}
 .sidebar .btn{background:var(--sidebar-hover);border-color:var(--sidebar-line);color:var(--sidebar-strong)}
@@ -838,7 +897,7 @@ function calcMetrics(c){
   if(vatIsPending)warnings.push("VAT: "+c.vatApplicable);
   if(c.ct&&c.ct.status==="Blocked"){const r=brs.ct;warnings.push("CT blocked"+(r?": "+r:""));}
 
-  return{acctPct,acctPending,acctStatus,acctBlocked,vatPct,vatStatus,ctPct,ctStatus,docsPct,docsMissing,docsStatus,loginsPct,loginsStatus,totalPct,overallStatus,deadlines,warnings};
+  return{acctPct,acctPending,acctStatus,acctBlocked,vatPct,vatStatus,ctPct,ctStatus,docsPct,docsMissing,docsStatus,loginsPct,loginsStatus,loginsCount:loginsOk,loginsTotal:c.logins.length,totalPct,overallStatus,deadlines,warnings};
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -1184,7 +1243,80 @@ function renderHeader(){
       <div class="top-search-menu" data-global-search-menu hidden></div>
     </div>
     <div class="header-actions" style="margin-left:auto;display:flex;gap:8px;align-items:center">${adminBtns}<button class="btn btn-sm header-bell" data-action="openNotifPrefs" title="Notification preferences" aria-label="Notifications"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="width:15px;height:15px;display:block"><path d="M5 13.4V9.4a5 5 0 0 1 10 0v4L16.6 15H3.4z"/><path d="M8.4 17.2a1.8 1.8 0 0 0 3.2 0"/></svg></button>${currentUser?`
-      <div class="header-user"><span class="header-user-name">${esc(currentUser.name||'')}</span><span class="header-role-pill${isPrime?' prime':''}" title="${esc(role)}">${esc(role)}</span><button class="btn btn-sm" data-action="logout">Logout</button></div>`:''}</div>
+      <button class="header-user-chip${state.profileMenuOpen?' active':''}" data-action="toggleProfileMenu" aria-haspopup="true" aria-expanded="${state.profileMenuOpen?'true':'false'}"><span class="header-user-av">${esc((currentUser.name||'?').charAt(0).toUpperCase())}</span><span class="header-user-name">${esc(currentUser.name||'')}</span><span class="header-role-pill${isPrime?' prime':''}" title="${esc(role)}">${esc(role)}</span><span class="header-user-caret">${state.profileMenuOpen?'▴':'▾'}</span></button>`:''}</div>
+    ${state.profileMenuOpen && currentUser ? renderProfileMenu() : ''}
+  </div>`;
+}
+
+// ─── Profile menu ─────────────────────────────────────────────
+// Dropdown from the top-right user chip. Folds User Management (was a
+// left-sidebar tab of its own) inside a "People" pane, plus Preferences
+// and Account panes. Closes on outside click or Escape.
+function renderProfileMenu(){
+  if(!currentUser) return '';
+  const pane = state.profileMenuTab || 'people';
+  const paneBtn = (k, label) => `<button class="pm-tab${pane===k?' active':''}" data-pm-tab="${k}">${label}</button>`;
+  return `<div class="profile-menu" role="menu">
+    <div class="pm-head">
+      <div class="pm-av">${esc((currentUser.name||'?').charAt(0).toUpperCase())}</div>
+      <div class="pm-who">
+        <div class="pm-name">${esc(currentUser.name||'')}</div>
+        <div class="pm-em">${esc(currentUser.email||'')}</div>
+        <span class="pm-role${String(currentUser.role||'').toLowerCase()==='prime_admin'?' prime':''}">${esc(roleLabel(currentUser))}</span>
+      </div>
+    </div>
+    <div class="pm-tabs">
+      ${isAdmin() ? paneBtn('people','People') : ''}
+      ${paneBtn('prefs','Preferences')}
+      ${paneBtn('account','Account')}
+    </div>
+    <div class="pm-body">
+      ${pane==='people' && isAdmin() ? renderProfileMenu_People() : ''}
+      ${pane==='prefs'  ? renderProfileMenu_Prefs()  : ''}
+      ${pane==='account'? renderProfileMenu_Account(): ''}
+    </div>
+    <div class="pm-foot">
+      ${isAdmin()?`<a href="#" data-pm-open-org>Open full Organisation view →</a>`:'<span></span>'}
+      <span>v${(versionState && versionState.loaded && versionState.loaded.sha ? String(versionState.loaded.sha).slice(0,7) : '—')}</span>
+    </div>
+  </div>`;
+}
+function renderProfileMenu_People(){
+  const people = state.orgPeople || [];
+  if(!people.length){
+    return `<div style="padding:16px;font-size:12.5px;color:var(--text-muted);text-align:center">People still loading — a Super Admin sees the whole team here.</div>`;
+  }
+  const roleTint = { prime_admin:'prime', super_admin:'super', admin:'admin', user:'user' };
+  const admins = people.filter(p => String(p.role).toLowerCase() === 'admin').length;
+  const users  = people.filter(p => String(p.role).toLowerCase() === 'user').length;
+  const pending = people.filter(p => !p.active).length;
+  const stat = (k,v) => `<div class="pm-stat"><div class="pm-stat-k">${esc(k)}</div><div class="pm-stat-v">${v}</div></div>`;
+  let h = `<div class="pm-sec"><div class="pm-sec-k">Your team at a glance</div><div class="pm-summary">${stat('Admins',admins)}${stat('Users',users)}${stat('Pending',pending)}</div></div>`;
+  h += `<div class="pm-sec"><div class="pm-people-h"><div class="pm-sec-k">People (${people.length})</div>${isSuperAdmin()?`<button class="pm-invite" data-pm-invite>+ Invite</button>`:''}</div>`;
+  people.forEach(p => {
+    const tone = roleTint[String(p.role).toLowerCase()] || 'user';
+    const initial = ((p.name||p.email||'?').trim().charAt(0)||'?').toUpperCase();
+    const meta = [p.email, (p.clientCount!=null?p.clientCount+' client'+(p.clientCount===1?'':'s'):null)].filter(Boolean).join(' · ');
+    const pendingTag = !p.active ? `<span class="pm-role-pill pending">Pending</span>` : `<span class="pm-role-pill ${tone}">${esc(p.roleLabel || p.role || 'user')}</span>`;
+    h += `<div class="pm-row" data-pm-person="${p.id}"><div class="pm-row-av">${esc(initial)}</div><div class="pm-row-who"><div class="pm-row-n">${esc(p.name||p.email||'(no name)')}</div><div class="pm-row-e">${esc(meta)}</div></div>${pendingTag}</div>`;
+  });
+  h += `</div>`;
+  return h;
+}
+function renderProfileMenu_Prefs(){
+  return `<div class="pm-sec">
+    <div class="pm-sec-k">Notifications</div>
+    <div class="pm-row" data-action="openNotifPrefs" style="cursor:pointer"><div class="pm-row-av" style="background:var(--accent-soft);color:var(--accent);border:1px solid var(--info-line,var(--accent-soft))">🔔</div><div class="pm-row-who"><div class="pm-row-n">Desktop notifications</div><div class="pm-row-e">Rules, quiet hours, test toast</div></div><span style="color:var(--text-muted);font-size:12px">Open →</span></div>
+  </div>
+  <div class="pm-sec">
+    <div class="pm-sec-k">Theme</div>
+    <div style="font-size:12.5px;color:var(--text-muted);padding:4px 2px">Light theme only — dark theme was retired 2026-09.</div>
+  </div>`;
+}
+function renderProfileMenu_Account(){
+  return `<div class="pm-sec">
+    <div class="pm-row"><div class="pm-row-av">🔒</div><div class="pm-row-who"><div class="pm-row-n">Change password</div><div class="pm-row-e">Opens the reset flow</div></div></div>
+    <div class="pm-row" data-action="logout"><div class="pm-row-av" style="background:var(--red-bg);color:var(--red);border:1px solid var(--red-border)">⏻</div><div class="pm-row-who"><div class="pm-row-n" style="color:var(--red)">Logout</div><div class="pm-row-e">Signs you out of this browser</div></div></div>
   </div>`;
 }
 
@@ -1284,8 +1416,7 @@ function renderMainNavSidebar(){
   primary.push(['tasks','tick','Tasks']);
   if(isAdmin()) primary.push(['team','people','Team']);
   // Workload folded into Today's team-pulse rail (renderTodayPressureStrip).
-  // Standalone tab retired 2026-09.
-  if(isSuperAdmin()) primary.push(['users','user','User Management']);
+  // User Management moved to the profile menu (top-right chip) 2026-09.
 
   // Monoline SVG icons, currentColor, no emoji. 18px on the sidebar so they
   // match the label baseline; scaled via viewBox 0 0 20 20 same as AutoLedger's
@@ -1580,6 +1711,31 @@ document.addEventListener('change', function(e){
   else if(t.dataset.notifWeekends !== undefined){ p.skipWeekends = !!t.checked; }
   else return;
   saveNotifPrefs(p);
+});
+
+// ── Profile menu delegated events ─────────────────────────────
+document.addEventListener('click', function(e){
+  if(!e.target || !e.target.closest) return;
+  // Tab switch inside the menu
+  const tab = e.target.closest('[data-pm-tab]');
+  if(tab){ state.profileMenuTab = tab.dataset.pmTab; render(); return; }
+  // Invite button — opens the existing invite modal
+  const inv = e.target.closest('[data-pm-invite]');
+  if(inv){ state.profileMenuOpen = false; state.showModal = 'invite'; render(); return; }
+  // "Open full Organisation" — links to the (retired but still-registered) users tab
+  const org = e.target.closest('[data-pm-open-org]');
+  if(org){ e.preventDefault(); state.profileMenuOpen = false; state.activeTab = 'users'; render(); return; }
+  // Person row click — no-op for now, hook available for future drill-in
+  // (email a member, open their client list, promote, etc.)
+  // Outside click closes the menu — only if it's actually open and we didn't
+  // click inside the menu itself or on the chip.
+  if(state.profileMenuOpen && !e.target.closest('.profile-menu') && !e.target.closest('[data-action="toggleProfileMenu"]')){
+    state.profileMenuOpen = false;
+    render();
+  }
+});
+document.addEventListener('keydown', function(e){
+  if(e.key === 'Escape' && state.profileMenuOpen){ state.profileMenuOpen = false; render(); }
 });
 
 // The "turn on notifications" strip on Today — shown once per browser
@@ -3710,16 +3866,41 @@ function renderDetail(sc,scm){
 }
 
 function renderOverview(sc,scm){
-  let h=`<h2 style="font-size:18px;font-weight:800;margin-bottom:8px;display:flex;align-items:center;gap:10px">${esc(sc.name)} <span id="cli-tier-${sc.id}"></span> <span style="font-size:13px;font-weight:400;color:var(--text-muted)">— Overview</span></h2>`;
-  // Phase 7: Service Governance card (tier, scores, risk profile, partner owner).
-  h+=`<div id="cli-portfolio-${sc.id}" style="margin-bottom:12px"></div>`;
-  // Phase 4/5: compliance lifecycle section — populated async, see loadClientLifecycle.
-  h+=`<div id="cli-lifecycle-${sc.id}" style="margin-bottom:16px"><div class="card" style="border-color:var(--accent-soft)"><div style="padding:8px;font-size:12px;color:var(--text-muted)">Loading compliance lifecycle…</div></div></div>`;
-  // Phase 7: client history timeline (collapsible)
-  h+=`<div id="cli-timeline-${sc.id}" style="margin-bottom:16px"></div>`;
-  setTimeout(function(){ loadClientLifecycle(sc.id); loadClientPortfolio(sc.id); loadClientTimeline(sc.id); }, 0);
-  h+=`<div class="stat-grid" style="grid-template-columns:repeat(5,1fr)">${[{l:"Accounting",p:scm.acctPct,s:scm.acctStatus},{l:"VAT",p:scm.vatPct,s:scm.vatStatus},{l:"Corp Tax",p:scm.ctPct,s:scm.ctStatus},{l:"Documents",p:scm.docsPct,s:scm.docsStatus},{l:"Logins",p:scm.loginsPct,s:scm.loginsStatus}].map(i=>`<div class="stat-card"><div class="form-label" style="margin-bottom:6px">${i.l}</div><div class="stat-value" style="font-size:22px">${i.p}%</div><div style="margin-top:6px">${badgeHTML(i.s,1)}</div></div>`).join("")}</div>`;
+  // Header. Service Governance card retired — its six restated-same-score
+  // tiles (Health / Responsiveness / Effort / Compliance Risk / Operational
+  // Risk / Overall Risk) were noise; the tier chip sits next to the name
+  // and the "high maintenance" flag now surfaces via the lifecycle card's
+  // Health readout on the right.
+  let h=`<h2 style="font-size:18px;font-weight:800;margin-bottom:12px;display:flex;align-items:center;gap:10px">${esc(sc.name)} <span id="cli-tier-${sc.id}"></span> <span style="font-size:13px;font-weight:400;color:var(--text-muted)">— Overview</span></h2>`;
+
+  // 1) Compliance Lifecycle — top of page, populated async.
+  h+=`<div id="cli-lifecycle-${sc.id}" style="margin-bottom:14px"><div class="card" style="border-color:var(--accent-soft)"><div style="padding:8px;font-size:12px;color:var(--text-muted)">Loading compliance lifecycle…</div></div></div>`;
+
+  // 2) Five module cards — moved up here (actionable places live above metadata).
+  // Logins is a COUNT ("3 logins captured"), not a percentage — the % framing
+  // was misleading because there's no ceiling on how many logins a client can
+  // have; a captured/total ratio just meant "how many toggled on".
+  const mods = [
+    { l:"Accounting",   p:scm.acctPct,  s:scm.acctStatus,  showPct:true  },
+    { l:"VAT",          p:scm.vatPct,   s:scm.vatStatus,   showPct:true  },
+    { l:"Corporate Tax",p:scm.ctPct,    s:scm.ctStatus,    showPct:true  },
+    { l:"Documents",    p:scm.docsPct,  s:scm.docsStatus,  showPct:true  },
+    { l:"Logins",       count:scm.loginsCount, total:scm.loginsTotal, s:scm.loginsStatus, showPct:false }
+  ];
+  h+=`<div class="stat-grid" style="grid-template-columns:repeat(5,1fr);margin-bottom:14px">${mods.map(i=>{
+    const value = i.showPct
+      ? `${i.p}%`
+      : (i.total ? `${i.count}<span style="font-size:14px;color:var(--text-muted);font-weight:500"> / ${i.total}</span>` : '0');
+    return `<div class="stat-card"><div class="form-label" style="margin-bottom:6px">${i.l}</div><div class="stat-value" style="font-size:22px">${value}</div><div style="margin-top:6px">${badgeHTML(i.s,1)}</div></div>`;
+  }).join("")}</div>`;
+
+  // 3) Client Details — metadata, sits after the modules.
   h+=`<div class="card"><div class="card-title">Client Details</div><div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px"><div><div class="form-label">Entity Type</div>${isAdmin()?entitySelectHtml("etSel_"+sc.id,sc.entityType,`data-client-entity="${sc.id}" data-entity-hint-for="etHint_${sc.id}" style="padding:5px 8px;font-size:12px;max-width:230px"`):`<div>${esc(sc.entityType)}</div>`}${sc.entityTypeGuessed?`<div style="font-size:10px;color:var(--amber);margin-top:3px;font-weight:600">⚠ Read off the company name — check the trade licence</div>`:''}<div id="etHint_${sc.id}" style="font-size:10px;color:var(--text-muted);line-height:1.45;margin-top:4px">${esc(entityHintFor(normalizeEntityType(sc.entityType)||sc.entityType))}</div></div><div><div class="form-label">Nature</div>${isAdmin()?selectHTML("bn",sc.businessNature||"Not Recorded",BUSINESS_NATURES,`data-client-nature="${sc.id}"`):`<div>${esc(sc.businessNature||"Not Recorded")}</div>`}</div><div><div class="form-label">Financial Year</div><div>FY ${esc(sc.accounting.financialYear)}</div></div><div><div class="form-label">Assigned To</div>${isAdmin()?selectHTML("at",sc.assignedTeam,getTeamOptions(),`data-client-field="${sc.id}"`):`<div style="font-weight:600">${esc(sc.assignedTeam)}</div>`}</div><div><div class="form-label">VAT Status</div>${isAdmin()?selectHTML("vs",sc.vatApplicable,VAT_OPTIONS,`data-client-vatapp="${sc.id}"`):`<div>${esc(sc.vatApplicable)}</div>`}</div><div><div class="form-label">CT Applicable</div><div style="color:${sc.ctApplicable?'var(--green)':'var(--red)'};font-weight:600">${sc.ctApplicable?"Yes":"No"}</div></div><div><div class="form-label">Last Updated</div><div style="font-size:12px;color:var(--text-muted)">${fmtDate(sc.lastUpdated)} ${sc.lastUpdatedBy?'by '+esc(sc.lastUpdatedBy):''}</div></div></div></div>`;
+
+  // 4) History timeline lives at the bottom, so the top of the page stays
+  //    about compliance, not archaeology.
+  const timelineHTML = `<div id="cli-timeline-${sc.id}" style="margin-bottom:14px"></div>`;
+  setTimeout(function(){ loadClientLifecycle(sc.id); loadClientTimeline(sc.id); }, 0);
   if(scm.warnings.length)h+=`<div class="card" style="border-color:var(--red-border)"><div class="card-title" style="color:var(--red)">⚠ Warnings</div>${scm.warnings.map(w=>`<div style="padding:5px 0;font-size:13px;color:var(--amber);border-bottom:1px solid var(--border)">• ${esc(w)}</div>`).join("")}</div>`;
   // Blocked reasons summary — specific per module
   const brs=sc.blockedReasons||{};
@@ -3762,7 +3943,33 @@ function renderOverview(sc,scm){
     });
     h+=`</div>`;
   }
-  if(scm.deadlines.length)h+=`<div class="card"><div class="card-title">Upcoming Deadlines</div>${scm.deadlines.map(d=>`<div style="display:flex;align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid var(--border);font-size:13px"><span style="font-weight:600;min-width:140px">${esc(d.label)}</span><span style="color:var(--text-muted)">${fmtDate(d.date)}</span><span style="margin-left:auto;font-weight:700;font-family:var(--mono);color:${d.days<0?'var(--red)':d.days<=7?'var(--amber)':'var(--blue)'}">${d.days<0?Math.abs(d.days)+'d overdue':d.days+'d'}</span></div>`).join("")}</div>`;
+  // 5) Upcoming Deadlines — regrouped into Overdue / Next 30 days / Later,
+  //    each collapsible, so a client with a seven-year VAT tail doesn't turn
+  //    the card into an endless list. Rows carry a coloured VAT/CT tag.
+  if(scm.deadlines.length){
+    const buckets = { over:[], soon:[], later:[] };
+    scm.deadlines.forEach(d => {
+      if(d.days == null) buckets.later.push(d);
+      else if(d.days < 0) buckets.over.push(d);
+      else if(d.days <= 30) buckets.soon.push(d);
+      else buckets.later.push(d);
+    });
+    const tag = t => t==='vat'
+      ? `<span style="display:inline-block;font-size:9px;font-weight:800;padding:2px 6px;border-radius:5px;background:var(--amber-bg);color:var(--amber);letter-spacing:0.05em;text-transform:uppercase">VAT</span>`
+      : t==='ct'
+        ? `<span style="display:inline-block;font-size:9px;font-weight:800;padding:2px 6px;border-radius:5px;background:var(--red-bg);color:var(--red);letter-spacing:0.05em;text-transform:uppercase">CT</span>`
+        : '';
+    const rows = (arr, tone) => arr.slice(0, 5).map(d => {
+      const untilCol = d.days<0 ? 'var(--red)' : d.days<=30 ? 'var(--amber)' : 'var(--accent)';
+      const untilLbl = d.days<0 ? Math.abs(d.days)+'d overdue' : d.days+' days';
+      return `<div style="display:flex;align-items:center;gap:12px;padding:9px 12px;border-bottom:1px solid var(--border);font-size:13px">${tag(d.type)}<span style="font-weight:600;flex:1">${esc(d.label)}</span><span style="color:var(--text-muted);min-width:110px">${fmtDate(d.date)}</span><span style="font-weight:700;font-family:var(--mono);color:${untilCol};min-width:110px;text-align:right">${untilLbl}</span></div>`;
+    }).join('') + (arr.length>5?`<div style="padding:9px 12px;font-size:11.5px;color:var(--text-muted);background:var(--bg-elevated);text-align:center">+ ${arr.length-5} more ${tone} · click to expand (coming soon)</div>`:'');
+    const kick = (label, arr, tone, tint) => arr.length ? `<div style="margin-bottom:10px"><div style="display:flex;justify-content:space-between;align-items:center;padding:6px 12px;border-radius:6px;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:4px;background:${tint};color:${tone}"><span>${label}</span><span style="background:rgba(255,255,255,0.55);padding:1px 8px;border-radius:5px;font-size:11px">${arr.length}</span></div>${rows(arr, label.toLowerCase())}</div>` : '';
+    h+=`<div class="card"><div class="card-title" style="margin-bottom:10px">Upcoming deadlines</div>${kick('Overdue', buckets.over, 'var(--red)', 'var(--red-bg)')}${kick('Next 30 days', buckets.soon, 'var(--amber)', 'var(--amber-bg)')}${kick('Later', buckets.later, 'var(--accent)', 'var(--accent-soft)')}</div>`;
+  }
+
+  // 6) History timeline — long tail, sits at the very bottom.
+  h += timelineHTML;
   return h;
 }
 
@@ -5036,7 +5243,13 @@ function bindEvents(){
     if(a==="closeModal")el.onclick=()=>{state.showModal=null;render();};
     if(a==="backToList")el.onclick=()=>{state.selectedClientId=null;render();};
     if(a==="logout")el.onclick=()=>{logout();};
-    if(a==="openNotifPrefs")el.onclick=()=>{ openNotifPrefsModal(); };
+    if(a==="openNotifPrefs")el.onclick=(ev)=>{ ev.stopPropagation(); state.profileMenuOpen=false; openNotifPrefsModal(); };
+    if(a==="toggleProfileMenu")el.onclick=(ev)=>{
+      ev.stopPropagation();
+      state.profileMenuOpen = !state.profileMenuOpen;
+      if(state.profileMenuOpen && isAdmin() && !state.orgPeople){ loadOrgPeople(true); }
+      render();
+    };
     if(a==="applyUpdate")el.onclick=()=>{
       // Remember what we're moving to, so the next boot doesn't immediately
       // announce the same update again before its first poll lands.

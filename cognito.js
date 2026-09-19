@@ -80,10 +80,11 @@ async function verifyAccessToken(token) {
 // caller that only wants role + id doesn't pay for that lookup.
 function userFromToken(payload) {
   const groups = payload['cognito:groups'] || [];
-  // Precedence: super_admin > admin > user. Same order as the group
-  // precedence numbers on the User Pool.
+  // Precedence: prime_admin > super_admin > admin > user. Same order as the
+  // group precedence numbers on the User Pool.
   let role = 'user';
-  if (groups.includes('super_admin')) role = 'super_admin';
+  if (groups.includes('prime_admin')) role = 'prime_admin';
+  else if (groups.includes('super_admin')) role = 'super_admin';
   else if (groups.includes('admin')) role = 'admin';
   return {
     id: payload.sub,       // Cognito's stable user id
@@ -106,7 +107,7 @@ function userFromToken(payload) {
 // declared in template.yaml. On first login the client hits a
 // NEW_PASSWORD_REQUIRED challenge — handled by /api/auth/complete-new-password.
 async function invite({ email, name, role, reportsTo }) {
-  if (!['super_admin', 'admin', 'user'].includes(role)) {
+  if (!['prime_admin', 'super_admin', 'admin', 'user'].includes(role)) {
     throw new Error('Invalid role: ' + role);
   }
   const c = client();
@@ -144,7 +145,8 @@ async function getUser(email) {
     const groupsOut = await c.send(new AdminListGroupsForUserCommand({ UserPoolId: POOL_ID, Username: email }));
     const groups = (groupsOut.Groups || []).map(g => g.GroupName);
     let role = 'user';
-    if (groups.includes('super_admin')) role = 'super_admin';
+    if (groups.includes('prime_admin')) role = 'prime_admin';
+    else if (groups.includes('super_admin')) role = 'super_admin';
     else if (groups.includes('admin')) role = 'admin';
     return {
       id: out.Username,
@@ -207,11 +209,11 @@ async function resetPassword(email) {
   await client().send(new AdminResetUserPasswordCommand({ UserPoolId: POOL_ID, Username: email }));
 }
 async function setRole(email, newRole) {
-  if (!['super_admin', 'admin', 'user'].includes(newRole)) throw new Error('Invalid role: ' + newRole);
+  if (!['prime_admin', 'super_admin', 'admin', 'user'].includes(newRole)) throw new Error('Invalid role: ' + newRole);
   const c = client();
-  // Remove from the other two groups, add to the new one. Cheaper than
-  // querying current membership first.
-  for (const g of ['super_admin', 'admin', 'user']) {
+  // Remove from the other groups, add to the new one. Cheaper than querying
+  // current membership first.
+  for (const g of ['prime_admin', 'super_admin', 'admin', 'user']) {
     if (g === newRole) continue;
     try { await c.send(new AdminRemoveUserFromGroupCommand({ UserPoolId: POOL_ID, Username: email, GroupName: g })); }
     catch (e) { if (e.name !== 'ResourceNotFoundException') { /* noop: user wasn't in that group */ } }

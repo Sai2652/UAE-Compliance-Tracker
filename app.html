@@ -83,9 +83,45 @@ input,select,textarea,button{font-family:inherit}
 ::-webkit-scrollbar-track{background:transparent}
 ::-webkit-scrollbar-thumb{background:#243048;border-radius:3px}
 .app{display:flex;flex-direction:column;height:100vh}
-.header{background:var(--bg-card);border-bottom:1px solid var(--border);padding:8px 24px;min-height:56px;display:flex;align-items:center;gap:16px;flex-shrink:0;z-index:100;flex-wrap:wrap}
-.logo{display:none}
-.logo-mark,.logo-text,.logo-sub{display:none}
+/* Top header — AutoLedger parity: midnight ground carrying brand + global
+   search + admin actions. Same colour as the left rail so the two read as
+   one continuous chrome. */
+.header{background:var(--sidebar-bg);border-bottom:1px solid rgba(255,255,255,0.06);padding:0 20px;min-height:60px;display:flex;align-items:center;gap:20px;flex-shrink:0;z-index:100;color:var(--sidebar-strong)}
+.logo{display:flex;align-items:center;gap:12px;min-width:244px;padding-right:16px;color:var(--sidebar-strong)}
+.logo-mark{width:34px;height:34px;flex-shrink:0;color:var(--sidebar-strong);display:flex;align-items:center;justify-content:center}
+.logo-mark svg{display:block;width:100%;height:100%}
+.logo-text-stack{display:flex;flex-direction:column;line-height:1.15;min-width:0}
+.logo-text{font-weight:800;font-size:18px;color:var(--sidebar-strong);letter-spacing:0.04em}
+.logo-sub{font-size:11px;color:var(--sidebar-text);opacity:0.72;margin-top:2px;font-weight:500;white-space:nowrap}
+/* Global search — sits in the header centre. Semi-transparent chip on the
+   midnight ground. Focus lifts opacity and rims in a soft brand halo. */
+.top-search{position:relative;flex:1;max-width:560px;display:flex;align-items:center}
+.top-search-input{width:100%;background:rgba(255,255,255,0.09);border:1px solid rgba(255,255,255,0.14);color:#fff;border-radius:8px;padding:9px 12px 9px 36px;font-size:13px;font-family:inherit;outline:none;transition:background 0.15s,border-color 0.15s,box-shadow 0.15s}
+.top-search-input::placeholder{color:rgba(255,255,255,0.55)}
+.top-search-input:focus{background:rgba(255,255,255,0.16);border-color:rgba(255,255,255,0.30);box-shadow:0 0 0 3px rgba(255,255,255,0.08)}
+.top-search-icon{position:absolute;left:11px;top:50%;transform:translateY(-50%);color:rgba(255,255,255,0.60);pointer-events:none;display:flex}
+.top-search-icon svg{width:16px;height:16px;display:block}
+.top-search-menu{position:absolute;top:calc(100% + 6px);left:0;right:0;background:var(--bg-card);border:1px solid var(--border);border-radius:10px;box-shadow:0 12px 32px rgba(34,37,54,0.24);max-height:360px;overflow-y:auto;z-index:120}
+.top-search-menu[hidden]{display:none}
+.top-search-item{padding:10px 14px;font-size:13px;color:var(--text-primary);cursor:pointer;border-bottom:1px solid var(--border-light,var(--border))}
+.top-search-item:last-child{border-bottom:none}
+.top-search-item:hover,.top-search-item.active{background:var(--accent-soft)}
+.top-search-item .kind{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:0.08em;color:var(--accent);margin-right:8px}
+.top-search-item .sub{font-size:11px;color:var(--text-muted);margin-top:2px}
+.top-search-empty{padding:14px;font-size:12px;color:var(--text-muted);text-align:center}
+/* Header actions — on the midnight ground buttons must invert. */
+.header .btn{background:rgba(255,255,255,0.08);border-color:rgba(255,255,255,0.16);color:#fff}
+.header .btn:hover{background:rgba(255,255,255,0.14);border-color:rgba(255,255,255,0.26);color:#fff}
+.header .btn-primary{background:#fff;border-color:#fff;color:var(--sidebar-bg);box-shadow:none}
+.header .btn-primary:hover{background:#f0f0f7;border-color:#f0f0f7;color:var(--sidebar-bg)}
+.header .btn-sm{background:transparent;border-color:rgba(255,255,255,0.20);color:rgba(255,255,255,0.85)}
+.header .btn-sm:hover{background:rgba(255,255,255,0.12);color:#fff;border-color:rgba(255,255,255,0.30)}
+.header-user{display:flex;align-items:center;gap:10px;padding-left:14px;border-left:1px solid rgba(255,255,255,0.14)}
+.header-user-name{font-size:12px;color:#fff;font-weight:600}
+.header-role-pill{font-size:9px;padding:3px 7px;border-radius:5px;background:rgba(255,255,255,0.14);color:#fff;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;border:1px solid rgba(255,255,255,0.18)}
+.header-role-pill.prime{background:rgba(255,215,150,0.20);border-color:rgba(255,215,150,0.35)}
+/* Sidebar brand block — retired. Brand now lives in the header. */
+.side-nav-brand{display:none}
 /* Sidebar brand — BCL mark + name; sits at the top of .side-nav. */
 .side-nav-brand{display:flex;align-items:center;gap:12px;padding:18px 16px 14px;border-bottom:1px solid var(--sidebar-line);color:var(--sidebar-strong)}
 .side-nav-brand .bcl-mark{width:34px;height:34px;flex-shrink:0;color:var(--sidebar-strong)}
@@ -1078,14 +1114,102 @@ function renderHeader(){
   // Fetch is Super Admin only — it pulls a whole First POC's book of clients
   // across from Ops-Mkt, which is a firm-level decision, not a team one.
   const fetchBtn=isSuperAdmin()?`<button class="btn" data-action="openOpsMkt" title="Pull clients across from the Ops-Mkt master tracker">⬇ Fetch clients</button>`:'';
-  // The "Team (n)" button is gone. It managed a second, parallel list of bare
-  // names that clients were assigned to — separate from the people who
-  // actually log in, so eleven names carried work while three had accounts and
-  // nothing connected the two. People are now one list, managed in User
-  // Management, and clients are assigned to those people.
   const adminBtns=isAdmin()?`${fetchBtn}<button class="btn btn-primary" data-action="openAddClient">+ Add Client</button>`:'';
-  return`<div class="header"><div class="logo"><div class="logo-mark">CT</div><div><div class="logo-text">UAE Compliance Tracker</div><div class="logo-sub">Accounting &amp; Tax Ops</div></div></div><div class="header-actions">${adminBtns}${currentUser?`<div style="display:flex;align-items:center;gap:8px;margin-left:8px;padding-left:12px;border-left:1px solid var(--border)"><span style="font-size:12px;color:var(--text-muted)">${esc(currentUser.name)}</span><span style="font-size:9px;padding:2px 6px;border-radius:4px;background:${isAdmin()?'var(--accent-soft)':'var(--bg-elevated)'};color:${isAdmin()?'var(--accent)':'var(--text-muted)'};font-weight:700;text-transform:uppercase" title="${esc(roleLabel(currentUser))}">${esc(roleLabel(currentUser))}</span><button class="btn btn-sm" data-action="logout" style="font-size:11px">Logout</button></div>`:''}</div></div>`;
+  // BCL 19-dot mark — same asset the sidebar carried, now up in the header so
+  // brand + wordmark live on the midnight bar (AutoLedger parity).
+  const BCL_MARK = `<svg viewBox="0 0 100 100" fill="currentColor" aria-hidden="true"><circle cx="7.56" cy="48.94" r="5.42"/><circle cx="12.11" cy="71.91" r="4.85"/><circle cx="13.14" cy="29.75" r="6.13"/><circle cx="28.64" cy="87.05" r="4.21"/><circle cx="29.1" cy="13.43" r="6.7"/><circle cx="30.85" cy="61.98" r="5.49"/><circle cx="31.47" cy="39.26" r="5.99"/><circle cx="50.04" cy="7.56" r="7.13"/><circle cx="50.05" cy="72.05" r="4.85"/><circle cx="50.06" cy="48.94" r="6.56"/><circle cx="50.06" cy="28.24" r="6.63"/><circle cx="50.06" cy="92.44" r="3.71"/><circle cx="67.74" cy="39.73" r="7.2"/><circle cx="67.91" cy="62.1" r="4.21"/><circle cx="70.4" cy="87.01" r="3"/><circle cx="70.42" cy="13.38" r="7.56"/><circle cx="85.68" cy="71.48" r="2.5"/><circle cx="85.87" cy="30.3" r="7.56"/><circle cx="90.49" cy="51.33" r="7.49"/></svg>`;
+  const SEARCH_ICON = `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="9" cy="9" r="5.5"/><path d="m17 17-3.6-3.6"/></svg>`;
+  const role = currentUser ? roleLabel(currentUser) : '';
+  const isPrime = currentUser && String(currentUser.role||'').toLowerCase()==='prime_admin';
+  return`<div class="header">
+    <div class="logo"><div class="logo-mark">${BCL_MARK}</div><div class="logo-text-stack"><span class="logo-text">BCL</span><span class="logo-sub">Accounting &amp; Compliance Tracker</span></div></div>
+    <div class="top-search">
+      <span class="top-search-icon">${SEARCH_ICON}</span>
+      <input type="text" class="top-search-input" placeholder="Search clients, tasks, people…" data-global-search autocomplete="off" spellcheck="false">
+      <div class="top-search-menu" data-global-search-menu hidden></div>
+    </div>
+    <div class="header-actions" style="margin-left:auto;display:flex;gap:8px;align-items:center">${adminBtns}${currentUser?`
+      <div class="header-user"><span class="header-user-name">${esc(currentUser.name||'')}</span><span class="header-role-pill${isPrime?' prime':''}" title="${esc(role)}">${esc(role)}</span><button class="btn btn-sm" data-action="logout">Logout</button></div>`:''}</div>
+  </div>`;
 }
+
+// ── Global search wiring ─────────────────────────────────────────
+// Delegated because the header is re-rendered on every navigation.
+// Sources: top-level tabs (always), clients by name/entity/team, org
+// people, and open tasks — whatever's already loaded into state. No
+// network calls; this is a fast in-memory jump-to.
+const GLOBAL_SEARCH_TABS = [
+  {key:'priority',label:'Today',hint:'Dashboard'},
+  {key:'dashboard',label:'Clients',hint:'Portfolio'},
+  {key:'calendar',label:'Calendar',hint:'Deadlines'},
+  {key:'tasks',label:'Tasks',hint:'Task engine'},
+  {key:'team',label:'Team',hint:'Workload'},
+  {key:'users',label:'User Management',hint:'Invite / manage people'},
+];
+function runGlobalSearch(q){
+  q = (q||'').trim().toLowerCase();
+  if(!q) return [];
+  const hits = [];
+  GLOBAL_SEARCH_TABS.forEach(t => { if(t.label.toLowerCase().includes(q) || t.hint.toLowerCase().includes(q)) hits.push({kind:'Tab',label:t.label,sub:t.hint,nav:t.key}); });
+  (state.clients||[]).forEach(c => {
+    const hay = ((c.name||'')+' '+(c.entityType||'')+' '+(c.assignedTeam||'')).toLowerCase();
+    if(hay.includes(q)) hits.push({kind:'Client',label:c.name,sub:(c.entityType||'—')+' · '+(c.assignedTeam||'unassigned'),client:c.id});
+  });
+  (state.orgPeople||[]).forEach(p => {
+    const hay = ((p.name||'')+' '+(p.email||'')+' '+(p.role||'')).toLowerCase();
+    if(hay.includes(q)) hits.push({kind:'Person',label:p.name||p.email,sub:(p.email||'')+' · '+(p.roleLabel||p.role||''),nav:'users'});
+  });
+  ((typeof taskState!=='undefined' && taskState.tasks)||[]).forEach(t => {
+    const hay = ((t.title||'')+' '+(t.client_name||'')+' '+(t.task_type||'')).toLowerCase();
+    if(hay.includes(q)) hits.push({kind:'Task',label:t.title||'(untitled)',sub:(t.client_name||'')+' · '+(t.task_type||'').replace(/_/g,' '),nav:'tasks'});
+  });
+  return hits.slice(0, 20);
+}
+function renderGlobalSearchMenu(menu, hits){
+  if(!hits.length){ menu.innerHTML = `<div class="top-search-empty">No matches.</div>`; menu.hidden = false; return; }
+  menu.innerHTML = hits.map((h,i)=>{
+    const nav = h.nav ? `data-nav="${h.nav}"` : '';
+    const cli = h.client ? `data-client="${h.client}"` : '';
+    return `<div class="top-search-item" ${nav} ${cli} data-idx="${i}"><span class="kind">${h.kind}</span>${esc(h.label)}${h.sub?`<div class="sub">${esc(h.sub)}</div>`:''}</div>`;
+  }).join('');
+  menu.hidden = false;
+}
+document.addEventListener('input', function(e){
+  const inp = e.target && e.target.closest && e.target.closest('[data-global-search]'); if(!inp) return;
+  const menu = document.querySelector('[data-global-search-menu]'); if(!menu) return;
+  renderGlobalSearchMenu(menu, runGlobalSearch(inp.value));
+});
+document.addEventListener('focusin', function(e){
+  const inp = e.target && e.target.closest && e.target.closest('[data-global-search]'); if(!inp) return;
+  const menu = document.querySelector('[data-global-search-menu]');
+  if(menu && inp.value.trim()) renderGlobalSearchMenu(menu, runGlobalSearch(inp.value));
+});
+document.addEventListener('click', function(e){
+  const item = e.target && e.target.closest && e.target.closest('.top-search-item');
+  const menu = document.querySelector('[data-global-search-menu]');
+  const inp  = document.querySelector('[data-global-search]');
+  if(!item){
+    // Click outside — close the menu.
+    if(menu && !menu.hidden && !e.target.closest('.top-search')) menu.hidden = true;
+    return;
+  }
+  if(inp){ inp.value = ''; }
+  if(menu){ menu.hidden = true; }
+  // Route it: data-client wins (open the client detail), else data-nav switches tab.
+  if(item.dataset.client){
+    const cid = item.dataset.client;
+    const c = (state.clients||[]).find(x => String(x.id) === String(cid));
+    if(c){ state.selectedClientId = c.id; state.detailTab = 'overview'; render(); }
+  } else if(item.dataset.nav){
+    state.activeTab = item.dataset.nav; state.selectedClientId = null; render();
+  }
+});
+document.addEventListener('keydown', function(e){
+  if(e.key !== 'Escape') return;
+  const menu = document.querySelector('[data-global-search-menu]');
+  const inp = document.querySelector('[data-global-search]');
+  if(menu && !menu.hidden){ menu.hidden = true; if(inp) inp.blur(); }
+});
 
 // Left sidebar — main navigation. Shown when no client is opened.
 // When a client is opened, the existing renderSidebar (client detail nav) takes over.
@@ -1144,13 +1268,6 @@ function renderMainNavSidebar(){
   // AutoLedger's AlBclMark so both tools carry the same visual identity.
   const BCL_MARK_SVG = `<svg viewBox="0 0 100 100" fill="currentColor" aria-hidden="true"><circle cx="7.56" cy="48.94" r="5.42"/><circle cx="12.11" cy="71.91" r="4.85"/><circle cx="13.14" cy="29.75" r="6.13"/><circle cx="28.64" cy="87.05" r="4.21"/><circle cx="29.1" cy="13.43" r="6.7"/><circle cx="30.85" cy="61.98" r="5.49"/><circle cx="31.47" cy="39.26" r="5.99"/><circle cx="50.04" cy="7.56" r="7.13"/><circle cx="50.05" cy="72.05" r="4.85"/><circle cx="50.06" cy="48.94" r="6.56"/><circle cx="50.06" cy="28.24" r="6.63"/><circle cx="50.06" cy="92.44" r="3.71"/><circle cx="67.74" cy="39.73" r="7.2"/><circle cx="67.91" cy="62.1" r="4.21"/><circle cx="70.4" cy="87.01" r="3"/><circle cx="70.42" cy="13.38" r="7.56"/><circle cx="85.68" cy="71.48" r="2.5"/><circle cx="85.87" cy="30.3" r="7.56"/><circle cx="90.49" cy="51.33" r="7.49"/></svg>`;
   let h=`<aside class="side-nav">
-    <div class="side-nav-brand">
-      <span class="bcl-mark">${BCL_MARK_SVG}</span>
-      <div class="bcl-stack">
-        <span class="bcl-title">BCL</span>
-        <span class="bcl-name">Accounting &amp; Compliance Tracker</span>
-      </div>
-    </div>
     <div class="side-nav-section">Main</div>
     ${primary.map(([k,i,l])=>btn(k,i,l)).join('')}`;
   // Insights is Super Admin only. Every screen above this point returns data
@@ -3361,7 +3478,8 @@ function renderSidebar(sc,scm){
   // Keep in step with DETAIL_TABS — the arrow-key order and the visible order
   // must match or ↑/↓ navigation jumps around.
   const nav=[["overview","Overview"],["documents","Documents / KYC"],["accounting","Accounting"],["vat","VAT Returns"],["ct","Corporate Tax"],["logins","Login Credentials"]];
-  return`<div class="sidebar"><div class="sidebar-header"><button class="btn" style="width:100%;margin-bottom:12px" data-action="backToList">← Back</button><div style="font-weight:700;font-size:15px;color:var(--text-primary);margin-bottom:3px">${esc(sc.name)}</div><div style="font-size:11px;color:var(--text-muted);margin-bottom:8px">${esc(sc.entityType)} · ${esc(sc.assignedTeam)}</div>${badgeHTML(scm.overallStatus)}<div style="margin-top:10px">${progressHTML(scm.totalPct,8)}</div></div><div class="detail-nav">${nav.map(([k,l])=>`<button class="detail-nav-btn ${state.detailTab===k?'active':''}" data-detail-nav="${k}">${l}</button>`).join("")}<div style="padding:8px 12px;margin-top:8px;font-size:10px;color:var(--text-muted);border-top:1px solid var(--border)">⌨ Use <kbd style="background:var(--bg-elevated);padding:1px 5px;border-radius:3px;font-size:10px;border:1px solid var(--border)">↑</kbd> <kbd style="background:var(--bg-elevated);padding:1px 5px;border-radius:3px;font-size:10px;border:1px solid var(--border)">↓</kbd> to switch tabs · <kbd style="background:var(--bg-elevated);padding:1px 5px;border-radius:3px;font-size:10px;border:1px solid var(--border)">Esc</kbd> to go back</div></div><div class="sidebar-footer">${isAdmin()?`<button class="btn btn-danger" style="width:100%;font-size:11px" data-action="removeClient" data-id="${sc.id}">Remove Client</button>`:''}</div></div>`;
+  const kbdCss=`background:rgba(255,255,255,0.10);padding:1px 5px;border-radius:3px;font-size:10px;border:1px solid rgba(255,255,255,0.18);color:var(--sidebar-strong)`;
+  return`<div class="sidebar"><div class="sidebar-header"><button class="btn" style="width:100%;margin-bottom:12px" data-action="backToList">← Back</button><div style="font-weight:700;font-size:15px;color:var(--sidebar-strong);margin-bottom:3px">${esc(sc.name)}</div><div style="font-size:11px;color:var(--sidebar-faint);margin-bottom:8px">${esc(sc.entityType)} · ${esc(sc.assignedTeam)}</div>${badgeHTML(scm.overallStatus)}<div style="margin-top:10px">${progressHTML(scm.totalPct,8)}</div></div><div class="detail-nav">${nav.map(([k,l])=>`<button class="detail-nav-btn ${state.detailTab===k?'active':''}" data-detail-nav="${k}">${l}</button>`).join("")}<div style="padding:8px 12px;margin-top:8px;font-size:10px;color:var(--sidebar-faint);border-top:1px solid rgba(255,255,255,0.10)">⌨ Use <kbd style="${kbdCss}">↑</kbd> <kbd style="${kbdCss}">↓</kbd> to switch tabs · <kbd style="${kbdCss}">Esc</kbd> to go back</div></div><div class="sidebar-footer">${isAdmin()?`<button class="btn btn-danger" style="width:100%;font-size:11px" data-action="removeClient" data-id="${sc.id}">Remove Client</button>`:''}</div></div>`;
 }
 
 function renderDetail(sc,scm){

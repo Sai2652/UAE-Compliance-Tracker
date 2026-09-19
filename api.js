@@ -313,14 +313,51 @@ router.put('/users/:id/role', requireAuth, requireSuperAdmin, function(req, res)
 
 // The org chart, for the admin panel: who reports to whom, and how many
 // clients each person carries.
-router.get('/users/org', requireAuth, requireAdmin, function(req, res) {
+//
+// Data sources:
+//   * store.users — the legacy local table, where invited-via-legacy people live.
+//   * Cognito — the authoritative user pool. Anyone invited or promoted since
+//     the migration lives ONLY here. We merge Cognito's list in so that
+//     Prime Admins (and every future Cognito-native invite) show up on this
+//     page without needing a manual DynamoDB backfill.
+// The merge is idempotent — matching on email lets a legacy row shadow a
+// Cognito one for people who exist in both places.
+router.get('/users/org', requireAuth, requireAdmin, asyncH(async function(req, res) {
   var all = users.getAll();
   var clients = tracker.getData().clients || [];
   var counts = {};
   clients.forEach(function(c) { if (c.assignedTeam) counts[c.assignedTeam] = (counts[c.assignedTeam] || 0) + 1; });
 
-  // A lead only needs to see their own branch.
-  var visible = roles.isSuperAdmin(req.user)
+  if (cognito.isConfigured()) {
+    try {
+      var pool = await cognito.listUsers(200);
+      var byEmail = {};
+      all.forEach(function(u) { if (u.email) byEmail[u.email.toLowerCase()] = true; });
+      pool.forEach(function(cu) {
+        var em = (cu.email || '').toLowerCase();
+        if (!em || byEmail[em]) return;
+        all.push({
+          id: cu.id,                    // Cognito UUID — client uses it opaquely
+          email: cu.email,
+          name: cu.name || cu.email,
+          role: cu.role || 'user',      // Group membership is authoritative but
+                                        // listUsers reads the custom:role mirror
+                                        // to stay cheap; roleLabel below still
+                                        // picks up any normalisation.
+          reports_to: cu.reports_to || null,
+          active: cu.active,
+          last_login: cu.last_login,
+          _cognitoOnly: true
+        });
+      });
+    } catch (e) {
+      // Cognito hiccup shouldn't take the page down — fall back to what's local.
+      console.error('[users/org] cognito merge failed:', e.message);
+    }
+  }
+
+  // A lead only needs to see their own branch. Prime + Super see everyone.
+  var visible = roles.atLeast(req.user, 'super_admin')
     ? all
     : all.filter(function(u) { return String(u.id) === String(req.user.id) || String(u.reports_to) === String(req.user.id); });
 
@@ -335,14 +372,14 @@ router.get('/users/org', requireAuth, requireAdmin, function(req, res) {
     }),
     // Owners of clients who have no account, or sit outside the reporting line.
     // These are the people whose work reaches no team lead.
-    orphanOwners: roles.isSuperAdmin(req.user)
+    orphanOwners: roles.atLeast(req.user, 'super_admin')
       ? Object.keys(counts).filter(function(n) {
           var u = all.find(function(x) { return x.name === n; });
           return !u || (u.reports_to == null && !roles.atLeast(u, 'admin'));
         }).map(function(n) { return { name: n, clientCount: counts[n] }; })
       : []
   });
-});
+}));
 router.put('/users/:id/deactivate', requireAuth, requireSuperAdmin, function(req, res) { users.deactivate(req.params.id); res.json({ ok: true }); });
 router.put('/users/:id/activate', requireAuth, requireSuperAdmin, function(req, res) { users.activate(req.params.id); res.json({ ok: true }); });
 // Delete a person outright. Deactivate is the safer option and the one the UI

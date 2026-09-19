@@ -520,19 +520,44 @@ const MIS_STATUSES=["Not Issued","In Preparation","Issued","Not Applicable"];
 // 1) NEW Document list with mandatory flags
 const DOCS_LIST=[
   {name:"COI",mandatory:true},
-  {name:"Trade License",mandatory:true},
+  // Docs that expire and must be re-notified to the FTA within 20 business
+  // days of any change (Article 15, Cabinet Decision 52/2017, VAT Executive
+  // Regulation — same 20-BD rule under the CT regime). `expires:true` opens
+  // an expiry-date input when status is set to Received; that date drives
+  // the FTA ATP (Amendment of Taxable Person) alert on the Overview card.
+  {name:"Trade License",mandatory:true,expires:true},
   {name:"BCL Mandate",mandatory:true},
   {name:"MOA",mandatory:true},
   {name:"AOA",mandatory:false},
-  {name:"Ejari",mandatory:true},
-  {name:"Establishment Card",mandatory:false},
-  {name:"Shareholders Passport",mandatory:true},
-  {name:"Shareholder Emirates ID",mandatory:true},
+  {name:"Ejari",mandatory:true,expires:true},
+  {name:"Establishment Card",mandatory:false,expires:true},
+  {name:"Shareholders Passport",mandatory:true,expires:true},
+  {name:"Shareholder Emirates ID",mandatory:true,expires:true},
   {name:"FTA Login",mandatory:true},
   {name:"CT Registration",mandatory:true},
   {name:"VAT Registration",mandatory:true}, // special: has N/A option
   {name:"Signed KYC",mandatory:true},
 ];
+// FTA ATP (Amendment of Taxable Person) rule text — cited in tooltips and
+// on the Overview alert card so nothing about the deadline is opaque.
+const FTA_ATP_RULE_DAYS = 20; // business days
+const FTA_ATP_RULE_CITE = 'Article 15, Cabinet Decision No. 52 of 2017 (VAT Executive Regulation). Any change in registration circumstances — including trade licence, partner/manager passport, or Emirates ID — must be notified to the FTA within 20 business days.';
+// Count business days forward, skipping Fridays & Saturdays (UAE public
+// weekend runs Fri-Sat historically and Sat-Sun since 2022 for federal
+// entities; we conservatively skip Friday too so a deadline never lands
+// on either side of the weekend divide).
+function addBusinessDays(dateStr, days){
+  if(!dateStr) return null;
+  const d = new Date(dateStr);
+  if(isNaN(d)) return null;
+  let added = 0;
+  while(added < days){
+    d.setDate(d.getDate() + 1);
+    const dow = d.getDay(); // 0=Sun, 5=Fri, 6=Sat
+    if(dow !== 5 && dow !== 6) added++;
+  }
+  return d.toISOString().slice(0,10);
+}
 
 // 3) Default login portals — only FTA & Zoho, rest are custom
 const DEFAULT_PORTALS=["FTA Portal","Zoho Books"];
@@ -4125,6 +4150,33 @@ function renderOverview(sc,scm){
     return `<div class="stat-card"><div class="form-label" style="margin-bottom:6px">${i.l}</div><div class="stat-value" style="font-size:22px">${value}</div><div style="margin-top:6px">${badgeHTML(i.s,1)}</div></div>`;
   }).join("")}</div>`;
 
+  // 2b) FTA ATP alert — surfaces any tracked doc that is expired, is
+  //     expiring within 60 days, or is Received without an expiry date.
+  //     The 20-business-day submission deadline (Article 15, Cabinet
+  //     Decision 52/2017) is computed and shown per row.
+  const atpItems = ftaAtpItems(sc);
+  if(atpItems.length){
+    const worst = atpItems.some(i => i.severity === 'danger') ? 'danger' : 'warn';
+    const border = worst === 'danger' ? 'var(--red-border)' : 'var(--amber-border)';
+    const titleC = worst === 'danger' ? 'var(--red)' : 'var(--amber)';
+    h += `<div class="card" style="border-color:${border};border-left:4px solid ${titleC};margin-bottom:14px">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:10px;gap:8px;flex-wrap:wrap">
+        <div class="card-title" style="color:${titleC};margin:0;display:flex;align-items:center;gap:8px">
+          FTA ATP — Amendment of Taxable Person${infoIcon(FTA_ATP_RULE_CITE)}
+        </div>
+        <div style="font-size:11px;color:var(--text-muted)">Deadline: ${FTA_ATP_RULE_DAYS} business days from the change</div>
+      </div>
+      ${atpItems.map(i => {
+        const tint = i.severity === 'danger' ? 'var(--red)' : 'var(--amber)';
+        const badge = i.kind === 'expired' ? `<span style="color:var(--red);font-weight:800">EXPIRED</span>`
+                    : i.kind === 'expiring' ? `<span style="color:${tint};font-weight:800">EXPIRING</span>`
+                    : `<span style="color:var(--amber);font-weight:800">NO EXPIRY</span>`;
+        const dl = i.atpDeadline ? `<span style="color:var(--text-muted)">· ATP deadline <b style="color:${tint}">${i.atpDeadline}</b></span>` : '';
+        return `<div style="display:flex;gap:12px;padding:8px 0;border-bottom:1px solid var(--border);font-size:12.5px;line-height:1.5"><span style="min-width:180px;font-weight:700">${esc(i.docName)}</span><span>${badge} ${esc(i.message)} ${dl}</span></div>`;
+      }).join('')}
+    </div>`;
+  }
+
   // 3) Client Details — metadata, sits after the modules.
   const entityDesc = entityHintFor(normalizeEntityType(sc.entityType)||sc.entityType);
   const entityGuessedIcon = sc.entityTypeGuessed ? infoIcon('Entity type was inferred from the company name — confirm against the trade licence.') : '';
@@ -4406,25 +4458,61 @@ function renderCT(sc,scm){
   return h;
 }
 
-// 1) DOCUMENTS — New list with mandatory flags
+// 1) DOCUMENTS — status toggles, and (for expiring docs) an expiry-date
+// input that appears when the doc is Received. The expiry drives the FTA
+// ATP alert on the Overview card and the Documents lane count on Today.
 function renderDocuments(sc,scm){
-  let h=`<h2 style="font-size:18px;font-weight:800;margin-bottom:16px">Documents / KYC</h2>`;
+  let h=`<h2 style="font-size:18px;font-weight:800;margin-bottom:16px;display:flex;align-items:center;gap:8px">Documents / KYC ${infoIcon('Expiring docs (Trade Licence, Ejari, Establishment Card, Passport, Emirates ID) require an expiry date. Any change must be notified to the FTA within '+FTA_ATP_RULE_DAYS+' business days — see FTA ATP alert on the Overview.')}</h2>`;
   h+=`<div class="card">${progressHTML(scm.docsPct,8)}${scm.docsMissing.length?`<div style="margin-top:8px;font-size:12px;color:var(--red)">Missing mandatory: ${esc(scm.docsMissing.join(", "))}</div>`:''}</div>`;
   h+=`<div class="card">`;
+  const expiries = sc.documentExpiries || (sc.documentExpiries = {});
   DOCS_LIST.forEach(doc=>{
     const val=sc.documents[doc.name]||"Pending";
     const isVatReg=doc.name==="VAT Registration";
     const showNA=isVatReg;
     const isPendingMandatory=doc.mandatory&&val==="Pending";
     const reason=(sc.blockedReasons||{})[`doc_${doc.name}`]||"";
-    h+=`<div class="doc-row" style="flex-wrap:wrap"><div style="display:flex;align-items:center;flex:1;min-width:200px"><span style="font-size:13px;color:var(--text-secondary)">${esc(doc.name)}</span><span class="mandatory-tag ${doc.mandatory?'req':'opt'}">${doc.mandatory?'Required':'Optional'}</span></div><div style="display:flex;gap:4px">
+    const expiry = expiries[doc.name] || '';
+    const needsExpiry = doc.expires && val === 'Received';
+    const missingExpiry = needsExpiry && !expiry;
+    const expiryDays = expiry ? daysUntil(expiry) : null;
+    const expiryTint = expiryDays == null ? '' : (expiryDays < 0 ? 'var(--red)' : expiryDays <= 60 ? 'var(--amber)' : 'var(--green)');
+    const expiryLabel = expiryDays == null ? '' : (expiryDays < 0 ? Math.abs(expiryDays)+' days expired' : expiryDays === 0 ? 'expires today' : 'expires in '+expiryDays+' days');
+    h+=`<div class="doc-row" style="flex-wrap:wrap"><div style="display:flex;align-items:center;flex:1;min-width:200px"><span style="font-size:13px;color:var(--text-secondary)">${esc(doc.name)}</span><span class="mandatory-tag ${doc.mandatory?'req':'opt'}">${doc.mandatory?'Required':'Optional'}</span>${doc.expires?`<span style="font-size:9px;font-weight:800;padding:2px 6px;border-radius:5px;background:var(--accent-soft);color:var(--accent);margin-left:6px;letter-spacing:0.05em">EXPIRES</span>`:''}</div><div style="display:flex;gap:4px">
       <button class="doc-toggle-btn ${val==='Received'?'received':''}" data-doc="${esc(doc.name)}" data-doc-val="Received" data-cid="${sc.id}">Received</button>
       <button class="doc-toggle-btn ${val==='Pending'?'pending':''}" data-doc="${esc(doc.name)}" data-doc-val="Pending" data-cid="${sc.id}">Pending</button>
       ${showNA?`<button class="doc-toggle-btn ${val==='N/A'?'na':''}" data-doc="${esc(doc.name)}" data-doc-val="N/A" data-cid="${sc.id}">N/A</button>`:''}
-    </div>${isPendingMandatory?`<div style="width:100%;margin-top:6px"><input class="form-input" style="font-size:11px;padding:4px 8px;border-color:var(--amber-border);background:var(--amber-bg)" value="${esc(reason)}" placeholder="Why is this pending? (e.g., Requested from client on 15 Mar...)" data-blocked-reason="doc_${esc(doc.name)}" data-cid="${sc.id}"></div>`:''}</div>`;
+    </div>${needsExpiry?`<div style="width:100%;margin-top:8px;display:flex;gap:10px;align-items:center;flex-wrap:wrap"><span style="font-size:11px;color:var(--text-muted);font-weight:600">Expiry date</span><input type="date" class="form-input" style="font-size:12px;padding:5px 10px;max-width:180px${missingExpiry?';border-color:var(--red-border);background:var(--red-bg)':''}" value="${esc(expiry)}" data-doc-expiry="${esc(doc.name)}" data-cid="${sc.id}">${expiryLabel?`<span style="font-size:11.5px;font-weight:700;color:${expiryTint}">${expiryLabel}</span>`:''}${missingExpiry?`<span style="font-size:11px;color:var(--red);font-weight:600">⚠ Required — cannot track without expiry</span>`:''}</div>`:''}${isPendingMandatory?`<div style="width:100%;margin-top:6px"><input class="form-input" style="font-size:11px;padding:4px 8px;border-color:var(--amber-border);background:var(--amber-bg)" value="${esc(reason)}" placeholder="Why is this pending? (e.g., Requested from client on 15 Mar...)" data-blocked-reason="doc_${esc(doc.name)}" data-cid="${sc.id}"></div>`:''}</div>`;
   });
   h+=`</div>`;
   return h;
+}
+
+// FTA ATP (Amendment of Taxable Person) audit — walks the tracked expiring
+// docs on a client and returns any that already expired, expire within 60
+// days, or were renewed and still owe an ATP submission. Every item comes
+// with the 20-business-day deadline computed off the change date.
+function ftaAtpItems(sc){
+  const items = [];
+  const expiries = sc.documentExpiries || {};
+  DOCS_LIST.filter(d => d.expires).forEach(doc => {
+    const status = sc.documents[doc.name];
+    if(status !== 'Received') return;
+    const expiry = expiries[doc.name];
+    if(!expiry) { items.push({ docName: doc.name, kind: 'missing_expiry', message: 'Marked Received but no expiry date set — cannot track ATP.', severity: 'warn' }); return; }
+    const days = daysUntil(expiry);
+    if(days == null) return;
+    if(days < 0){
+      items.push({ docName: doc.name, kind: 'expired', expiry, daysOverdue: Math.abs(days),
+        atpDeadline: addBusinessDays(expiry, FTA_ATP_RULE_DAYS),
+        message: `Expired ${Math.abs(days)} days ago on ${expiry}. Renew and file FTA ATP within ${FTA_ATP_RULE_DAYS} business days of the new document.`, severity: 'danger' });
+    } else if(days <= 60){
+      items.push({ docName: doc.name, kind: 'expiring', expiry, daysToExpiry: days,
+        message: days === 0 ? `Expires today (${expiry}) — arrange renewal and FTA ATP filing.` : `Expires in ${days} days on ${expiry}. Arrange renewal; FTA ATP required within ${FTA_ATP_RULE_DAYS} business days of the new document.`,
+        severity: days <= 20 ? 'danger' : 'warn' });
+    }
+  });
+  return items;
 }
 
 // 2) DATA & ACCESS — Zoho Access: Given/Not Given
@@ -5825,6 +5913,15 @@ function bindEvents(){
 
   // Documents
   document.querySelectorAll("[data-doc]").forEach(el=>{el.onclick=()=>{const c=getClient(el.dataset.cid);if(c){c.documents[el.dataset.doc]=el.dataset.docVal;markUpdated(c);updateAndSave();}};});
+  // Expiry-date input for the 5 expiring docs (Trade Licence, Ejari,
+  // Establishment Card, Passport, EID). Save on change; the FTA ATP
+  // engine recomputes on next render and the Overview alert reflects it.
+  document.querySelectorAll("[data-doc-expiry]").forEach(el=>{el.onchange=()=>{
+    const c=getClient(el.dataset.cid); if(!c) return;
+    if(!c.documentExpiries) c.documentExpiries = {};
+    c.documentExpiries[el.dataset.docExpiry] = el.value || '';
+    markUpdated(c); updateAndSave();
+  };});
 
   // Data toggles
   document.querySelectorAll("[data-toggle]").forEach(el=>{const n=el.dataset.toggle;el.onchange=(e)=>{

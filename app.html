@@ -4204,7 +4204,7 @@ function renderDashboard(){
   // Readiness counts strip — clickable to filter, plus an "All" reset chip.
   h+=renderReadinessCountsStrip();
 
-  h+=`<div class="filter-bar"><input class="form-input search-input" placeholder="Search clients..." value="${esc(state.search)}" data-action="search">${selectHTML("fs",state.filterStatus,["All",...STATUSES],'data-action="filterStatus"')}${selectHTML("ft",state.filterTeam,["All",...getTeamOptions()],'data-action="filterTeam"')}${renderReadinessFilterSelect()}${renderClientTierFilterSelect()}<button class="btn btn-sm ${state.sortByTier?'btn-primary':''}" data-action="toggleSortTier">Sort by Tier</button></div>`;
+  h+=`<div class="filter-bar"><input class="form-input search-input" placeholder="Search clients..." value="${esc(state.search)}" data-action="search">${selectHTML("fs",state.filterStatus,["All",...STATUSES],'data-action="filterStatus"')}${selectHTML("ft",state.filterTeam,["All",...getTeamOptions()],'data-action="filterTeam"')}${renderReadinessFilterSelect()}${renderClientTierFilterSelect()}<button class="btn btn-sm ${state.sortByTier?'btn-primary':''}" data-action="toggleSortTier">Sort by Tier</button><button class="btn btn-sm" data-action="refreshClients" title="Pull the latest client list — picks up anything just assigned to you" style="margin-left:auto">${state.clientsRefreshing?'Refreshing…':'↻ Refresh'}</button></div>`;
 
   const fl=getFilteredClients();
 
@@ -5296,12 +5296,23 @@ function renderUserManagement(){
       // Prime Admin sits at the top of the tree — nobody manages a founder.
       // Render a static "— nobody —" label instead of an editable dropdown so
       // the row can't be accidentally rewired under someone else.
+      // Reporting lines are set by a Super Admin at invite time and are
+      // not an Admin's to change — an Admin editing who they report to
+      // would be editing their own visibility scope. Non-Super callers
+      // get read-only text showing the manager's resolved name
+      // (reportsToName comes from the server, which looks it up across
+      // the whole org — the manager sits above the caller and so isn't
+      // in their own visible slice).
+      const canEditReporting = isSuperAdmin();
+      const mgrName = p.reportsToName || (p.reports_to ? people.find(x=>String(x.id)===String(p.reports_to))?.name : null);
       const reportsCell = targetIsPrime
         ? `<span style="font-size:11px;color:var(--text-muted)" title="Prime Admins sit at the top — they don't report to anyone">— nobody —</span>`
-        : `<select class="form-input" data-user-reports="${p.id}" style="padding:3px 6px;font-size:11px;max-width:140px">
-            <option value="">— nobody —</option>
-            ${people.filter(x=>String(x.id)!==String(p.id)&&x.role!=='user').map(x=>`<option value="${x.id}"${String(p.reports_to)===String(x.id)?' selected':''}>${esc(x.name)}</option>`).join('')}
-          </select>${(p.role==='admin'&&!people.some(x=>String(x.reports_to)===String(p.id)))?`<div style="font-size:10px;color:var(--amber);margin-top:2px">no reports — sees only own clients</div>`:''}`;
+        : !canEditReporting
+          ? `<span style="font-size:12px;color:var(--text-primary);font-weight:600" title="Set by your Super Admin">${mgrName?esc(mgrName):'<span style="color:var(--text-muted);font-weight:400">— nobody —</span>'}</span>`
+          : `<select class="form-input" data-user-reports="${p.id}" style="padding:3px 6px;font-size:11px;max-width:140px">
+              <option value="">— nobody —</option>
+              ${people.filter(x=>String(x.id)!==String(p.id)&&x.role!=='user').map(x=>`<option value="${x.id}"${String(p.reports_to)===String(x.id)?' selected':''}>${esc(x.name)}</option>`).join('')}
+            </select>${(p.role==='admin'&&!people.some(x=>String(x.reports_to)===String(p.id)))?`<div style="font-size:10px;color:var(--amber);margin-top:2px">no reports — sees only own clients</div>`:''}`;
       h+=`<tr${p.active===false?' style="opacity:0.5"':''}>
         <td style="font-weight:600">${esc(p.name||'(no name set)')}${isMe?' <span style="font-size:10px;color:var(--text-muted)">(you)</span>':''}${p.active===false?' <span style="font-size:10px;color:var(--red)">deactivated</span>':''}</td>
         <td style="color:var(--text-muted)">${esc(p.email||'—')}</td>
@@ -5528,12 +5539,30 @@ const SAFETY_FULL_MS = 60 * 1000;
 let _lastKnownTrackerUpdatedAt = null;
 let _lastFullPullAt = 0;
 let _fullPullInFlight = false;
+// Track the last keystroke so we can tell "mid-edit" from "an element
+// merely happens to hold focus".
+let _lastTypedAt = 0;
+document.addEventListener('keydown', () => { _lastTypedAt = Date.now(); }, true);
+
 function _skipTick(){
   if(document.hidden) return true;
   if(state.showModal) return true;
   if(document.getElementById('notif-prefs-modal')) return true;
+  if(document.getElementById('uct-dialog-root') && document.getElementById('uct-dialog-root').children.length) return true;
+  // The point of this guard is not to re-render out from under someone
+  // who is typing. The previous version skipped whenever ANY input /
+  // textarea / select held focus — and a <select> keeps focus after you
+  // pick from it. So clicking a filter dropdown once on the Clients tab
+  // parked the heartbeat permanently and nothing auto-refreshed again
+  // until the page reloaded. That is what made assignments look like
+  // they "take some time" to arrive.
+  //
+  // Now: only text entry blocks a tick, and only while it is actually
+  // being typed in (within the last 3 seconds). A focused select never
+  // blocks — re-rendering it is harmless, its value lives in state.
   const f = document.activeElement;
-  if(f && (f.tagName === 'INPUT' || f.tagName === 'TEXTAREA' || f.tagName === 'SELECT')) return true;
+  const isTextEntry = f && (f.tagName === 'TEXTAREA' || (f.tagName === 'INPUT' && !/^(checkbox|radio|button|submit)$/i.test(f.type||'')));
+  if(isTextEntry && (Date.now() - _lastTypedAt) < 3000) return true;
   return false;
 }
 async function _fullPull(){
@@ -5973,6 +6002,17 @@ function bindEvents(){
       render();
     };
     if(a==="bulkClearSelection")el.onclick=()=>{ state.selectedClientIds = new Set(); render(); };
+    // Targeted refresh — refetches the client list only. No page reload,
+    // no morning-dashboard recompute. This is the button to press after
+    // a Super Admin hands you clients and you don't want to wait for the
+    // next heartbeat.
+    if(a==="refreshClients")el.onclick=async()=>{
+      if(state.clientsRefreshing) return;
+      state.clientsRefreshing = true; render();
+      try { await reloadTrackerFromServer(); }
+      catch(err){ uctAlert({title:'Refresh failed', body: err.message, tone:'danger'}); }
+      finally { state.clientsRefreshing = false; render(); }
+    };
     if(a==="bulkAssignApply")el.onclick=async()=>{
       const target = (document.getElementById('bulkAssignTarget')||{}).value;
       if(!target){ uctAlert({title:'Pick an assignee', body:'Choose someone from the dropdown before applying.'}); return; }

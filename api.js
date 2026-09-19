@@ -396,16 +396,31 @@ router.get('/users/org', requireAuth, requireAdmin, asyncH(async function(req, r
   var counts = {};
   clients.forEach(function(c) { if (c.assignedTeam) counts[c.assignedTeam] = (counts[c.assignedTeam] || 0) + 1; });
 
+  // Identity canonicalisation.
+  //
+  // A user who predates the Cognito migration exists twice: a numeric id
+  // in the local users table AND a Cognito sub. At runtime req.user.id is
+  // always the Cognito sub, so any reports_to holding a legacy numeric id
+  // matches nothing. That is exactly what happened here — the invite
+  // dropdown offered "Sai" with his local id 1, so every Admin was stored
+  // with custom:reports_to = "1" while Sai's real identity is his sub.
+  // The reporting line then rendered as "— nobody —" for all of them.
+  //
+  // Fix: the Cognito sub is the single canonical id. We map every legacy
+  // numeric id to its sub and rewrite both `id` and `reports_to` on the
+  // way out, so the browser only ever sees canonical ids.
+  var subByEmail = {};
   if (cognito.isConfigured()) {
     try {
       var pool = await cognito.listUsers(200);
+      pool.forEach(function(cu) { if (cu.email) subByEmail[cu.email.toLowerCase()] = cu; });
       var byEmail = {};
       all.forEach(function(u) { if (u.email) byEmail[u.email.toLowerCase()] = true; });
       pool.forEach(function(cu) {
         var em = (cu.email || '').toLowerCase();
         if (!em || byEmail[em]) return;
         all.push({
-          id: cu.id,                    // Cognito UUID — client uses it opaquely
+          id: cu.id,                    // Cognito sub — already canonical
           email: cu.email,
           name: cu.name || cu.email,
           role: cu.role || 'user',      // Group membership is authoritative but
@@ -424,6 +439,30 @@ router.get('/users/org', requireAuth, requireAdmin, asyncH(async function(req, r
     }
   }
 
+  // legacy numeric id -> Cognito sub, for rows that exist in both stores.
+  var subByLegacyId = {};
+  all.forEach(function(u) {
+    var cu = u.email && subByEmail[u.email.toLowerCase()];
+    if (cu && String(cu.id) !== String(u.id)) subByLegacyId[String(u.id)] = cu.id;
+  });
+  var canonicalId = function(v) {
+    if (v == null || v === '') return null;
+    return subByLegacyId[String(v)] || v;
+  };
+
+  all = all.map(function(u) {
+    return Object.assign({}, u, {
+      id: canonicalId(u.id),
+      reports_to: canonicalId(u.reports_to)
+    });
+  });
+
+  // Name lookup across EVERYONE, not just the visible slice — an Admin
+  // needs their manager's name even though the manager sits above them
+  // and is therefore filtered out of `visible` below.
+  var nameById = {};
+  all.forEach(function(u) { if (u.id != null) nameById[String(u.id)] = u.name; });
+
   // A lead only needs to see their own branch. Prime + Super see everyone.
   var visible = roles.atLeast(req.user, 'super_admin')
     ? all
@@ -434,7 +473,11 @@ router.get('/users/org', requireAuth, requireAdmin, asyncH(async function(req, r
       return {
         id: u.id, name: u.name, email: u.email, role: u.role,
         roleLabel: roles.labelOf(u.role),
-        reports_to: u.reports_to, active: u.active, last_login: u.last_login,
+        reports_to: u.reports_to,
+        // Resolved here so the UI can show "Reports to: Sai" without
+        // needing the manager's own row in the payload.
+        reportsToName: u.reports_to != null ? (nameById[String(u.reports_to)] || null) : null,
+        active: u.active, last_login: u.last_login,
         clientCount: counts[u.name] || 0
       };
     }),

@@ -4826,12 +4826,28 @@ function renderUserManagement(){
       <th style="text-align:left">Reports to</th><th style="text-align:right">Clients</th><th style="text-align:left">Last login</th><th></th></tr></thead><tbody>`;
     people.forEach(p=>{
       const isMe=currentUser&&String(currentUser.id)===String(p.id);
+      const targetIsPrime = String(p.role||'').toLowerCase() === 'prime_admin';
+      // Role options: everyone the caller can grant, PLUS the target's current
+      // role (even if the caller can't grant it — otherwise the <select>
+      // silently defaults to the first option and mis-labels the row).
+      // If target is Prime Admin and caller isn't, render a locked pill
+      // instead of a dropdown — Super/Admin can't demote a Prime Admin.
+      const grantable = isPrimeAdmin()
+        ? [['user','User'],['admin','Admin'],['super_admin','Super Admin'],['prime_admin','Prime Admin']]
+        : [['user','User'],['admin','Admin'],['super_admin','Super Admin']];
+      const hasCurrent = grantable.some(r => r[0] === p.role);
+      const opts = hasCurrent
+        ? grantable
+        : grantable.concat([[p.role, (ROLE_LABEL[p.role]||p.role)+' (locked)']]);
+      const roleCell = (targetIsPrime && !isPrimeAdmin())
+        ? `<span class="pm-role-pill prime" title="Only a Prime Admin can change another Prime Admin's role">${esc(ROLE_LABEL[p.role]||'Prime Admin')} 🔒</span>`
+        : `<select class="form-input" data-user-role="${p.id}" style="padding:3px 6px;font-size:11px;max-width:150px"${isMe?' disabled title="You cannot change your own role"':''}>
+            ${opts.map(function(r){const dis=!hasCurrent && r[0]===p.role?' disabled':'';return `<option value="${r[0]}"${p.role===r[0]?' selected':''}${dis}>${r[1]}</option>`;}).join('')}
+          </select>`;
       h+=`<tr${p.active===false?' style="opacity:0.5"':''}>
         <td style="font-weight:600">${esc(p.name||'(no name set)')}${isMe?' <span style="font-size:10px;color:var(--text-muted)">(you)</span>':''}${p.active===false?' <span style="font-size:10px;color:var(--red)">deactivated</span>':''}</td>
         <td style="color:var(--text-muted)">${esc(p.email||'—')}</td>
-        <td><select class="form-input" data-user-role="${p.id}" style="padding:3px 6px;font-size:11px;max-width:150px"${isMe?' disabled title="You cannot change your own role"':''}>
-          ${(isPrimeAdmin()?[['user','User'],['admin','Admin'],['super_admin','Super Admin'],['prime_admin','Prime Admin']]:[['user','User'],['admin','Admin'],['super_admin','Super Admin']]).map(function(r){return `<option value="${r[0]}"${p.role===r[0]?' selected':''}>${r[1]}</option>`;}).join('')}
-        </select></td>
+        <td>${roleCell}</td>
         <td><select class="form-input" data-user-reports="${p.id}" style="padding:3px 6px;font-size:11px;max-width:140px">
           <option value="">— nobody —</option>
           ${people.filter(x=>String(x.id)!==String(p.id)&&x.role!=='user').map(x=>`<option value="${x.id}"${String(p.reports_to)===String(x.id)?' selected':''}>${esc(x.name)}</option>`).join('')}

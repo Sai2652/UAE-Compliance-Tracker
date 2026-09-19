@@ -274,6 +274,20 @@ router.put('/users/:id/role', requireAuth, requireSuperAdmin, function(req, res)
   var role = req.body.role != null ? roles.normalizeRole(req.body.role) : null;
   var reportsTo = req.body.reports_to;   // undefined = leave alone, null = clear
 
+  // Only a Prime Admin can touch a Prime Admin's role, and only a Prime Admin
+  // can grant Prime Admin. Everything else — Super/Admin/User — a Super Admin
+  // can freely rearrange. Belt-and-braces: the UI already hides the Prime
+  // Admin option from non-prime callers, this refuses the direct API call.
+  var callerIsPrime = roles.isPrimeAdmin ? roles.isPrimeAdmin(req.user) : (String(req.user.role||'').toLowerCase() === 'prime_admin');
+  if (!callerIsPrime) {
+    if (role === 'prime_admin') {
+      return res.status(403).json({ error: 'Only a Prime Admin can grant Prime Admin.' });
+    }
+    if (String(target.role||'').toLowerCase() === 'prime_admin') {
+      return res.status(403).json({ error: 'Only a Prime Admin can change another Prime Admin\'s role.' });
+    }
+  }
+
   if (reportsTo !== undefined && reportsTo !== null && reportsTo !== '') {
     var mgrId = parseInt(reportsTo, 10);
     if (mgrId === id) return res.status(400).json({ error: 'Somebody cannot report to themselves' });

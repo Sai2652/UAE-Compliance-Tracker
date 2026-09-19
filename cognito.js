@@ -168,6 +168,14 @@ async function getUser(email) {
 
 // List every user in the pool (paginated). Used by the frontend's team + user
 // management views, and by the assignedTeam picker.
+//
+// Role is resolved from GROUP membership, not the custom:role attribute —
+// the attribute was never set on directly-created users (e.g. the seeded
+// Prime Admin), which made them read as plain 'user' in the org list. Group
+// membership is the authoritative source; the attribute exists only as a
+// mirror to keep the browser from having to make its own admin call. We
+// fetch groups per user in parallel so the total wall-clock is the slowest
+// single Cognito call, not the sum — fine for firm-sized pools.
 async function listUsers(limit = 60) {
   const c = client();
   const users = [];
@@ -181,16 +189,32 @@ async function listUsers(limit = 60) {
         id: u.Username,
         email: attrs.email || '',
         name: attrs.name || '',
-        role: attrs['custom:role'] || 'user',  // fast approximation; groups are authoritative but require a per-user call
+        role: null, // filled from groups below
         active: u.Enabled ? 1 : 0,
         created_at: u.UserCreateDate ? new Date(u.UserCreateDate).toISOString() : null,
         last_login: u.UserLastModifiedDate ? new Date(u.UserLastModifiedDate).toISOString() : null,
         status: u.UserStatus,
         reports_to: attrs['custom:reports_to'] || null,
+        _fallbackRole: attrs['custom:role'] || 'user',
       });
     }
     token = out.PaginationToken;
   } while (token && users.length < limit);
+  await Promise.all(users.map(async (u) => {
+    try {
+      const g = await c.send(new AdminListGroupsForUserCommand({ UserPoolId: POOL_ID, Username: u.id }));
+      const groups = (g.Groups || []).map(x => x.GroupName);
+      if      (groups.includes('prime_admin')) u.role = 'prime_admin';
+      else if (groups.includes('super_admin')) u.role = 'super_admin';
+      else if (groups.includes('admin'))       u.role = 'admin';
+      else                                     u.role = 'user';
+    } catch (e) {
+      // Cognito hiccup on one user shouldn't take the list down — fall back
+      // to the mirrored attribute (may be missing, in which case defaults to 'user').
+      u.role = u._fallbackRole || 'user';
+    }
+    delete u._fallbackRole;
+  }));
   return users;
 }
 

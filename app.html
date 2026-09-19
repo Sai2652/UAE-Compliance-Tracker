@@ -5734,7 +5734,7 @@ function bindEvents(){
       if(!s.size){ uctAlert({title:'Nothing selected', body:'Tick at least one client row.'}); return; }
       const ok = await uctConfirm({
         title: `Assign ${s.size} client${s.size===1?'':'s'} to ${target}`,
-        body: `Their assigned owner will be set to ${target}. ${target} will start seeing them on their Today and Clients tabs. This can be undone by reassigning.`,
+        body: `Their assigned owner will be set to ${target}. ${target} will see them on their Today and Clients within a couple of seconds. Any previous assignee will lose visibility as it moves to ${target} — clients are single-owner.`,
         confirmLabel: `Assign to ${target}`
       });
       if(!ok) return;
@@ -5742,8 +5742,18 @@ function bindEvents(){
       try{
         await apiJSON('/api/tracker',{method:'PUT',body:JSON.stringify({clients:state.clients,teamMembers:state.teamMembers})});
         state.selectedClientIds = new Set();
-        await reloadTrackerFromServer();
-        uctAlert({title:'Assigned', body:`${target} now owns ${s.size} client${s.size===1?'':'s'}.`, tone:'success'});
+        // Full local refresh — tracker, morning (so Today's attention rows
+        // and lane counts update), and org-people (assignment might have
+        // flipped an "unassigned" bucket). Also prime the heartbeat's
+        // known-timestamp so the auto-refresh loop doesn't fire a
+        // redundant full pull on its next tick.
+        await Promise.all([
+          reloadTrackerFromServer(),
+          isAdmin() && state.morning   ? loadMorningDashboard(true) : Promise.resolve(),
+          isAdmin() && state.orgPeople ? loadOrgPeople(true) : Promise.resolve()
+        ]);
+        try { const hb = await apiJSON('/api/tracker/heartbeat'); if(hb) _lastKnownTrackerUpdatedAt = hb.updatedAt || _lastKnownTrackerUpdatedAt; _lastFullPullAt = Date.now(); } catch{}
+        uctAlert({title:'Assigned', body:`${target} now owns ${s.size} client${s.size===1?'':'s'}. Any previous assignee has lost visibility.`, tone:'success'});
       }catch(err){ uctAlert({title:'Save failed', body: err.message, tone:'danger'}); }
     };
     if(a==="logout")el.onclick=()=>{logout();};

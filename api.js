@@ -19,6 +19,28 @@ function myClientIds(req) {
 function seesEveryClient(req) {
   return roles.isSuperAdmin(req.user);
 }
+// Filter any array whose rows carry userId/userName so an Admin's Team
+// / Workload / Review-Queue views don't show the whole firm's workload.
+// Sees-everyone (Prime + Super Admin) short-circuits to the input; every
+// other caller keeps only rows whose user is in their downline scope
+// (their own row + anyone reporting to them, matched by id or name so
+// Cognito-native users without a local users-table row still resolve).
+function scopeByUser(req, rows) {
+  if (!rows || !rows.length) return rows;
+  if (roles.atLeast(req.user, 'super_admin')) return rows;
+  var all = users.getAll();
+  var down = roles.downlineOf(req.user, all);
+  var ids   = new Set(down.map(function(u){ return String(u.id); }));
+  var names = new Set(down.map(function(u){ return u.name; }).filter(Boolean));
+  if (req.user.id) ids.add(String(req.user.id));
+  if (req.user.name) names.add(req.user.name);
+  return rows.filter(function(r){
+    var uid = r.userId != null ? String(r.userId) : null;
+    if (uid && ids.has(uid)) return true;
+    if (r.userName && names.has(r.userName)) return true;
+    return false;
+  });
+}
 // Fetch a client by id only if this user is allowed to see it.
 function myClientById(req, id) {
   return myClients(req).find(function(c) { return String(c.id) === String(id); }) || null;
@@ -1087,15 +1109,30 @@ router.get('/exceptions', requireAuth, requireAdmin, asyncH(async function(req, 
 // =====================================================================
 
 router.get('/team/capacity', requireAuth, requireAdmin, asyncH(async function(req, res) {
-  res.json(await capacityService.getCapacityDashboard());
+  var d = await capacityService.getCapacityDashboard();
+  d.rows = scopeByUser(req, d.rows);
+  res.json(d);
 }));
 
 router.get('/team/workload', requireAuth, requireAdmin, asyncH(async function(req, res) {
-  res.json(await capacityService.getCapacityDashboard()); // same payload, alias for clarity
+  var d = await capacityService.getCapacityDashboard();
+  d.rows = scopeByUser(req, d.rows);
+  res.json(d);
 }));
 
 router.get('/team/workload/recommendations', requireAuth, requireAdmin, asyncH(async function(req, res) {
-  res.json(await capacityService.getWorkloadRecommendations(parseInt(req.query.max) || 8));
+  var recs = await capacityService.getWorkloadRecommendations(parseInt(req.query.max) || 8);
+  // Recommendations can suggest moving work between two users — keep only
+  // recs where BOTH the source and destination are in the caller's scope.
+  if (!roles.atLeast(req.user, 'super_admin') && recs && recs.recommendations) {
+    var all = users.getAll();
+    var down = roles.downlineOf(req.user, all).concat([req.user]);
+    var ids = new Set(down.map(function(u){ return String(u.id); }));
+    recs.recommendations = recs.recommendations.filter(function(r){
+      return ids.has(String(r.fromUserId)) && ids.has(String(r.toUserId));
+    });
+  }
+  res.json(recs);
 }));
 
 router.post('/team/workload/recommendations/apply', requireAuth, requireAdmin, asyncH(async function(req, res) {
@@ -1179,9 +1216,18 @@ router.get('/clients/readiness', requireAuth, asyncH(async function(req, res) {
   if (!seesEveryClient(req)) {
     var myClients = myClientIds(req);
     data.clients = data.clients.filter(function(r){ return myClients.indexOf(String(r.clientId)) >= 0; });
+    // Rebuild BOTH count aggregates from the scoped slice. Previously
+    // `counts` was rescoped but `tierCounts` was left as the firm-wide
+    // number, so an Admin's tier filter dropdown read "Tier B (109)"
+    // when only their assigned handful were actually visible.
     var counts = {}; Object.keys(data.counts).forEach(function(k){ counts[k] = 0; });
-    data.clients.forEach(function(r){ counts[r.state] = (counts[r.state] || 0) + 1; });
+    var tierCounts = { A: 0, B: 0, C: 0 };
+    data.clients.forEach(function(r){
+      counts[r.state] = (counts[r.state] || 0) + 1;
+      if (r.tier) tierCounts[r.tier] = (tierCounts[r.tier] || 0) + 1;
+    });
     data.counts = counts;
+    data.tierCounts = tierCounts;
   }
   res.json(data);
 }));

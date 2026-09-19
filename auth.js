@@ -39,6 +39,42 @@ function extractToken(req) {
   return null;
 }
 
+// Enrichment cache — Cognito access tokens don't carry the `email` or
+// `name` attributes, only sub + groups. Every request that relies on
+// req.user.name (client visibility, activity log lines, invite matrix,
+// "sees my downline" checks) was previously running against name:''.
+// That silently broke visibility for every Cognito-native user:
+// clientScope built a names-set of {''}, matched no clients, and
+// showed the newly-invited Admin nothing they had actually been given.
+// One AdminGetUser call per user per warm Lambda closes it. TTL 5 min
+// so a name/role edit propagates without a cold-start.
+const _userEnrichCache = new Map(); // sub -> { at, name, email, groups }
+const ENRICH_TTL_MS = 5 * 60 * 1000;
+async function _enrichFromCognito(user) {
+  if (!user || (user.name && user.email)) return user;
+  const key = user.id;
+  const hit = _userEnrichCache.get(key);
+  if (hit && (Date.now() - hit.at) < ENRICH_TTL_MS) {
+    if (!user.name)  user.name  = hit.name  || '';
+    if (!user.email) user.email = hit.email || '';
+    return user;
+  }
+  try {
+    const full = await cognito.getUser(user.username || user.email || user.id);
+    if (full) {
+      if (!user.name)  user.name  = full.name  || '';
+      if (!user.email) user.email = full.email || '';
+      if (full.role && (!user.role || user.role === 'user')) user.role = full.role;
+      _userEnrichCache.set(key, { at: Date.now(), name: user.name, email: user.email });
+    }
+  } catch (e) {
+    // Don't fail the request over one Cognito hiccup — the caller keeps
+    // whatever req.user shape it already had, name may be empty for this call.
+    console.error('[auth] cognito enrichment failed for', key, ':', e && e.message);
+  }
+  return user;
+}
+
 async function requireAuth(req, res, next) {
   const token = extractToken(req);
   if (!token) return res.status(401).json({ error: 'Not authenticated' });
@@ -46,9 +82,11 @@ async function requireAuth(req, res, next) {
     if (cognito.isConfigured()) {
       // Cognito path. verifyAccessToken throws on bad signature / expired /
       // wrong pool. Downstream code sees the same { id, email, role, ... }
-      // shape it always has.
+      // shape it always has, with name/email backfilled from AdminGetUser
+      // (cached per-user, 5 min) so client-scoping actually works.
       const payload = await cognito.verifyAccessToken(token);
       req.user = cognito.userFromToken(payload);
+      await _enrichFromCognito(req.user);
       return next();
     }
     // Legacy path. Cognito hasn't propagated yet; the app still runs on

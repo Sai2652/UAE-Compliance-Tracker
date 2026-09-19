@@ -149,6 +149,34 @@ html.theme-light .header .btn-primary:hover,.header .btn-primary:hover{backgroun
 .today-kind-vat{background:var(--amber-bg);color:var(--amber)}
 .today-kind-ct{background:var(--red-bg);color:var(--red)}
 .today-kind-doc{background:var(--accent-soft);color:var(--accent)}
+
+/* ── Header bell (opens notification prefs) ── */
+.header-bell{padding:6px 8px !important;line-height:0;color:rgba(255,255,255,0.85) !important}
+.header-bell:hover{color:#fff !important}
+
+/* ── Notification opt-in banner on Today ── */
+.notif-banner{background:var(--accent-soft);border:1px solid var(--accent-soft);border-left:3px solid var(--accent);border-radius:10px;padding:12px 16px;display:flex;gap:12px;align-items:center;font-size:13px;color:var(--text-primary);margin-bottom:14px}
+.notif-banner.muted{background:var(--bg-elevated);border-color:var(--border);border-left-color:var(--text-muted);color:var(--text-muted)}
+.notif-banner .ic{font-size:20px;flex-shrink:0}
+.notif-banner .msg{flex:1;line-height:1.5}
+.notif-banner .msg strong{font-weight:700;color:var(--text-primary)}
+.notif-banner .btn{flex-shrink:0}
+
+/* ── Notif prefs modal rows ── */
+.notif-sec{padding:14px 0;border-bottom:1px solid var(--border)}
+.notif-sec:last-of-type{border-bottom:none}
+.notif-sec-k{font-size:10px;font-weight:800;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:8px}
+.rule-row{display:flex;align-items:center;gap:12px;padding:9px 0;border-bottom:1px solid var(--border);last-child:border-bottom:none}
+.rule-row:last-child{border-bottom:none}
+.rule-info{flex:1;min-width:0}
+.rule-t{font-size:13px;font-weight:700;color:var(--text-primary)}
+.rule-s{font-size:11.5px;color:var(--text-muted);margin-top:2px}
+.notif-toggle{position:relative;width:36px;height:20px;flex-shrink:0;cursor:pointer;display:inline-block}
+.notif-toggle input{opacity:0;width:0;height:0}
+.notif-track{position:absolute;inset:0;background:var(--bg-elevated);border:1px solid var(--border);border-radius:10px;transition:background 0.15s,border-color 0.15s}
+.notif-toggle input:checked + .notif-track{background:var(--sidebar-bg);border-color:var(--sidebar-bg)}
+.notif-thumb{position:absolute;top:3px;left:3px;width:14px;height:14px;background:#fff;border-radius:50%;transition:left 0.15s;box-shadow:0 1px 2px rgba(0,0,0,0.15);pointer-events:none}
+.notif-toggle input:checked ~ .notif-thumb{left:19px}
 /* Sidebar brand — BCL mark + name; sits at the top of .side-nav. */
 .side-nav-brand{display:flex;align-items:center;gap:12px;padding:18px 16px 14px;border-bottom:1px solid var(--sidebar-line);color:var(--sidebar-strong)}
 .side-nav-brand .bcl-mark{width:34px;height:34px;flex-shrink:0;color:var(--sidebar-strong)}
@@ -1155,7 +1183,7 @@ function renderHeader(){
       <input type="text" class="top-search-input" placeholder="Search clients, tasks, people…" data-global-search autocomplete="off" spellcheck="false">
       <div class="top-search-menu" data-global-search-menu hidden></div>
     </div>
-    <div class="header-actions" style="margin-left:auto;display:flex;gap:8px;align-items:center">${adminBtns}${currentUser?`
+    <div class="header-actions" style="margin-left:auto;display:flex;gap:8px;align-items:center">${adminBtns}<button class="btn btn-sm header-bell" data-action="openNotifPrefs" title="Notification preferences" aria-label="Notifications"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="width:15px;height:15px;display:block"><path d="M5 13.4V9.4a5 5 0 0 1 10 0v4L16.6 15H3.4z"/><path d="M8.4 17.2a1.8 1.8 0 0 0 3.2 0"/></svg></button>${currentUser?`
       <div class="header-user"><span class="header-user-name">${esc(currentUser.name||'')}</span><span class="header-role-pill${isPrime?' prime':''}" title="${esc(role)}">${esc(role)}</span><button class="btn btn-sm" data-action="logout">Logout</button></div>`:''}</div>
   </div>`;
 }
@@ -1396,6 +1424,234 @@ function renderTodayPressureStrip(){
   </div>`;
 }
 
+// ═══════════════════════════════════════════════════════════════
+// DESKTOP NOTIFICATIONS — browser Notifications API (Phase 1).
+// ───────────────────────────────────────────────────────────────
+// While a UCT tab is open we walk state.morning.clientsAttention
+// every 5 minutes; each row that crosses a compliance threshold
+// fires a native OS toast (Windows/macOS/Linux notification centre).
+// Dedupe: same client × same rule × today = fires once.
+// Prefs live in localStorage — per-device, no server round-trip.
+// Phase 2 (web push while browser is closed) parks until content
+// and cadence are tuned.
+// ═══════════════════════════════════════════════════════════════
+const NOTIF_DEFAULTS = {
+  master: true,
+  channels: { desktop: true, email: false },
+  rules: {
+    acc_5d: true, acc_overdue: true,
+    vat_3d: true,
+    ct_60d: true, ct_20d: true, ct_overdue: true,
+    doc_60d: true, doc_expired: true,
+  },
+  quietHours: { enabled: true, from: '19:00', to: '08:00' },
+  skipWeekends: true,
+};
+const NOTIF_PREFS_KEY   = 'uct.notif.prefs.v1';
+const NOTIF_FIRED_KEY   = 'uct.notif.fired.v1';
+const NOTIF_BANNER_KEY  = 'uct.notif.bannerDismissed.v1';
+function notifPrefs(){
+  try {
+    const raw = localStorage.getItem(NOTIF_PREFS_KEY);
+    if(!raw) return JSON.parse(JSON.stringify(NOTIF_DEFAULTS));
+    const parsed = JSON.parse(raw);
+    return Object.assign({}, NOTIF_DEFAULTS, parsed, {
+      channels: Object.assign({}, NOTIF_DEFAULTS.channels, parsed.channels||{}),
+      rules:    Object.assign({}, NOTIF_DEFAULTS.rules,    parsed.rules||{}),
+      quietHours: Object.assign({}, NOTIF_DEFAULTS.quietHours, parsed.quietHours||{}),
+    });
+  } catch { return JSON.parse(JSON.stringify(NOTIF_DEFAULTS)); }
+}
+function saveNotifPrefs(p){ try { localStorage.setItem(NOTIF_PREFS_KEY, JSON.stringify(p)); } catch{} }
+function firedSet(){
+  try { const raw = localStorage.getItem(NOTIF_FIRED_KEY); return raw ? new Set(JSON.parse(raw)) : new Set(); }
+  catch { return new Set(); }
+}
+function markFired(key){
+  const s = firedSet(); s.add(key);
+  // Prune anything not from today — no point remembering yesterday's dedupes.
+  const today = new Date().toISOString().slice(0,10);
+  const kept = [...s].filter(k => k.endsWith(':' + today));
+  try { localStorage.setItem(NOTIF_FIRED_KEY, JSON.stringify(kept)); } catch{}
+}
+function inQuietHours(p){
+  if(!p || !p.quietHours || !p.quietHours.enabled) return false;
+  const now = new Date();
+  if(p.skipWeekends && (now.getDay()===0 || now.getDay()===6)) return true;
+  const cur = now.getHours()*60 + now.getMinutes();
+  const [fh,fm] = String(p.quietHours.from||'19:00').split(':').map(Number);
+  const [th,tm] = String(p.quietHours.to  ||'08:00').split(':').map(Number);
+  const from = fh*60+fm, to = th*60+tm;
+  return from < to ? (cur >= from && cur < to) : (cur >= from || cur < to);
+}
+async function askNotifPermission(){
+  if(!('Notification' in window)) return 'unsupported';
+  if(Notification.permission === 'granted') return 'granted';
+  if(Notification.permission === 'denied')  return 'denied';
+  try { return await Notification.requestPermission(); }
+  catch { return 'denied'; }
+}
+function fireDesktopNotif({title, body, tag, clientId}){
+  if(!('Notification' in window) || Notification.permission !== 'granted') return;
+  try {
+    const n = new Notification(title, { body, tag });
+    n.onclick = () => {
+      window.focus();
+      if(clientId){ state.selectedClientId = clientId; state.detailTab = 'overview'; render(); }
+      n.close();
+    };
+    // OS usually auto-dismisses; belt-and-braces for the ones that don't.
+    setTimeout(() => { try { n.close(); } catch{} }, 30000);
+  } catch{}
+}
+function walkNotifRules(){
+  const p = notifPrefs();
+  if(!p.master || !p.channels.desktop) return;
+  if(inQuietHours(p)) return;
+  if(!('Notification' in window) || Notification.permission !== 'granted') return;
+  const attention = state.morning && state.morning.clientsAttention;
+  if(!attention || !attention.length) return;
+  const today = new Date().toISOString().slice(0,10);
+  const fired = firedSet();
+  attention.forEach(row => {
+    const type = String(row.nextDeadlineType || '').toLowerCase();
+    const dd   = row.nextDeadline;
+    if(!dd) return;
+    const days = Math.floor((new Date(dd).getTime() - Date.now()) / 86400000);
+    let rule = null, title = null, body = null;
+    if(type.startsWith('accounting') || type.includes('books')){
+      if(days < 0 && p.rules.acc_overdue){ rule='acc_overdue'; title=`Books not closed · ${row.clientName}`; body=`${Math.abs(days)} days overdue — was due ${dd}`; }
+      else if(days >= 0 && days <= 5 && p.rules.acc_5d){ rule='acc_5d'; title=`Books-close in ${days} day${days===1?'':'s'} · ${row.clientName}`; body=`Deadline ${dd}`; }
+    } else if(type.startsWith('vat')){
+      if(days >= 0 && days <= 3 && p.rules.vat_3d){ rule='vat_3d'; title=`VAT filing in ${days} day${days===1?'':'s'} · ${row.clientName}`; body=`Deadline ${dd}`; }
+    } else if(type.startsWith('ct')){
+      if(days < 0 && p.rules.ct_overdue){ rule='ct_overdue'; title=`CT filing overdue · ${row.clientName}`; body=`${Math.abs(days)} days past ${dd}`; }
+      else if(days >= 0 && days <= 20 && p.rules.ct_20d){ rule='ct_20d'; title=`CT filing in ${days} day${days===1?'':'s'} · ${row.clientName}`; body=`Deadline ${dd} — high attention`; }
+      else if(days >  20 && days <= 60 && p.rules.ct_60d){ rule='ct_60d'; title=`CT window opening · ${row.clientName}`; body=`Deadline ${dd} — ${days} days out`; }
+    } else if(type.includes('document')){
+      if(days < 0 && p.rules.doc_expired){ rule='doc_expired'; title=`Document expired · ${row.clientName}`; body=`Was due ${dd}`; }
+      else if(days >= 0 && days <= 60 && p.rules.doc_60d){ rule='doc_60d'; title=`Document expiring · ${row.clientName}`; body=`${days} days · ${dd}`; }
+    }
+    if(!rule || !title) return;
+    const key = `${row.clientId}:${rule}:${today}`;
+    if(fired.has(key)) return;
+    fireDesktopNotif({ title, body, tag: key, clientId: row.clientId });
+    markFired(key);
+  });
+}
+function startNotifChecker(){
+  if(window.__uctNotifTimer) clearInterval(window.__uctNotifTimer);
+  // Small startup delay so a page load doesn't drown you in yesterday's misses.
+  setTimeout(walkNotifRules, 30000);
+  window.__uctNotifTimer = setInterval(walkNotifRules, 5 * 60 * 1000);
+}
+// One document-level delegate for every notification button — banner and modal
+// both re-render often, so per-render onclick bindings would leak.
+document.addEventListener('click', async function(e){
+  if(!e.target || !e.target.closest) return;
+  // Banner: turn on / dismiss
+  const enable = e.target.closest('[data-notif-enable]');
+  if(enable){
+    const r = await askNotifPermission();
+    if(r === 'granted'){ try { new Notification('Notifications on', { body: 'You\'ll get toasts when compliance windows open.' }); } catch{} walkNotifRules(); }
+    render();
+    const m = document.getElementById('notif-prefs-modal'); if(m){ m.remove(); openNotifPrefsModal(); }
+    return;
+  }
+  const dismiss = e.target.closest('[data-notif-dismiss]');
+  if(dismiss){ try { localStorage.setItem(NOTIF_BANNER_KEY, '1'); } catch{} render(); return; }
+  // Modal: close / test / master / rule / quiet toggles
+  if(e.target.closest('[data-notif-close]')){ const m = document.getElementById('notif-prefs-modal'); if(m) m.remove(); return; }
+  if(e.target.closest('[data-notif-test]')){
+    if(Notification.permission !== 'granted'){ alert('Turn on notifications first.'); return; }
+    fireDesktopNotif({ title: 'BCL Compliance Tracker · test', body: 'Toasts are working. This is what a deadline reminder looks like.', tag: 'test' });
+    return;
+  }
+  if(e.target === document.getElementById('notif-prefs-modal')){ e.target.remove(); return; }
+});
+document.addEventListener('change', function(e){
+  const t = e.target; if(!t || !t.dataset) return;
+  const p = notifPrefs();
+  if(t.dataset.notifMaster !== undefined){ p.master = !!t.checked; }
+  else if(t.dataset.notifRule){ p.rules[t.dataset.notifRule] = !!t.checked; }
+  else if(t.dataset.notifQuiet !== undefined){ p.quietHours.enabled = !!t.checked; }
+  else if(t.dataset.notifQfrom !== undefined){ p.quietHours.from = t.value; }
+  else if(t.dataset.notifQto !== undefined){ p.quietHours.to = t.value; }
+  else if(t.dataset.notifWeekends !== undefined){ p.skipWeekends = !!t.checked; }
+  else return;
+  saveNotifPrefs(p);
+});
+
+// The "turn on notifications" strip on Today — shown once per browser
+// until the user makes a decision. Never re-shown after granted or after
+// explicit dismissal.
+function renderNotifBanner(){
+  if(!('Notification' in window)) return '';
+  const perm = Notification.permission;
+  if(perm === 'granted') return '';
+  const dismissed = (function(){ try { return localStorage.getItem(NOTIF_BANNER_KEY) === '1'; } catch { return false; } })();
+  if(dismissed) return '';
+  if(perm === 'denied'){
+    return `<div class="notif-banner muted"><span class="ic">🔕</span><span class="msg">Desktop notifications are blocked in your browser. Enable them in browser settings if you want deadline toasts.</span><button class="btn btn-sm" data-notif-dismiss>Dismiss</button></div>`;
+  }
+  return `<div class="notif-banner"><span class="ic">🔔</span><span class="msg"><strong>Get desktop notifications for deadlines.</strong> Windows shows a toast whenever a compliance window opens — you don't have to keep the tab in view.</span><button class="btn btn-primary btn-sm" data-notif-enable>Turn on</button><button class="btn btn-sm" data-notif-dismiss>Not now</button></div>`;
+}
+
+// Notification preferences modal — mounted lazily on the first click.
+function openNotifPrefsModal(){
+  const existing = document.getElementById('notif-prefs-modal'); if(existing) existing.remove();
+  const p = notifPrefs();
+  const perm = ('Notification' in window) ? Notification.permission : 'unsupported';
+  const ruleRow = (key, title, sub) => `
+    <div class="rule-row">
+      <div class="rule-info"><div class="rule-t">${esc(title)}</div><div class="rule-s">${esc(sub)}</div></div>
+      <label class="notif-toggle"><input type="checkbox" ${p.rules[key]?'checked':''} data-notif-rule="${key}"><span class="notif-track"></span><span class="notif-thumb"></span></label>
+    </div>`;
+  const wrap = document.createElement('div');
+  wrap.id = 'notif-prefs-modal';
+  wrap.className = 'modal-overlay';
+  wrap.innerHTML = `
+    <div class="modal" style="width:640px;max-width:96vw">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px">
+        <div>
+          <div class="modal-title">Notifications</div>
+          <div style="font-size:12px;color:var(--text-muted);margin-top:2px">This device only · your prefs don't sync across browsers.</div>
+        </div>
+        <button class="btn btn-sm" data-notif-close>Done</button>
+      </div>
+      ${perm === 'unsupported' ? `<div class="alert alert-warning" style="margin-top:12px">Your browser doesn't support notifications.</div>` : ''}
+      ${perm === 'denied'      ? `<div class="alert alert-warning" style="margin-top:12px">Notifications blocked in browser settings. Enable them there for these rules to fire.</div>` : ''}
+      ${perm === 'default'     ? `<div class="alert alert-info" style="margin-top:12px;display:flex;gap:12px;align-items:center"><span style="flex:1">Grant browser permission to receive toasts.</span><button class="btn btn-primary btn-sm" data-notif-enable>Turn on</button></div>` : ''}
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:14px 4px 8px;border-bottom:1px solid var(--border);margin-top:8px">
+        <div><div style="font-size:13px;font-weight:700;color:var(--text-primary)">Master switch</div><div style="font-size:11.5px;color:var(--text-muted)">Everything off if this is off</div></div>
+        <label class="notif-toggle"><input type="checkbox" ${p.master?'checked':''} data-notif-master><span class="notif-track"></span><span class="notif-thumb"></span></label>
+      </div>
+      <div class="notif-sec"><div class="notif-sec-k">Accounts</div>
+        ${ruleRow('acc_5d', '5 days before books-close deadline', 'Fires on the 15th of M+1 · target 20th deadline')}
+        ${ruleRow('acc_overdue', 'Books not closed after deadline', 'Fires daily from the 21st until closed')}
+      </div>
+      <div class="notif-sec"><div class="notif-sec-k">VAT</div>
+        ${ruleRow('vat_3d', '3 days before 28th filing deadline', 'Per client whose return is not yet marked filed')}
+      </div>
+      <div class="notif-sec"><div class="notif-sec-k">Corporate Tax</div>
+        ${ruleRow('ct_60d', '60 days before CT filing deadline', 'Once per client · prep window opens')}
+        ${ruleRow('ct_20d', '20 days before CT filing deadline', 'High attention · fires daily until filed')}
+        ${ruleRow('ct_overdue', 'CT filing overdue', 'Fires daily while overdue')}
+      </div>
+      <div class="notif-sec"><div class="notif-sec-k">Documents (Trade Licence · EID · Passport)</div>
+        ${ruleRow('doc_60d', '60 days before expiry', 'Once per document · lands in Documents lane too')}
+        ${ruleRow('doc_expired', 'Expired', 'Fires day-of and daily until renewed')}
+      </div>
+      <div class="notif-sec"><div class="notif-sec-k">Quiet hours</div>
+        <div class="rule-row"><div class="rule-info"><div class="rule-t">Don't notify overnight</div><div class="rule-s">Everything queues silently and delivers next window</div></div><label class="notif-toggle"><input type="checkbox" ${p.quietHours.enabled?'checked':''} data-notif-quiet><span class="notif-track"></span><span class="notif-thumb"></span></label></div>
+        <div class="rule-row" style="gap:8px"><div class="rule-info"><div class="rule-t">From – To</div></div><input type="time" value="${esc(p.quietHours.from)}" data-notif-qfrom style="font-family:inherit;font-size:12px;padding:5px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg-card);color:var(--text-primary)"><input type="time" value="${esc(p.quietHours.to)}" data-notif-qto style="font-family:inherit;font-size:12px;padding:5px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg-card);color:var(--text-primary)"></div>
+        <div class="rule-row"><div class="rule-info"><div class="rule-t">Skip weekends</div><div class="rule-s">Fri 19:00 → Mon 08:00 goes to the digest</div></div><label class="notif-toggle"><input type="checkbox" ${p.skipWeekends?'checked':''} data-notif-weekends><span class="notif-track"></span><span class="notif-thumb"></span></label></div>
+      </div>
+      <div style="display:flex;justify-content:space-between;align-items:center;padding-top:14px;border-top:1px solid var(--border);margin-top:10px;font-size:11.5px;color:var(--text-muted)"><span>Dedupe: each client × rule fires at most once per day.</span><button class="btn btn-sm" data-notif-test>Send test toast</button></div>
+    </div>`;
+  document.body.appendChild(wrap);
+}
+
 // ─── Today, rebuilt ─────────────────────────────────────────────
 // One card, one question: does anything need me today. The previous version
 // stacked eight sections that all restated the same overdue count in
@@ -1468,6 +1724,9 @@ function renderMorningDashboard(){
 
   // ── The book-line — bold, single line, no "In your book" label ──
   h += `<div style="font-size:19px;font-weight:700;letter-spacing:-0.01em;color:var(--text-primary);margin-bottom:18px">${inScope} client${inScope===1?'':'s'} across your whole team</div>`;
+
+  // ── Notification opt-in banner (once per browser) ──
+  h += renderNotifBanner();
 
   // ── Stub-data warning — honest about what the 998 really is ──
   if(stubLooksReal){
@@ -4777,6 +5036,7 @@ function bindEvents(){
     if(a==="closeModal")el.onclick=()=>{state.showModal=null;render();};
     if(a==="backToList")el.onclick=()=>{state.selectedClientId=null;render();};
     if(a==="logout")el.onclick=()=>{logout();};
+    if(a==="openNotifPrefs")el.onclick=()=>{ openNotifPrefsModal(); };
     if(a==="applyUpdate")el.onclick=()=>{
       // Remember what we're moving to, so the next boot doesn't immediately
       // announce the same update again before its first poll lands.
@@ -5107,6 +5367,9 @@ document.addEventListener("keydown",(e)=>{
   if(isAdmin()){ try{ await loadOrgPeople(true); }catch(e){ console.warn("People load error:",e); } }
   // Establishes which build this page is, then watches for a newer one.
   startVersionWatch();
+  // Desktop-notification checker — walks clientsAttention every 5 min and
+  // fires OS toasts on rule matches. No-op if permission isn't granted.
+  startNotifChecker();
 })();
 </script>
 </body>

@@ -1217,9 +1217,10 @@ function renderUpdates(){
   return h;
 }
 
-const INSIGHTS_TABS = [
-  ['reports',    'Reports / MIS',   'chart-bar']
-];
+// Reports / MIS retired 2026-09-19. It duplicated Today's attention data
+// and never earned its own tab; the renderReports() function and its
+// backend routes stay dormant so nothing that still imports them breaks.
+const INSIGHTS_TABS = [];
 function isInsightTab(k){ return INSIGHTS_TABS.some(t=>t[0]===k); }
 
 // Main navigation lives in the left sidebar now (see renderMainNavSidebar).
@@ -1456,15 +1457,9 @@ function renderMainNavSidebar(){
   let h=`<aside class="side-nav">
     <div class="side-nav-section">Main</div>
     ${primary.map(([k,i,l])=>btn(k,i,l)).join('')}`;
-  // Insights is Super Admin only. Every screen above this point returns data
-  // scoped to the reporting line, but the Insights reports aggregate across the
-  // whole firm — so showing them to a team lead would put the other team's
-  // numbers in front of them. They come back for leads once the report
-  // services take a scope.
-  if(isSuperAdmin()){
-    h+=`<div class="side-nav-section">Insights</div>
-      ${INSIGHTS_TABS.map(([k,l,icon])=>btn(k,icon,l)).join('')}`;
-  }
+  // Insights section (Reports/MIS) retired 2026-09-19. INSIGHTS_TABS is now
+  // empty; keeping the render block would print a dangling section header
+  // with no items under it, so it's fully removed.
   // Footer keeps only the Updates entry — light theme is now the only theme,
   // so the theme toggle is gone. Updates only renders when a newer build is
   // actually available; otherwise the footer is empty and the sidebar ends
@@ -1497,7 +1492,7 @@ function renderMain(){
     case"analytics":return renderAnalytics();
     case"risk":return renderRiskCenter();
     case"updates":return renderUpdates();
-    case"reports":return renderReports();
+    // Reports/MIS retired — router case removed; nothing navigates here.
     case"portfolio":return renderPortfolio();
     case"aiAssist":return renderAIAssistant();
     case"morning":return renderMorningDashboard();

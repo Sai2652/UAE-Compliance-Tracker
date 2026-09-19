@@ -1,28 +1,22 @@
-// Morning Manager Dashboard — single composite payload for the admin landing
-// page. Fans out to existing services in parallel and shapes their outputs
-// into 8 ready-to-render sections.
+// Today dashboard — single composite payload for the landing page.
 //
-// Zero new scoring math. Zero new persistence. The dashboard exists to give
-// management 30-second operational visibility by composing what's already
-// computed elsewhere.
+// Three sections, matching what the Today redesign actually renders:
+//   todaysFocus       — top-10 action rows with a recommended sentence
+//   deadlines         — overdue / today / next-7 / next-14 buckets
+//   clientsAttention  — the attention list the page is built around
+//
+// It used to build eight. The other five were computed in full on every
+// request and discarded by the browser; removing them (and the services
+// that only fed them) is what took this endpoint from minutes to
+// seconds. See the comment above the Promise.all below.
 
 const repos = require('../../repositories');
-// isStuck/isEscalated read escalation_level rather than a status of
-// 'escalated', which the sweep no longer sets.
-const compliance = require('../../compliance');
 const managerActionListSvc = require('../portfolio/managerActionListService');
 const clientReadinessService = require('../clientReadinessService');
-const capacityService = require('../capacityService');
-const riskService = require('../riskService');
-const managementSummarySvc = require('../reports/managementSummaryService');
-const reviewQueueService = require('../reviewQueueService');
-const aiClientInsight = require('../ai/clientInsightService');
-const bottleneckAdvisor = require('../ai/bottleneckAdvisorService');
 const { getTemplate } = require('../../templates');
 
 const DAY = 24 * 60 * 60 * 1000;
 function daysUntil(d) { return d ? Math.floor((new Date(d).getTime() - Date.now()) / DAY) : null; }
-function daysAgo(d)   { return d ? Math.floor((Date.now() - new Date(d).getTime()) / DAY) : null; }
 function isoDate(d)   { return new Date(d).toISOString().slice(0, 10); }
 
 // Server-side composite cache (30s) — absorbs double-click refreshes without
@@ -52,21 +46,29 @@ async function generate({ force, user, allUsers } = {}) {
   const todayStr = isoDate(today);
   const in7   = isoDate(new Date(today.getTime() + 7 * DAY));
   const in14  = isoDate(new Date(today.getTime() + 14 * DAY));
-  const thisMonth = todayStr.slice(0, 7);
 
+  // Only fetch what the three rendered sections actually need.
+  //
+  // This endpoint used to take minutes. It was computing eight sections,
+  // but the Today redesign left only three of them on screen —
+  // todaysFocus, deadlines and clientsAttention. The other five
+  // (managerActions, teamHealth, readinessCounts, riskSummary,
+  // businessHealth) were computed in full and thrown away by the
+  // browser. managerActions was the worst: five SEQUENTIAL
+  // aiClientInsight.generate() round trips plus a bottleneck scan, for
+  // a panel that no longer exists.
+  //
+  // Dropped with them: capacityService.getCapacityDashboard(),
+  // riskService.runAll(), managementSummarySvc.generate(),
+  // reviewQueueService.getQueue() and EscalationEventsRepo.listOpen() —
+  // every one of those was feeding only a discarded section.
   let [
-    actionList, readinessData, capacity, riskData, mgmtSummary, reviewQueue,
-    openTasks, obligations, openEscalations, workflows
+    actionList, readinessData, openTasks, obligations, workflows
   ] = await Promise.all([
     managerActionListSvc.generate(10),
     clientReadinessService.getAllClientReadiness(),
-    capacityService.getCapacityDashboard(),
-    riskService.runAll(),
-    managementSummarySvc.generate(thisMonth).catch(() => null),
-    reviewQueueService.getQueue(),
     repos.TasksRepo.listOpen({ limit: 5000 }),
     repos.ObligationsRepo.list({ from: todayStr, to: in14, status: ['upcoming','active','overdue'], limit: 1000 }),
-    repos.EscalationEventsRepo.listOpen(),
     repos.WorkflowsRepo.list({ workflowType: ['VAT_Filing','CT_Filing'], status: 'active', limit: 5000 })
   ]);
   const allClients = repos.ClientsRepo.listAll();
@@ -86,7 +88,6 @@ async function generate({ force, user, allUsers } = {}) {
   const clients = scope.all ? allClients : allClients.filter(c => c.assignedTeam && scope.names.has(c.assignedTeam));
   const scopedOpenTasks       = scope.all ? openTasks       : openTasks.filter(t => includeByName(t.assigned_user_name) || includeById(t.client_external_id));
   const scopedObligations     = scope.all ? obligations     : obligations.filter(o => includeById(o.client_external_id));
-  const scopedEscalations     = scope.all ? openEscalations : openEscalations.filter(e => includeById(e.client_external_id));
   const scopedWorkflows       = scope.all ? workflows       : workflows.filter(w => includeById(w.client_external_id));
   const scopedActionRows      = scope.all ? (actionList.rows || []) : (actionList.rows || []).filter(r => includeById(r.clientId));
   const scopedReadinessClients= scope.all ? (readinessData.clients || []) : (readinessData.clients || []).filter(r => includeById(r.clientId));
@@ -94,65 +95,33 @@ async function generate({ force, user, allUsers } = {}) {
   // Aliases — rest of the function reads these names.
   openTasks       = scopedOpenTasks;
   obligations     = scopedObligations;
-  openEscalations = scopedEscalations;
   workflows       = scopedWorkflows;
   actionList      = { ...actionList, rows: scopedActionRows };
   readinessData   = scopedReadinessData;
-
-  const clientScores = riskService.computeClientScores(riskData.findings, riskData.config, clients);
-
-  // -------- Workflow steps — single batched query, shared by sections below.
-  const _stepsByWf = await repos.WorkflowStepsRepo.listForWorkflows(workflows.map(w => w.id)).catch(() => ({}));
 
   // -------- Section 1: Today's Focus (top 10 from manager action list,
   // enriched with a recommended-action sentence per row)
   const todaysFocus = await composeTodaysFocus(actionList.rows || [], openTasks);
 
-  // -------- Section 2: Critical deadlines (uses batched _stepsByWf indirectly via current_step_key)
+  // -------- Section 2: Critical deadlines
   const deadlines = composeDeadlines(openTasks, obligations, workflows, todayStr, in7, in14);
-  void _stepsByWf;
 
   // -------- Section 3: Clients Requiring Attention (top 10 — already
   // produced by managerActionListSvc, but we trim+attach next deadline)
   const clientsAttention = composeClientsAttention(actionList.rows || [], openTasks, readinessData);
 
-  // -------- Section 4: Team Health
-  const teamHealth = composeTeamHealth(capacity, openTasks, openEscalations);
-
-  // -------- Section 5: Readiness counts (already computed)
-  const readinessCounts = readinessData.counts || {};
-
-  // -------- Section 6: Manager Action Center — concrete sentences for the
-  // top-10 clients, plus bottleneck recommendations.
-  const managerActions = await composeManagerActions(actionList.rows || [], openTasks, readinessData);
-
-  // -------- Section 7: Risk Summary
-  const highRiskCount = clientScores.filter(s => s.band === 'amber' || s.band === 'red').length;
-  const criticalRiskCount = clientScores.filter(s => s.band === 'red').length;
-  const overdueComplianceCount = openTasks.filter(t => t.due_date && new Date(t.due_date).getTime() < Date.now()).length;
-  const riskSummary = {
-    highRiskClients: highRiskCount,
-    criticalRiskClients: criticalRiskCount,
-    openEscalations: openEscalations.length,
-    overdueComplianceItems: overdueComplianceCount
-  };
-
-  // -------- Section 8: Business Health Snapshot
-  const totalActiveClients = clients.length;
-  const readyForFiling = (readinessData.clients || []).filter(r => r.state === 'ready').length;
-  const blockedClients = (readinessData.clients || []).filter(r => r.state === 'blocked').length;
-  const filingCompletionRate = mgmtSummary ? mgmtSummary.headline.filingCompletionRate : null;
-  const slaCompliancePct = computeFirmSlaPct(openTasks);
-  const teamUtilizationPct = computeTeamUtilization(capacity);
-  const businessHealth = {
-    totalActiveClients, readyForFiling, blockedClients,
-    filingCompletionRate, slaCompliancePct, teamUtilizationPct
-  };
-
+  // The four retired sections keep their keys with empty values rather
+  // than disappearing, so an older cached page that still reads
+  // d.teamHealth.totals gets an object instead of a TypeError.
   const payload = {
     generatedAt: new Date().toISOString(),
-    todaysFocus, deadlines, clientsAttention, teamHealth,
-    readinessCounts, managerActions, riskSummary, businessHealth
+    todaysFocus, deadlines, clientsAttention,
+    clientCount: clients.length,
+    teamHealth: { totals: {}, byUser: [], overloaded: [], capacityRisks: [] },
+    readinessCounts: readinessData.counts || {},
+    managerActions: [],
+    riskSummary: {},
+    businessHealth: { totalActiveClients: clients.length }
   };
   _cache.set(cacheKey, { at: Date.now(), payload });
   return payload;
@@ -278,71 +247,5 @@ function composeClientsAttention(actionListRows, openTasks, readinessData) {
   });
 }
 
-function composeTeamHealth(capacity, openTasks, openEscalations) {
-  const totalOpen = openTasks.length;
-  const overdue = openTasks.filter(t => t.due_date && new Date(t.due_date).getTime() < Date.now()).length;
-  const pendingReviews = openTasks.filter(t => t.status === 'ready_for_review').length;
-  const blocked = openTasks.filter(t => compliance.isStuck(t)).length;
-
-  const byUser = (capacity.rows || []).filter(r => r.userId).map(r => ({
-    userId: r.userId, userName: r.userName, band: r.band,
-    openTasks: r.openTasks, capacity: r.capacity, workloadRatio: r.workloadRatio,
-    overdueTasks: r.overdueTasks, awaitingReview: r.awaitingReview, blockedTasks: r.blockedTasks
-  }));
-  const overloaded = byUser.filter(u => u.band === 'overloaded');
-  const capacityRisks = byUser.filter(u => u.band === 'overloaded' || (u.workloadRatio || 0) >= 1.0);
-
-  return {
-    totals: {
-      totalOpenTasks: totalOpen,
-      overdueTasks: overdue,
-      pendingReviews,
-      blockedWork: blocked,
-      openEscalations: openEscalations.length
-    },
-    byUser, overloaded, capacityRisks
-  };
-}
-
-async function composeManagerActions(actionListRows, openTasks, readinessData) {
-  // For the top 5 clients, derive 1-2 concrete actions from clientInsightService.
-  const top = actionListRows.slice(0, 5);
-  const actions = [];
-  for (const r of top) {
-    try {
-      const insight = await aiClientInsight.generate(r.clientId);
-      if (insight && insight.recommendedActions) {
-        insight.recommendedActions.slice(0, 2).forEach(a => actions.push({
-          clientId: r.clientId, clientName: r.clientName,
-          tier: r.tier, kind: a.kind, sentence: a.sentence,
-          taskId: a.taskId || null, docId: a.docId || null
-        }));
-      }
-    } catch (_) { /* skip — don't block dashboard on one client */ }
-  }
-  // Bottleneck-level recommendations.
-  try {
-    const bn = await bottleneckAdvisor.generate();
-    (bn.bottlenecks || []).slice(0, 3).forEach(b => {
-      actions.push({ clientId: null, clientName: null, kind: 'bottleneck:' + b.kind, sentence: b.recommendation });
-    });
-  } catch (_) { /* skip */ }
-  return actions.slice(0, 15);
-}
-
-function computeFirmSlaPct(tasks) {
-  const cohort = tasks.filter(t => t.status === 'completed' && ['met','breached'].includes(t.sla_status));
-  if (!cohort.length) return null;
-  const met = cohort.filter(t => t.sla_status === 'met').length;
-  return Math.round((met / cohort.length) * 100);
-}
-
-function computeTeamUtilization(capacity) {
-  const rows = (capacity.rows || []).filter(r => r.userId && r.capacity);
-  if (!rows.length) return null;
-  const totalCap = rows.reduce((s, r) => s + r.capacity, 0);
-  const totalOpen = rows.reduce((s, r) => s + r.openTasks, 0);
-  return Math.round((totalOpen / totalCap) * 100);
-}
 
 module.exports = { generate };

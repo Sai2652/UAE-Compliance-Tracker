@@ -1476,7 +1476,11 @@ function renderHeader(){
   // Fetch is Super Admin only — it pulls a whole First POC's book of clients
   // across from Ops-Mkt, which is a firm-level decision, not a team one.
   const fetchBtn=isSuperAdmin()?`<button class="btn" data-action="openOpsMkt" title="Pull clients across from the Ops-Mkt master tracker">⬇ Fetch clients</button>`:'';
-  const adminBtns=isAdmin()?`${fetchBtn}<button class="btn btn-primary" data-action="openAddClient">+ Add Client</button>`:'';
+  // "+ Add Client" retired — clients come from the Ops-Mkt master tracker
+  // via Fetch, which dedupes on opsMkt.id and seeds VAT/CT obligations.
+  // Hand-adding created records with no provenance that the nightly sync
+  // could never reconcile.
+  const adminBtns=isAdmin()?fetchBtn:'';
   // BCL 19-dot mark — same asset the sidebar carried, now up in the header so
   // brand + wordmark live on the midnight bar (AutoLedger parity).
   const BCL_MARK = `<svg viewBox="0 0 100 100" fill="currentColor" aria-hidden="true"><circle cx="7.56" cy="48.94" r="5.42"/><circle cx="12.11" cy="71.91" r="4.85"/><circle cx="13.14" cy="29.75" r="6.13"/><circle cx="28.64" cy="87.05" r="4.21"/><circle cx="29.1" cy="13.43" r="6.7"/><circle cx="30.85" cy="61.98" r="5.49"/><circle cx="31.47" cy="39.26" r="5.99"/><circle cx="50.04" cy="7.56" r="7.13"/><circle cx="50.05" cy="72.05" r="4.85"/><circle cx="50.06" cy="48.94" r="6.56"/><circle cx="50.06" cy="28.24" r="6.63"/><circle cx="50.06" cy="92.44" r="3.71"/><circle cx="67.74" cy="39.73" r="7.2"/><circle cx="67.91" cy="62.1" r="4.21"/><circle cx="70.4" cy="87.01" r="3"/><circle cx="70.42" cy="13.38" r="7.56"/><circle cx="85.68" cy="71.48" r="2.5"/><circle cx="85.87" cy="30.3" r="7.56"/><circle cx="90.49" cy="51.33" r="7.49"/></svg>`;
@@ -1758,10 +1762,38 @@ function renderMain(){
 // Default landing for admin. Single screen, 8 sections, 30-second comprehension.
 // ═══════════════════════════════════════════════════════════════
 
+// Last good payload, kept in localStorage so a page load paints the
+// dashboard instantly from cache instead of showing a spinner while
+// the server recomputes. Refreshed in the background on every boot and
+// on every heartbeat that detects a change.
+const TODAY_CACHE_KEY = 'uct.today.payload.v1';
+function readTodayCache(){
+  try {
+    const raw = localStorage.getItem(TODAY_CACHE_KEY);
+    if(!raw) return null;
+    const j = JSON.parse(raw);
+    // Anything older than a day is more misleading than helpful.
+    if(!j || !j.at || (Date.now() - j.at) > 24*60*60*1000) return null;
+    return j.payload || null;
+  } catch { return null; }
+}
+function writeTodayCache(payload){
+  try { localStorage.setItem(TODAY_CACHE_KEY, JSON.stringify({ at: Date.now(), payload })); } catch {}
+}
+
 async function loadMorningDashboard(force){
   return _once('morning'+(force?'-force':''), async()=>{
     await _load(state, 'morning', '/api/dashboard/morning'+(force?'?refresh=1':''));
-    if(!_isLoadErr(state.morning)) state.morningLoadedAt=Date.now();
+    if(!_isLoadErr(state.morning)){
+      state.morningLoadedAt=Date.now();
+      writeTodayCache(state.morning);
+    } else if(!force){
+      // Request failed and we have no live payload — fall back to the
+      // last good one so the user sees their dashboard rather than an
+      // error card. It gets replaced the moment a fetch succeeds.
+      const cached = readTodayCache();
+      if(cached){ state.morning = cached; state.morningStale = true; }
+    }
   });
 }
 
@@ -2182,8 +2214,19 @@ function openNotifPrefsModal(){
 function renderMorningDashboard(){
   if(!isAdmin()) return renderPriorityQueue();
   if(!state.clientReadiness){ setTimeout(ensureReadinessLoaded,0); }
-  if(!state.morning){ setTimeout(loadMorningDashboard,0); return `<div class="empty-state"><div class="empty-state-icon">☕</div><div class="empty-state-title">Composing morning briefing…</div></div>`; }
-  if(_isLoadErr(state.morning)) return renderLoaderError(state.morning, '⚠️', 'Failed to load morning briefing');
+  // No blocking spinner. If we've loaded this dashboard before, paint the
+  // cached payload immediately and let the background fetch replace it —
+  // the page is usable in milliseconds instead of waiting on the server.
+  // Only a first-ever load with an empty cache shows a placeholder, and
+  // its wording is time-neutral (the old text said "morning briefing"
+  // at 11pm).
+  if(!state.morning){
+    setTimeout(loadMorningDashboard,0);
+    const cached = readTodayCache();
+    if(cached){ state.morning = cached; state.morningStale = true; }
+    else return `<div class="empty-state"><div class="empty-state-icon">◷</div><div class="empty-state-title">Loading your dashboard…</div></div>`;
+  }
+  if(_isLoadErr(state.morning)) return renderLoaderError(state.morning, '⚠️', 'Could not load the dashboard');
 
   const d = state.morning;
   const dl = d.deadlines || {};
@@ -4139,8 +4182,14 @@ async function promptNewDocument(){
 function renderDashboard(){
   const vc=getVisibleClients();
   const total=vc.length;
-  if(!total&&isAdmin()&&!getAssignableUsers().length)return`<div class="empty-state"><div class="empty-state-icon">📋</div><div class="empty-state-title">Welcome to UAE Compliance Tracker</div><div class="empty-state-text">Set up your team, then add clients.</div><div style="display:flex;gap:10px;justify-content:center"><button class="btn" data-nav="users">👤 Set up people</button><button class="btn btn-primary" data-action="openAddClient">+ Add Client</button></div></div>`;
-  if(!total&&isAdmin())return`<div class="empty-state"><div class="empty-state-icon">📋</div><div class="empty-state-title">No Clients Yet</div><button class="btn btn-primary" data-action="openAddClient">+ Add First Client</button></div>`;
+  // Empty states point at Fetch, the only supported way in. A Super Admin
+  // gets the button; an Admin gets told who to ask, because Fetch is
+  // Super-Admin-only and a dead button is worse than a sentence.
+  const fetchCta = isSuperAdmin()
+    ? `<button class="btn btn-primary" data-action="openOpsMkt">⬇ Fetch clients</button>`
+    : `<div style="font-size:12px;color:var(--text-muted)">Ask a Super Admin to fetch clients from the master tracker.</div>`;
+  if(!total&&isAdmin()&&!getAssignableUsers().length)return`<div class="empty-state"><div class="empty-state-icon">📋</div><div class="empty-state-title">Welcome to UAE Compliance Tracker</div><div class="empty-state-text">Set up your team, then pull your clients across.</div><div style="display:flex;gap:10px;justify-content:center;align-items:center"><button class="btn" data-nav="users">👤 Set up people</button>${fetchCta}</div></div>`;
+  if(!total&&isAdmin())return`<div class="empty-state"><div class="empty-state-icon">📋</div><div class="empty-state-title">No clients yet</div><div class="empty-state-text">Pull them across from the Ops-Mkt master tracker.</div>${fetchCta}</div>`;
   if(!total&&!isAdmin())return`<div class="empty-state"><div class="empty-state-icon">📋</div><div class="empty-state-title">No Clients Assigned</div><div class="empty-state-text">Your admin hasn't assigned any clients to you yet. Contact your admin for access.</div></div>`;
 
   const completed=vc.filter(c=>metricsCache[c.id]?.overallStatus==="Completed").length;
@@ -4208,7 +4257,7 @@ function renderDashboard(){
 }
 
 function renderClientsList(){
-  if(!state.clients.length)return`<div class="empty-state"><div class="empty-state-icon">📁</div><div class="empty-state-title">No Clients</div><button class="btn btn-primary" data-action="openAddClient">+ Add Client</button></div>`;
+  if(!state.clients.length)return`<div class="empty-state"><div class="empty-state-icon">📁</div><div class="empty-state-title">No clients</div>${isSuperAdmin()?`<button class="btn btn-primary" data-action="openOpsMkt">⬇ Fetch clients</button>`:`<div style="font-size:12px;color:var(--text-muted)">Ask a Super Admin to fetch clients from the master tracker.</div>`}</div>`;
   const fl=getFilteredClients();
   let h=renderReadinessCountsStrip();
   h+=`<div class="filter-bar"><input class="form-input search-input" placeholder="Search..." value="${esc(state.search)}" data-action="search">${selectHTML("ft",state.filterTeam,["All",...getTeamOptions()],'data-action="filterTeam"')}${renderReadinessFilterSelect()}${renderClientTierFilterSelect()}<button class="btn btn-sm ${state.sortByTier?'btn-primary':''}" data-action="toggleSortTier">Sort by Tier</button></div><div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:16px">`;

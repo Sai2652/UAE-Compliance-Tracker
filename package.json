@@ -6,7 +6,8 @@
   "scripts": {
     "start": "node server.js",
     "bootstrap-aws": "node scripts/bootstrap-aws.js",
-    "seed-super-admin": "node scripts/seed-super-admin.js"
+    "seed-super-admin": "node scripts/seed-super-admin.js",
+    "build": "node scripts/build-html.js"
   },
   "dependencies": {
     "@aws-sdk/client-cognito-identity-provider": "^3.658.0",
@@ -21,5 +22,12 @@
     "dotenv": "^16.3.1",
     "express": "^4.18.2",
     "jsonwebtoken": "^9.0.2"
+  },
+  "devDependencies": {
+    "cssnano": "^7.0.6",
+    "html-minifier-terser": "^7.2.0",
+    "javascript-obfuscator": "^4.1.1",
+    "postcss": "^8.4.47",
+    "terser": "^5.36.0"
   }
 }

@@ -47,8 +47,16 @@ jobs:
           node-version: '20'
           cache: 'npm'
 
-      - name: Install prod dependencies
-        run: npm ci --omit=dev --omit=optional
+      # Full install (including devDeps) so scripts/build-html.js can run.
+      # After the build we prune devDeps so the Lambda zip stays lean.
+      - name: Install all dependencies
+        run: npm ci
+
+      - name: Build minified + obfuscated HTML
+        run: node scripts/build-html.js
+
+      - name: Prune devDeps before packaging
+        run: npm prune --omit=dev --omit=optional
 
       # Stamp the build so the app can tell it is running an old copy and offer
       # to reload. Written into the zip, so every deploy mints a new value.
@@ -77,7 +85,6 @@ jobs:
           zip -r app.zip . \
             -x ".git/*" \
             -x ".github/*" \
-            -x ".build/*" \
             -x "db/*" \
             -x "extension/*" \
             -x "scripts/migrate-supabase-to-aws.js" \

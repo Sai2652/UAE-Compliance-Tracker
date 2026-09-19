@@ -4,8 +4,20 @@ require('dotenv').config();
 var express = require('express');
 var cookieParser = require('cookie-parser');
 var path = require('path');
+var fs = require('fs');
 var { verifyToken } = require('./auth');
 var apiRoutes = require('./api');
+
+// Serve the minified+obfuscated HTML from .build/ when it exists (production
+// deploys run scripts/build-html.js first), fall back to the readable source
+// in the repo root for local dev where nobody's run the build.
+function pageServer(name){
+  return function(req, res){
+    var built = path.join(__dirname, '.build', name);
+    var src   = path.join(__dirname, name);
+    res.sendFile(fs.existsSync(built) ? built : src);
+  };
+}
 
 function buildApp() {
   var app = express();
@@ -35,9 +47,9 @@ function buildApp() {
     }
   });
 
-  app.get('/login', function(req, res) { res.sendFile(path.join(__dirname, 'login.html')); });
-  app.get('/signup', function(req, res) { res.sendFile(path.join(__dirname, 'signup.html')); });
-  app.get('/reset-password', function(req, res) { res.sendFile(path.join(__dirname, 'reset-password.html')); });
+  app.get('/login', pageServer('login.html'));
+  app.get('/signup', pageServer('signup.html'));
+  app.get('/reset-password', pageServer('reset-password.html'));
 
   // Serve the app shell unconditionally. Cognito tokens live in localStorage
   // on the browser (not a cookie the server can read cheaply), so the
@@ -45,9 +57,7 @@ function buildApp() {
   // on boot and redirects to /login if the token is missing or expired.
   // Legacy JWT-in-cookie users still work because the same /api/auth/me
   // handles either mode through requireAuth.
-  app.get('/', function(req, res) {
-    res.sendFile(path.join(__dirname, 'app.html'));
-  });
+  app.get('/', pageServer('app.html'));
 
   // The standalone admin page is gone — user management is a page inside the
   // app now (sidebar → User Management). This route stays only to catch old
